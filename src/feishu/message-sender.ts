@@ -1,5 +1,8 @@
 import { getClient } from './client.js';
 import { buildCard, splitLongContent, type CardStatus } from './card-builder.js';
+import { createLogger } from '../logger.js';
+
+const log = createLogger('MessageSender');
 
 export async function sendThinkingCard(chatId: string): Promise<string> {
   const client = getClient();
@@ -24,7 +27,7 @@ export async function updateCard(messageId: string, content: string, status: Car
       },
     });
   } catch (err) {
-    console.error('[MessageSender] Failed to update card:', err);
+    log.error('Failed to update card:', err);
   }
 }
 

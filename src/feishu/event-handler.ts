@@ -1,5 +1,5 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { Config } from '../config.js';
@@ -8,6 +8,9 @@ import { SessionManager } from '../session/session-manager.js';
 import { RequestQueue } from '../queue/request-queue.js';
 import { runClaude } from '../claude/cli-runner.js';
 import { sendThinkingCard, updateCard, sendFinalCards, sendTextReply } from './message-sender.js';
+import { createLogger } from '../logger.js';
+
+const log = createLogger('EventHandler');
 
 export function createEventDispatcher(config: Config) {
   const accessControl = new AccessControl(config.allowedUserIds);
@@ -42,6 +45,7 @@ export function createEventDispatcher(config: Config) {
 
       // Access control
       if (!accessControl.isAllowed(senderId)) {
+        log.warn(`Access denied for user: ${senderId}`);
         await sendTextReply(chatId, '抱歉，您没有使用此机器人的权限。');
         return;
       }
@@ -62,6 +66,8 @@ export function createEventDispatcher(config: Config) {
 
       if (!text?.trim()) return;
 
+      log.info(`User ${senderId}: ${text.slice(0, 100)}${text.length > 100 ? '...' : ''}`);
+
       // Handle /clear command
       if (text.trim() === '/clear') {
         sessionManager.clearSession(senderId);
@@ -78,6 +84,7 @@ export function createEventDispatcher(config: Config) {
         }
         try {
           const resolved = sessionManager.setWorkDir(senderId, dir);
+          log.info(`User ${senderId} changed workDir to: ${resolved}`);
           await sendTextReply(chatId, `工作目录已切换到: ${resolved}\n会话已重置。`);
         } catch (err: any) {
           await sendTextReply(chatId, err.message);
@@ -110,6 +117,7 @@ export function createEventDispatcher(config: Config) {
       });
 
       if (!accepted) {
+        log.warn(`Queue full for user: ${senderId}`);
         await sendTextReply(chatId, '您的请求队列已满，请等待当前任务完成后再试。');
       }
     },
@@ -128,17 +136,19 @@ async function handleClaudeRequest(
   const sessionId = sessionManager.getSessionId(userId);
   const workDir = sessionManager.getWorkDir(userId);
 
+  log.info(`Running Claude for user ${userId}, workDir=${workDir}, sessionId=${sessionId ?? 'new'}`);
+
   // Send thinking card
   let messageId: string;
   try {
     messageId = await sendThinkingCard(chatId);
   } catch (err) {
-    console.error('[EventHandler] Failed to send thinking card:', err);
+    log.error('Failed to send thinking card:', err);
     return;
   }
 
   if (!messageId) {
-    console.error('[EventHandler] No message_id returned for thinking card');
+    log.error('No message_id returned for thinking card');
     return;
   }
 
@@ -165,6 +175,7 @@ async function handleClaudeRequest(
     const handle = runClaude(config.claudeCliPath, prompt, sessionId, workDir, {
       onSessionId: (id) => {
         sessionManager.setSessionId(userId, id);
+        log.info(`Session created for user ${userId}: ${id}`);
       },
       onText: (accumulated) => {
         throttledUpdate(accumulated);
@@ -179,11 +190,13 @@ async function handleClaudeRequest(
           ? `耗时 ${(result.durationMs / 1000).toFixed(1)}s | 费用 $${result.cost.toFixed(4)}`
           : '完成';
 
+        log.info(`Claude completed for user ${userId}: success=${result.success}, cost=$${result.cost.toFixed(4)}`);
+
         const finalContent = result.result || '(无输出)';
         try {
           await sendFinalCards(chatId, messageId, finalContent, note);
         } catch (err) {
-          console.error('[EventHandler] Failed to send final cards:', err);
+          log.error('Failed to send final cards:', err);
         }
         resolve();
       },
@@ -193,10 +206,12 @@ async function handleClaudeRequest(
           pendingUpdate = null;
         }
 
+        log.error(`Claude error for user ${userId}: ${error}`);
+
         try {
           await updateCard(messageId, `错误：${error}`, 'error', '执行失败');
         } catch (err) {
-          console.error('[EventHandler] Failed to send error card:', err);
+          log.error('Failed to send error card:', err);
         }
         resolve();
       },

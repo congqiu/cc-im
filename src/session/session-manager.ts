@@ -1,5 +1,8 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Session');
 
 const SESSIONS_FILE = 'data/sessions.json';
 
@@ -73,10 +76,10 @@ export class SessionManager {
             this.sessions.set(key, val as UserSession);
           }
         }
-        console.log(`[Session] Loaded ${this.sessions.size} sessions`);
+        log.info(`Loaded ${this.sessions.size} sessions`);
       }
     } catch {
-      console.log('[Session] No existing sessions found, starting fresh');
+      log.info('No existing sessions found, starting fresh');
     }
   }
 
@@ -90,7 +93,7 @@ export class SessionManager {
       }
       writeFileSync(SESSIONS_FILE, JSON.stringify(obj, null, 2));
     } catch (err) {
-      console.error('[Session] Failed to save sessions:', err);
+      log.error('Failed to save sessions:', err);
     }
   }
 }

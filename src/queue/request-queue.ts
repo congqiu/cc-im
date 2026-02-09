@@ -1,3 +1,7 @@
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Queue');
+
 interface QueuedTask {
   prompt: string;
   execute: (prompt: string) => Promise<void>;
@@ -29,6 +33,7 @@ export class RequestQueue {
 
     if (queue.running) {
       queue.tasks.push({ prompt, execute });
+      log.info(`Queued task for user ${userId}, queue size: ${queue.tasks.length}`);
       return true;
     }
 
@@ -42,7 +47,7 @@ export class RequestQueue {
     try {
       await execute(prompt);
     } catch (err) {
-      console.error(`[Queue] Error executing task for ${userId}:`, err);
+      log.error(`Error executing task for ${userId}:`, err);
     }
 
     const queue = this.queues.get(userId);
@@ -50,6 +55,7 @@ export class RequestQueue {
 
     const next = queue.tasks.shift();
     if (next) {
+      log.info(`Processing next queued task for user ${userId}, remaining: ${queue.tasks.length}`);
       this.run(userId, next.prompt, next.execute);
     } else {
       queue.running = false;

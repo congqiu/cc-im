@@ -1,5 +1,8 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
 import type { Config } from '../config.js';
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Feishu');
 
 let client: Lark.Client;
 let wsClient: Lark.WSClient;
@@ -23,5 +26,5 @@ export function initFeishu(config: Config, eventDispatcher: Lark.EventDispatcher
 
   wsClient.start({ eventDispatcher });
 
-  console.log('[Feishu] WSClient started');
+  log.info('WSClient started');
 }
