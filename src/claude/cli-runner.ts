@@ -30,7 +30,7 @@ export function runClaude(
   ];
 
   if (sessionId) {
-    args.push('--session-id', sessionId);
+    args.push('--resume', sessionId);
   }
 
   args.push(prompt);

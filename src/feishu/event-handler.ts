@@ -155,20 +155,28 @@ async function handleClaudeRequest(
   return new Promise<void>((resolve) => {
     let lastUpdateTime = 0;
     let pendingUpdate: ReturnType<typeof setTimeout> | null = null;
+    let latestContent = '';
+
+    const THROTTLE_MS = 200;
 
     const throttledUpdate = (content: string) => {
+      latestContent = content;
       const now = Date.now();
       const elapsed = now - lastUpdateTime;
 
-      if (elapsed >= 500) {
+      if (elapsed >= THROTTLE_MS) {
         lastUpdateTime = now;
-        updateCard(messageId, content, 'streaming', '输出中...');
+        if (pendingUpdate) {
+          clearTimeout(pendingUpdate);
+          pendingUpdate = null;
+        }
+        updateCard(messageId, latestContent, 'streaming', '输出中...');
       } else if (!pendingUpdate) {
         pendingUpdate = setTimeout(() => {
           pendingUpdate = null;
           lastUpdateTime = Date.now();
-          updateCard(messageId, content, 'streaming', '输出中...');
-        }, 500 - elapsed);
+          updateCard(messageId, latestContent, 'streaming', '输出中...');
+        }, THROTTLE_MS - elapsed);
       }
     };
 

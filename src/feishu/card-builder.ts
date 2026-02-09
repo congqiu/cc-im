@@ -24,8 +24,12 @@ const MAX_CARD_CONTENT_LENGTH = 3800;
 
 export function truncateForCard(text: string): string {
   if (text.length <= MAX_CARD_CONTENT_LENGTH) return text;
-  const truncated = text.slice(text.length - MAX_CARD_CONTENT_LENGTH + 30);
-  return `...(前文已截断)...\n\n${truncated}`;
+  // 保留尾部内容，在换行符处截断以避免断行
+  const keepLen = MAX_CARD_CONTENT_LENGTH - 20;
+  const tail = text.slice(text.length - keepLen);
+  const lineBreak = tail.indexOf('\n');
+  const clean = lineBreak > 0 && lineBreak < 200 ? tail.slice(lineBreak + 1) : tail;
+  return `...(前文已省略)...\n${clean}`;
 }
 
 export function buildCard(options: CardOptions): string {
