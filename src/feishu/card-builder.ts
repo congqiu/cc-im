@@ -67,8 +67,21 @@ export function buildCard(options: CardOptions): string {
 export function splitLongContent(text: string, maxLen = MAX_CARD_CONTENT_LENGTH): string[] {
   if (text.length <= maxLen) return [text];
   const parts: string[] = [];
-  for (let i = 0; i < text.length; i += maxLen) {
-    parts.push(text.slice(i, i + maxLen));
+  let start = 0;
+  while (start < text.length) {
+    if (start + maxLen >= text.length) {
+      parts.push(text.slice(start));
+      break;
+    }
+    // Try to find a newline near the split point to avoid breaking mid-line
+    let end = start + maxLen;
+    const searchStart = Math.max(start, end - 200);
+    const lastNewline = text.lastIndexOf('\n', end);
+    if (lastNewline > searchStart) {
+      end = lastNewline + 1;
+    }
+    parts.push(text.slice(start, end));
+    start = end;
   }
   return parts;
 }

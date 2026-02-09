@@ -28,3 +28,7 @@ export function initFeishu(config: Config, eventDispatcher: Lark.EventDispatcher
 
   log.info('WSClient started');
 }
+
+export function stopFeishu() {
+  log.info('Stopping WSClient...');
+}

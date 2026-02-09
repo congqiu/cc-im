@@ -12,13 +12,16 @@ import { createLogger } from '../logger.js';
 
 const log = createLogger('EventHandler');
 
+const THROTTLE_MS = 200;
+
 export function createEventDispatcher(config: Config) {
   const accessControl = new AccessControl(config.allowedUserIds);
-  const sessionManager = new SessionManager(config.claudeWorkDir);
+  const sessionManager = new SessionManager(config.claudeWorkDir, config.allowedBaseDirs);
   const requestQueue = new RequestQueue();
 
-  // Dedup: track processed message IDs
-  const processedMessages = new Set<string>();
+  // Dedup: track processed message IDs with timestamps
+  const processedMessages = new Map<string, number>();
+  const DEDUP_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
   const dispatcher = new Lark.EventDispatcher({});
 
@@ -29,12 +32,14 @@ export function createEventDispatcher(config: Config) {
 
       // Dedup
       if (processedMessages.has(messageId)) return;
-      processedMessages.add(messageId);
-      // Evict old entries to prevent memory leak
-      if (processedMessages.size > 10000) {
-        const entries = [...processedMessages];
-        for (let i = 0; i < 5000; i++) {
-          processedMessages.delete(entries[i]);
+      const now = Date.now();
+      processedMessages.set(messageId, now);
+      // Evict expired entries
+      for (const [id, ts] of processedMessages) {
+        if (now - ts > DEDUP_TTL_MS) {
+          processedMessages.delete(id);
+        } else {
+          break; // Map preserves insertion order, so we can stop early
         }
       }
 
@@ -100,7 +105,7 @@ export function createEventDispatcher(config: Config) {
 
       // Handle /list command
       if (text.trim() === '/list') {
-        const dirs = listClaudeProjects();
+        const dirs = listClaudeProjects(config.allowedBaseDirs);
         if (dirs.length === 0) {
           await sendTextReply(chatId, '未找到 Claude Code 工作区记录。');
         } else {
@@ -111,9 +116,12 @@ export function createEventDispatcher(config: Config) {
         return;
       }
 
+      // Snapshot workDir at enqueue time so /cd during queue wait doesn't affect this task
+      const workDirSnapshot = sessionManager.getWorkDir(senderId);
+
       // Enqueue the task
       const accepted = requestQueue.enqueue(senderId, text, async (prompt) => {
-        await handleClaudeRequest(config, sessionManager, senderId, chatId, prompt);
+        await handleClaudeRequest(config, sessionManager, senderId, chatId, prompt, workDirSnapshot);
       });
 
       if (!accepted) {
@@ -132,9 +140,9 @@ async function handleClaudeRequest(
   userId: string,
   chatId: string,
   prompt: string,
+  workDir: string,
 ) {
   const sessionId = sessionManager.getSessionId(userId);
-  const workDir = sessionManager.getWorkDir(userId);
 
   log.info(`Running Claude for user ${userId}, workDir=${workDir}, sessionId=${sessionId ?? 'new'}`);
 
@@ -156,8 +164,25 @@ async function handleClaudeRequest(
     let lastUpdateTime = 0;
     let pendingUpdate: ReturnType<typeof setTimeout> | null = null;
     let latestContent = '';
+    let settled = false;
 
-    const THROTTLE_MS = 200;
+    const cleanup = () => {
+      if (pendingUpdate) {
+        clearTimeout(pendingUpdate);
+        pendingUpdate = null;
+      }
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+        timeoutTimer = null;
+      }
+    };
+
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
 
     const throttledUpdate = (content: string) => {
       latestContent = content;
@@ -170,15 +195,31 @@ async function handleClaudeRequest(
           clearTimeout(pendingUpdate);
           pendingUpdate = null;
         }
-        updateCard(messageId, latestContent, 'streaming', '输出中...');
+        updateCard(messageId, latestContent, 'streaming', '输出中...').catch(() => {});
       } else if (!pendingUpdate) {
         pendingUpdate = setTimeout(() => {
           pendingUpdate = null;
           lastUpdateTime = Date.now();
-          updateCard(messageId, latestContent, 'streaming', '输出中...');
+          updateCard(messageId, latestContent, 'streaming', '输出中...').catch(() => {});
         }, THROTTLE_MS - elapsed);
       }
     };
+
+    // Timeout mechanism
+    let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+    if (config.claudeTimeoutMs > 0) {
+      timeoutTimer = setTimeout(async () => {
+        if (settled) return;
+        log.warn(`Claude timeout for user ${userId} after ${config.claudeTimeoutMs}ms`);
+        handle.abort();
+        try {
+          await updateCard(messageId, latestContent || '(执行超时)', 'error', '执行超时');
+        } catch (err) {
+          log.error('Failed to send timeout card:', err);
+        }
+        settle();
+      }, config.claudeTimeoutMs);
+    }
 
     const handle = runClaude(config.claudeCliPath, prompt, sessionId, workDir, {
       onSessionId: (id) => {
@@ -189,10 +230,7 @@ async function handleClaudeRequest(
         throttledUpdate(accumulated);
       },
       onComplete: async (result) => {
-        if (pendingUpdate) {
-          clearTimeout(pendingUpdate);
-          pendingUpdate = null;
-        }
+        cleanup();
 
         const note = result.cost > 0
           ? `耗时 ${(result.durationMs / 1000).toFixed(1)}s | 费用 $${result.cost.toFixed(4)}`
@@ -200,19 +238,17 @@ async function handleClaudeRequest(
 
         log.info(`Claude completed for user ${userId}: success=${result.success}, cost=$${result.cost.toFixed(4)}`);
 
-        const finalContent = result.result || '(无输出)';
+        // 优先使用流式累积的原始文本，避免 result.result 中的 HTML 实体编码
+        const finalContent = result.accumulated || result.result || '(无输出)';
         try {
           await sendFinalCards(chatId, messageId, finalContent, note);
         } catch (err) {
           log.error('Failed to send final cards:', err);
         }
-        resolve();
+        settle();
       },
       onError: async (error) => {
-        if (pendingUpdate) {
-          clearTimeout(pendingUpdate);
-          pendingUpdate = null;
-        }
+        cleanup();
 
         log.error(`Claude error for user ${userId}: ${error}`);
 
@@ -221,18 +257,20 @@ async function handleClaudeRequest(
         } catch (err) {
           log.error('Failed to send error card:', err);
         }
-        resolve();
+        settle();
       },
-    });
+    }, { skipPermissions: config.claudeSkipPermissions });
   });
 }
 
-function listClaudeProjects(): string[] {
+function listClaudeProjects(allowedBaseDirs: string[]): string[] {
   const configPath = join(homedir(), '.claude.json');
   try {
     const data = JSON.parse(readFileSync(configPath, 'utf-8'));
     const projects: Record<string, unknown> = data.projects ?? {};
-    return Object.keys(projects).sort();
+    return Object.keys(projects)
+      .filter((dir) => allowedBaseDirs.some((base) => dir === base || dir.startsWith(base + '/')))
+      .sort();
   } catch {
     return [];
   }

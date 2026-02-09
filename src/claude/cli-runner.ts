@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { parseStreamLine, extractTextDelta, extractResult, type ParsedResult } from './stream-parser.js';
+import { isStreamInit } from './types.js';
 
 export interface ClaudeRunCallbacks {
   onText: (accumulated: string) => void;
@@ -20,14 +21,18 @@ export function runClaude(
   sessionId: string | undefined,
   workDir: string,
   callbacks: ClaudeRunCallbacks,
+  options?: { skipPermissions?: boolean },
 ): ClaudeRunHandle {
   const args = [
     '-p',
     '--output-format', 'stream-json',
     '--verbose',
     '--include-partial-messages',
-    '--dangerously-skip-permissions',
   ];
+
+  if (options?.skipPermissions) {
+    args.push('--dangerously-skip-permissions');
+  }
 
   if (sessionId) {
     args.push('--resume', sessionId);
@@ -50,8 +55,8 @@ export function runClaude(
     const event = parseStreamLine(line);
     if (!event) return;
 
-    if (event.type === 'system' && (event as any).subtype === 'init' && (event as any).session_id) {
-      callbacks.onSessionId?.((event as any).session_id);
+    if (isStreamInit(event)) {
+      callbacks.onSessionId?.(event.session_id);
     }
 
     const delta = extractTextDelta(event);
@@ -64,7 +69,7 @@ export function runClaude(
     const result = extractResult(event);
     if (result) {
       completed = true;
-      // Use the result text if we haven't accumulated anything
+      result.accumulated = accumulated;
       if (!accumulated && result.result) {
         accumulated = result.result;
       }
@@ -86,6 +91,7 @@ export function runClaude(
         callbacks.onComplete({
           success: true,
           result: accumulated,
+          accumulated,
           cost: 0,
           durationMs: 0,
         });

@@ -1,8 +1,11 @@
 import { createWriteStream, mkdirSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { WriteStream } from 'node:fs';
 
-const LOG_DIR = 'logs';
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = join(__dirname, '..');
+const LOG_DIR = join(PROJECT_ROOT, 'logs');
 const MAX_LOG_FILES = 10;
 
 let logStream: WriteStream;
@@ -82,4 +85,8 @@ export function createLogger(tag: string) {
     error: (msg: string, ...args: unknown[]) => write('ERROR', tag, msg, ...args),
     debug: (msg: string, ...args: unknown[]) => write('DEBUG', tag, msg, ...args),
   };
+}
+
+export function closeLogger() {
+  logStream?.end();
 }

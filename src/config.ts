@@ -6,6 +6,9 @@ export interface Config {
   allowedUserIds: string[];
   claudeCliPath: string;
   claudeWorkDir: string;
+  allowedBaseDirs: string[];
+  claudeSkipPermissions: boolean;
+  claudeTimeoutMs: number;
 }
 
 export function loadConfig(): Config {
@@ -24,5 +27,27 @@ export function loadConfig(): Config {
   const claudeCliPath = process.env.CLAUDE_CLI_PATH ?? 'claude';
   const claudeWorkDir = process.env.CLAUDE_WORK_DIR ?? process.cwd();
 
-  return { feishuAppId: appId, feishuAppSecret: appSecret, allowedUserIds, claudeCliPath, claudeWorkDir };
+  const baseDirsRaw = process.env.ALLOWED_BASE_DIRS ?? '';
+  const allowedBaseDirs = baseDirsRaw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  // If no base dirs configured, default to claudeWorkDir
+  if (allowedBaseDirs.length === 0) {
+    allowedBaseDirs.push(claudeWorkDir);
+  }
+
+  const claudeSkipPermissions = process.env.CLAUDE_SKIP_PERMISSIONS === 'true';
+  const claudeTimeoutMs = parseInt(process.env.CLAUDE_TIMEOUT_MS ?? '300000', 10);
+
+  return {
+    feishuAppId: appId,
+    feishuAppSecret: appSecret,
+    allowedUserIds,
+    claudeCliPath,
+    claudeWorkDir,
+    allowedBaseDirs,
+    claudeSkipPermissions,
+    claudeTimeoutMs,
+  };
 }

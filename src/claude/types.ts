@@ -42,3 +42,22 @@ export interface StreamResult {
 }
 
 export type StreamEvent = StreamInit | StreamContentBlockDelta | StreamAssistantMessage | StreamResult | { type: string; [key: string]: unknown };
+
+export function isStreamInit(event: StreamEvent): event is StreamInit {
+  return event.type === 'system' && 'subtype' in event && event.subtype === 'init';
+}
+
+export function isContentBlockDelta(event: StreamEvent): event is StreamContentBlockDelta {
+  return (
+    event.type === 'stream_event' &&
+    'event' in event &&
+    typeof event.event === 'object' &&
+    event.event !== null &&
+    'type' in event.event &&
+    event.event.type === 'content_block_delta'
+  );
+}
+
+export function isStreamResult(event: StreamEvent): event is StreamResult {
+  return event.type === 'result' && 'subtype' in event;
+}

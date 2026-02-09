@@ -57,12 +57,16 @@ export async function sendFinalCards(chatId: string, messageId: string, fullCont
 
 export async function sendTextReply(chatId: string, text: string) {
   const client = getClient();
-  await client.im.v1.message.create({
-    params: { receive_id_type: 'chat_id' },
-    data: {
-      receive_id: chatId,
-      content: JSON.stringify({ text }),
-      msg_type: 'text',
-    },
-  });
+  try {
+    await client.im.v1.message.create({
+      params: { receive_id_type: 'chat_id' },
+      data: {
+        receive_id: chatId,
+        content: JSON.stringify({ text }),
+        msg_type: 'text',
+      },
+    });
+  } catch (err) {
+    log.error('Failed to send text reply:', err);
+  }
 }

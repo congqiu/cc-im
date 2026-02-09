@@ -1,22 +1,33 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Session');
 
-const SESSIONS_FILE = 'data/sessions.json';
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = join(__dirname, '..', '..');
+const SESSIONS_FILE = join(PROJECT_ROOT, 'data', 'sessions.json');
 
 interface UserSession {
   sessionId?: string;
   workDir: string;
 }
 
+function isUserSession(val: unknown): val is UserSession {
+  if (typeof val !== 'object' || val === null) return false;
+  const obj = val as Record<string, unknown>;
+  return typeof obj.workDir === 'string';
+}
+
 export class SessionManager {
   private sessions: Map<string, UserSession> = new Map();
   private defaultWorkDir: string;
+  private allowedBaseDirs: string[];
 
-  constructor(defaultWorkDir: string) {
+  constructor(defaultWorkDir: string, allowedBaseDirs: string[]) {
     this.defaultWorkDir = defaultWorkDir;
+    this.allowedBaseDirs = allowedBaseDirs;
     this.load();
   }
 
@@ -42,6 +53,13 @@ export class SessionManager {
     const resolved = resolve(workDir);
     if (!existsSync(resolved)) {
       throw new Error(`目录不存在: ${resolved}`);
+    }
+    // Check path is under an allowed base directory
+    const allowed = this.allowedBaseDirs.some(
+      (base) => resolved === base || resolved.startsWith(base + '/')
+    );
+    if (!allowed) {
+      throw new Error(`目录不在允许范围内: ${resolved}\n允许的目录: ${this.allowedBaseDirs.join(', ')}`);
     }
     const session = this.sessions.get(userId);
     if (session) {
@@ -72,8 +90,8 @@ export class SessionManager {
           if (typeof val === 'string') {
             // Migrate old format: userId -> sessionId
             this.sessions.set(key, { sessionId: val, workDir: this.defaultWorkDir });
-          } else {
-            this.sessions.set(key, val as UserSession);
+          } else if (isUserSession(val)) {
+            this.sessions.set(key, val);
           }
         }
         log.info(`Loaded ${this.sessions.size} sessions`);
