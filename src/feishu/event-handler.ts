@@ -183,10 +183,6 @@ async function handleClaudeRequest(
         clearTimeout(pendingUpdate);
         pendingUpdate = null;
       }
-      if (timeoutTimer) {
-        clearTimeout(timeoutTimer);
-        timeoutTimer = null;
-      }
     };
 
     const settle = () => {
@@ -216,22 +212,6 @@ async function handleClaudeRequest(
         }, THROTTLE_MS - elapsed);
       }
     };
-
-    // Timeout mechanism
-    let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
-    if (config.claudeTimeoutMs > 0) {
-      timeoutTimer = setTimeout(async () => {
-        if (settled) return;
-        log.warn(`Claude timeout for user ${userId} after ${config.claudeTimeoutMs}ms`);
-        handle.abort();
-        try {
-          await updateCard(messageId, latestContent || '(执行超时)', 'error', '执行超时');
-        } catch (err) {
-          log.error('Failed to send timeout card:', err);
-        }
-        settle();
-      }, config.claudeTimeoutMs);
-    }
 
     const handle = runClaude(config.claudeCliPath, prompt, sessionId, workDir, {
       onSessionId: (id) => {
@@ -278,7 +258,10 @@ async function handleClaudeRequest(
         }
         settle();
       },
-    }, { skipPermissions: config.claudeSkipPermissions });
+    }, {
+      skipPermissions: config.claudeSkipPermissions,
+      timeoutMs: config.claudeTimeoutMs,
+    });
   });
 }
 

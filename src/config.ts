@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { readFileSync } from 'node:fs';
+import { readFileSync, accessSync, constants } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -26,9 +26,21 @@ interface FileConfig {
 }
 
 function loadFileConfig(): FileConfig {
+  const configPath = join(homedir(), '.cc-bot');
   try {
-    return JSON.parse(readFileSync(join(homedir(), '.cc-bot'), 'utf-8'));
-  } catch {
+    const content = readFileSync(configPath, 'utf-8');
+    return JSON.parse(content);
+  } catch (err: unknown) {
+    const error = err as NodeJS.ErrnoException;
+    // ENOENT 是正常的（文件不存在），其他错误需要提示
+    if (error.code !== 'ENOENT') {
+      if (error instanceof SyntaxError) {
+        console.warn(`警告: 配置文件 ${configPath} 格式错误，将使用环境变量`);
+        console.warn(`错误详情: ${error.message}`);
+      } else {
+        console.warn(`警告: 无法读取配置文件 ${configPath}: ${error.message}`);
+      }
+    }
     return {};
   }
 }
@@ -71,6 +83,19 @@ export function loadConfig(): Config {
     process.env.CLAUDE_TIMEOUT_MS !== undefined
       ? parseInt(process.env.CLAUDE_TIMEOUT_MS, 10) || 300000
       : file.claudeTimeoutMs ?? 300000;
+
+  // 验证 Claude CLI 路径
+  try {
+    accessSync(claudeCliPath, constants.F_OK | constants.X_OK);
+  } catch (err) {
+    throw new Error(
+      `Claude CLI 不可访问或不可执行: ${claudeCliPath}\n` +
+      `请检查：\n` +
+      `  1. 文件是否存在\n` +
+      `  2. 是否有执行权限\n` +
+      `  3. CLAUDE_CLI_PATH 环境变量或 ~/.cc-bot 配置是否正确`
+    );
+  }
 
   return {
     feishuAppId: appId,

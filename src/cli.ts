@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { join } from 'path';
-import { existsSync, writeFileSync, unlinkSync, mkdirSync, readFileSync } from 'fs';
+import { existsSync, writeFileSync, unlinkSync, mkdirSync, readFileSync, openSync, closeSync } from 'fs';
 import { execSync } from 'child_process';
 
 const DATA_DIR = join(process.env.HOME || process.env.USERPROFILE || '/tmp', '.cc-bot');
@@ -48,18 +48,42 @@ async function stop() {
 }
 
 async function start() {
-  const pid = getPidFromFile();
-  if (pid && isRunning(pid)) {
-    console.log(`服务已在运行中 (PID: ${pid})`);
+  // 先检查旧的 PID 文件
+  const oldPid = getPidFromFile();
+  if (oldPid && isRunning(oldPid)) {
+    console.log(`服务已在运行中 (PID: ${oldPid})`);
     console.log(`请先运行: cc-bot stop`);
     process.exit(1);
+  }
+
+  // 清理失效的 PID 文件
+  if (oldPid && !isRunning(oldPid) && existsSync(PID_FILE)) {
+    unlinkSync(PID_FILE);
   }
 
   if (!existsSync(DATA_DIR)) {
     mkdirSync(DATA_DIR, { recursive: true });
   }
 
-  writeFileSync(PID_FILE, String(process.pid));
+  // 使用 exclusive 模式写入 PID 文件，防止竞态条件
+  let fd: number | null = null;
+  try {
+    // 'wx' 模式：如果文件存在会抛出错误，原子操作
+    fd = openSync(PID_FILE, 'wx');
+    writeFileSync(fd, String(process.pid));
+    closeSync(fd);
+    fd = null;
+  } catch (err: unknown) {
+    if (fd !== null) {
+      try { closeSync(fd); } catch {}
+    }
+    const error = err as NodeJS.ErrnoException;
+    if (error.code === 'EEXIST') {
+      console.error('服务正在启动中或 PID 文件被锁定，请稍后再试');
+      process.exit(1);
+    }
+    throw err;
+  }
 
   try {
     const { main } = await import('./index.js');

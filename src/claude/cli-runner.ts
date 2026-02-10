@@ -22,7 +22,7 @@ export function runClaude(
   sessionId: string | undefined,
   workDir: string,
   callbacks: ClaudeRunCallbacks,
-  options?: { skipPermissions?: boolean },
+  options?: { skipPermissions?: boolean; timeoutMs?: number },
 ): ClaudeRunHandle {
   const args = [
     '-p',
@@ -50,6 +50,17 @@ export function runClaude(
   let accumulated = '';
   let accumulatedThinking = '';
   let completed = false;
+  let timeoutHandle: NodeJS.Timeout | null = null;
+
+  // 设置超时
+  if (options?.timeoutMs && options.timeoutMs > 0) {
+    timeoutHandle = setTimeout(() => {
+      if (!completed && !child.killed) {
+        child.kill('SIGTERM');
+        callbacks.onError(`执行超时（${options.timeoutMs}ms），已终止进程`);
+      }
+    }, options.timeoutMs);
+  }
 
   const rl = createInterface({ input: child.stdout! });
 
@@ -78,6 +89,9 @@ export function runClaude(
     const result = extractResult(event);
     if (result) {
       completed = true;
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
       result.accumulated = accumulated;
       if (!accumulated && result.result) {
         accumulated = result.result;
@@ -86,12 +100,31 @@ export function runClaude(
     }
   });
 
-  const MAX_STDERR_LEN = 10 * 1024; // 保留最后 10KB
-  let stderrData = '';
+  // 保留首部和尾部的 stderr，避免丢失关键错误信息
+  const MAX_HEAD_LEN = 4 * 1024; // 保留前 4KB
+  const MAX_TAIL_LEN = 6 * 1024; // 保留后 6KB
+  let stderrHead = '';
+  let stderrTail = '';
+  let stderrTotal = 0;
+  let headFull = false;
+
   child.stderr?.on('data', (chunk: Buffer) => {
-    stderrData += chunk.toString();
-    if (stderrData.length > MAX_STDERR_LEN) {
-      stderrData = stderrData.slice(-MAX_STDERR_LEN);
+    const text = chunk.toString();
+    stderrTotal += text.length;
+
+    if (!headFull) {
+      const headRoom = MAX_HEAD_LEN - stderrHead.length;
+      if (headRoom > 0) {
+        stderrHead += text.slice(0, headRoom);
+        if (stderrHead.length >= MAX_HEAD_LEN) {
+          headFull = true;
+        }
+      }
+    }
+
+    stderrTail += text;
+    if (stderrTail.length > MAX_TAIL_LEN) {
+      stderrTail = stderrTail.slice(-MAX_TAIL_LEN);
     }
   });
 
@@ -102,8 +135,20 @@ export function runClaude(
 
   // 使用 rl 的 close 事件而非 child 的 close，确保所有行都处理完毕
   rl.on('close', () => {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
     if (!completed) {
       if (exitCode !== null && exitCode !== 0) {
+        // 组合首尾 stderr 信息
+        let stderrData = '';
+        if (stderrTotal <= MAX_HEAD_LEN + MAX_TAIL_LEN) {
+          // 内容未超限，直接使用
+          stderrData = stderrHead + (headFull ? stderrTail : '');
+        } else {
+          // 内容超限，显示首尾部分
+          stderrData = stderrHead + `\n\n... (省略 ${stderrTotal - MAX_HEAD_LEN - MAX_TAIL_LEN} 字节) ...\n\n` + stderrTail;
+        }
         callbacks.onError(stderrData || `Claude CLI exited with code ${exitCode}`);
       } else {
         // Completed without a result event — treat accumulated text as result
@@ -119,6 +164,9 @@ export function runClaude(
   });
 
   child.on('error', (err) => {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
     if (!completed) {
       callbacks.onError(`Failed to start Claude CLI: ${err.message}`);
     }
@@ -127,6 +175,9 @@ export function runClaude(
   return {
     process: child,
     abort: () => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
       if (!child.killed) {
         child.kill('SIGTERM');
       }
