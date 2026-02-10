@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLogger } from '../logger.js';
@@ -13,6 +14,7 @@ const SESSIONS_FILE = join(PROJECT_ROOT, 'data', 'sessions.json');
 interface UserSession {
   sessionId?: string;
   workDir: string;
+  activeConvId?: string;
 }
 
 function isUserSession(val: unknown): val is UserSession {
@@ -23,6 +25,7 @@ function isUserSession(val: unknown): val is UserSession {
 
 export class SessionManager {
   private sessions: Map<string, UserSession> = new Map();
+  private convSessionMap: Map<string, string> = new Map(); // userId:convId -> sessionId
   private defaultWorkDir: string;
   private allowedBaseDirs: string[];
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -48,6 +51,46 @@ export class SessionManager {
     this.save();
   }
 
+  private generateConvId(): string {
+    return randomBytes(4).toString('hex');
+  }
+
+  getConvId(userId: string): string {
+    const session = this.sessions.get(userId);
+    if (session) {
+      if (!session.activeConvId) {
+        session.activeConvId = this.generateConvId();
+        this.save();
+      }
+      return session.activeConvId;
+    }
+    const convId = this.generateConvId();
+    this.sessions.set(userId, { workDir: this.defaultWorkDir, activeConvId: convId });
+    this.save();
+    return convId;
+  }
+
+  getSessionIdForConv(userId: string, convId: string): string | undefined {
+    // 如果是当前活跃 convId，直接从 session 读
+    const session = this.sessions.get(userId);
+    if (session?.activeConvId === convId) {
+      return session.sessionId;
+    }
+    // 否则从 convSessionMap 读（旧 convId 的 sessionId）
+    return this.convSessionMap.get(`${userId}:${convId}`);
+  }
+
+  setSessionIdForConv(userId: string, convId: string, sessionId: string) {
+    const session = this.sessions.get(userId);
+    if (session?.activeConvId === convId) {
+      session.sessionId = sessionId;
+      this.save();
+    } else {
+      // 旧 convId，存到 convSessionMap
+      this.convSessionMap.set(`${userId}:${convId}`, sessionId);
+    }
+  }
+
   getWorkDir(userId: string): string {
     return this.sessions.get(userId)?.workDir ?? this.defaultWorkDir;
   }
@@ -67,24 +110,34 @@ export class SessionManager {
     }
     const session = this.sessions.get(userId);
     if (session) {
+      // 转存旧 convId 的 sessionId，供仍在运行的旧任务使用
+      if (session.activeConvId && session.sessionId) {
+        this.convSessionMap.set(`${userId}:${session.activeConvId}`, session.sessionId);
+      }
       session.workDir = resolved;
-      session.sessionId = undefined; // 切换目录时清除 session
+      session.sessionId = undefined;
+      session.activeConvId = this.generateConvId();
     } else {
-      this.sessions.set(userId, { workDir: resolved });
+      this.sessions.set(userId, { workDir: resolved, activeConvId: this.generateConvId() });
     }
     // 切换目录也立即同步保存，确保会话重置生效
     this.flushSync();
-    log.info(`WorkDir changed for user ${userId}: ${resolved}, session cleared`);
+    log.info(`WorkDir changed for user ${userId}: ${resolved}, session cleared, new convId=${this.sessions.get(userId)?.activeConvId}`);
     return resolved;
   }
 
   clearSession(userId: string): boolean {
     const session = this.sessions.get(userId);
-    if (session?.sessionId) {
+    if (session) {
+      // 转存旧 convId 的 sessionId，供仍在运行的旧任务使用
+      if (session.activeConvId && session.sessionId) {
+        this.convSessionMap.set(`${userId}:${session.activeConvId}`, session.sessionId);
+      }
       session.sessionId = undefined;
+      session.activeConvId = this.generateConvId();
       // 立即同步保存，确保清除操作生效
       this.flushSync();
-      log.info(`Session cleared for user: ${userId}`);
+      log.info(`Session cleared for user: ${userId}, new convId=${session.activeConvId}`);
       return true;
     }
     return false;
@@ -99,6 +152,10 @@ export class SessionManager {
             // Migrate old format: userId -> sessionId
             this.sessions.set(key, { sessionId: val, workDir: this.defaultWorkDir });
           } else if (isUserSession(val)) {
+            // 旧数据无 activeConvId，自动生成
+            if (!val.activeConvId) {
+              val.activeConvId = this.generateConvId();
+            }
             this.sessions.set(key, val);
           }
         }

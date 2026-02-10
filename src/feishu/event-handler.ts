@@ -171,7 +171,7 @@ export function createEventDispatcher(config: Config) {
         const cleared = sessionManager.clearSession(senderId);
         if (cleared) {
           log.info(`User ${senderId} cleared session successfully`);
-          await sendTextReply(chatId, '✅ 会话已清除，下次对话将开始新的上下文。');
+          await sendTextReply(chatId, '✅ 会话已清除，新消息将开始新的上下文，并可与之前仍在执行的任务并发运行。');
         } else {
           log.warn(`User ${senderId} tried to clear but no session exists`);
           await sendTextReply(chatId, '当前没有活动会话。');
@@ -215,12 +215,13 @@ export function createEventDispatcher(config: Config) {
         return;
       }
 
-      // Snapshot workDir at enqueue time so /cd during queue wait doesn't affect this task
+      // Snapshot workDir and convId at enqueue time so /cd or /clear during queue wait doesn't affect this task
       const workDirSnapshot = sessionManager.getWorkDir(senderId);
+      const convIdSnapshot = sessionManager.getConvId(senderId);
 
       // Enqueue the task
-      const enqueueResult = requestQueue.enqueue(senderId, text, async (prompt) => {
-        await handleClaudeRequest(config, sessionManager, senderId, chatId, prompt, workDirSnapshot);
+      const enqueueResult = requestQueue.enqueue(senderId, convIdSnapshot, text, async (prompt) => {
+        await handleClaudeRequest(config, sessionManager, senderId, chatId, prompt, workDirSnapshot, convIdSnapshot);
       });
 
       if (enqueueResult === 'rejected') {
@@ -242,10 +243,11 @@ async function handleClaudeRequest(
   chatId: string,
   prompt: string,
   workDir: string,
+  convId: string,
 ) {
-  const sessionId = sessionManager.getSessionId(userId);
+  const sessionId = sessionManager.getSessionIdForConv(userId, convId);
 
-  log.info(`Running Claude for user ${userId}, workDir=${workDir}, sessionId=${sessionId ?? 'new'}`);
+  log.info(`Running Claude for user ${userId}, convId=${convId}, workDir=${workDir}, sessionId=${sessionId ?? 'new'}`);
 
   // Send thinking card
   let messageId: string;
@@ -314,8 +316,8 @@ async function handleClaudeRequest(
 
     const handle = runClaude(config.claudeCliPath, prompt, sessionId, workDir, {
       onSessionId: (id) => {
-        sessionManager.setSessionId(userId, id);
-        log.info(`Session created for user ${userId}: ${id}`);
+        sessionManager.setSessionIdForConv(userId, convId, id);
+        log.info(`Session created for user ${userId}, convId=${convId}: ${id}`);
       },
       onThinking: (thinking) => {
         // 思考阶段也更新卡片，让用户看到 Claude 在想什么
