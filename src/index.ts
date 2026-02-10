@@ -5,9 +5,9 @@ import { initLogger, createLogger, closeLogger } from './logger.js';
 
 const log = createLogger('Main');
 
-function main() {
+export function main() {
   initLogger();
-  log.info('Starting cc-feishu bridge service...');
+  log.info('Starting cc-bot bridge service...');
 
   const config = loadConfig();
   log.info(`Allowed users: ${config.allowedUserIds.length === 0 ? 'ALL (dev mode)' : config.allowedUserIds.join(', ')}`);
@@ -34,4 +34,8 @@ function main() {
   process.on('SIGTERM', shutdown);
 }
 
-main();
+// Run directly when executed as main module
+const isDirectRun = process.argv[1]?.endsWith('/index.js') || process.argv[1]?.endsWith('/index.ts');
+if (isDirectRun) {
+  main();
+}

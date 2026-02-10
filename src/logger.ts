@@ -58,7 +58,7 @@ export function initLogger() {
       rotateOldLogs();
       logStream = createWriteStream(join(LOG_DIR, getLogFileName()), { flags: 'a' });
       scheduleReopen();
-    }, ms);
+    }, ms).unref();
   };
   scheduleReopen();
 }

@@ -1,10 +1,11 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { parseStreamLine, extractTextDelta, extractResult, type ParsedResult } from './stream-parser.js';
+import { parseStreamLine, extractTextDelta, extractThinkingDelta, extractResult, type ParsedResult } from './stream-parser.js';
 import { isStreamInit } from './types.js';
 
 export interface ClaudeRunCallbacks {
   onText: (accumulated: string) => void;
+  onThinking?: (accumulated: string) => void;
   onComplete: (result: ParsedResult) => void;
   onError: (error: string) => void;
   onSessionId?: (sessionId: string) => void;
@@ -38,7 +39,7 @@ export function runClaude(
     args.push('--resume', sessionId);
   }
 
-  args.push(prompt);
+  args.push('--', prompt);
 
   const child = spawn(cliPath, args, {
     cwd: workDir,
@@ -47,6 +48,7 @@ export function runClaude(
   });
 
   let accumulated = '';
+  let accumulatedThinking = '';
   let completed = false;
 
   const rl = createInterface({ input: child.stdout! });
@@ -66,6 +68,13 @@ export function runClaude(
       return;
     }
 
+    const thinking = extractThinkingDelta(event);
+    if (thinking) {
+      accumulatedThinking += thinking.text;
+      callbacks.onThinking?.(accumulatedThinking);
+      return;
+    }
+
     const result = extractResult(event);
     if (result) {
       completed = true;
@@ -77,15 +86,25 @@ export function runClaude(
     }
   });
 
+  const MAX_STDERR_LEN = 10 * 1024; // 保留最后 10KB
   let stderrData = '';
   child.stderr?.on('data', (chunk: Buffer) => {
     stderrData += chunk.toString();
+    if (stderrData.length > MAX_STDERR_LEN) {
+      stderrData = stderrData.slice(-MAX_STDERR_LEN);
+    }
   });
 
+  let exitCode: number | null = null;
   child.on('close', (code) => {
+    exitCode = code;
+  });
+
+  // 使用 rl 的 close 事件而非 child 的 close，确保所有行都处理完毕
+  rl.on('close', () => {
     if (!completed) {
-      if (code !== 0) {
-        callbacks.onError(stderrData || `Claude CLI exited with code ${code}`);
+      if (exitCode !== null && exitCode !== 0) {
+        callbacks.onError(stderrData || `Claude CLI exited with code ${exitCode}`);
       } else {
         // Completed without a result event — treat accumulated text as result
         callbacks.onComplete({

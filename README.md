@@ -1,4 +1,4 @@
-# cc-feishu
+# cc-bot
 
 飞书机器人 ↔ Claude Code CLI 桥接服务。
 
@@ -14,6 +14,19 @@
 
 ## 快速开始
 
+### 方式一：npx 一键启动
+
+```bash
+# 配置环境变量
+export FEISHU_APP_ID=your_app_id
+export FEISHU_APP_SECRET=your_app_secret
+
+# 启动服务
+npx cc-bot
+```
+
+### 方式二：从源码运行
+
 ```bash
 # 安装依赖
 pnpm install
@@ -22,8 +35,12 @@ pnpm install
 cp .env.example .env
 # 编辑 .env 填入飞书应用凭证
 
-# 启动服务
+# 开发模式
 pnpm dev
+
+# 生产模式
+pnpm build
+pnpm start
 ```
 
 ## 环境变量
@@ -35,6 +52,9 @@ pnpm dev
 | `ALLOWED_USER_IDS` | 白名单 open_id，逗号分隔，留空不限制 | 空 |
 | `CLAUDE_CLI_PATH` | Claude CLI 路径 | `claude` |
 | `CLAUDE_WORK_DIR` | 默认工作目录（用户可通过 `/cd` 切换） | 当前目录 |
+| `ALLOWED_BASE_DIRS` | 允许 `/cd` 切换的基础目录，逗号分隔 | 同 `CLAUDE_WORK_DIR` |
+| `CLAUDE_SKIP_PERMISSIONS` | 跳过 CLI 权限检查 | `false` |
+| `CLAUDE_TIMEOUT_MS` | 执行超时（毫秒） | `300000` |
 
 ## 飞书应用配置
 

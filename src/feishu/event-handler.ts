@@ -45,8 +45,15 @@ export function createEventDispatcher(config: Config) {
 
       const chatId = message.chat_id;
       const senderId = data.sender?.sender_id?.open_id;
+      const chatType = message.chat_type; // 'p2p' or 'group'
 
       if (!senderId) return;
+
+      // 群聊中只处理 @机器人 的消息
+      if (chatType === 'group') {
+        const mentions: Array<{ key: string; id: { open_id?: string }; name: string }> | undefined = message.mentions;
+        if (!mentions || mentions.length === 0) return;
+      }
 
       // Access control
       if (!accessControl.isAllowed(senderId)) {
@@ -68,6 +75,9 @@ export function createEventDispatcher(config: Config) {
       } catch {
         return;
       }
+
+      // 去掉飞书 @ 占位符（如 @_user_1）
+      text = text.replace(/@_user_\d+/g, '').trim();
 
       if (!text?.trim()) return;
 
@@ -120,13 +130,15 @@ export function createEventDispatcher(config: Config) {
       const workDirSnapshot = sessionManager.getWorkDir(senderId);
 
       // Enqueue the task
-      const accepted = requestQueue.enqueue(senderId, text, async (prompt) => {
+      const enqueueResult = requestQueue.enqueue(senderId, text, async (prompt) => {
         await handleClaudeRequest(config, sessionManager, senderId, chatId, prompt, workDirSnapshot);
       });
 
-      if (!accepted) {
+      if (enqueueResult === 'rejected') {
         log.warn(`Queue full for user: ${senderId}`);
         await sendTextReply(chatId, '您的请求队列已满，请等待当前任务完成后再试。');
+      } else if (enqueueResult === 'queued') {
+        await sendTextReply(chatId, '前面还有任务在处理中，您的请求已排队等待。');
       }
     },
   });
@@ -226,10 +238,16 @@ async function handleClaudeRequest(
         sessionManager.setSessionId(userId, id);
         log.info(`Session created for user ${userId}: ${id}`);
       },
+      onThinking: (thinking) => {
+        // 思考阶段也更新卡片，让用户看到 Claude 在想什么
+        const display = `💭 **思考中...**\n\n${thinking}`;
+        throttledUpdate(display);
+      },
       onText: (accumulated) => {
         throttledUpdate(accumulated);
       },
       onComplete: async (result) => {
+        if (settled) return;
         cleanup();
 
         const note = result.cost > 0
@@ -248,6 +266,7 @@ async function handleClaudeRequest(
         settle();
       },
       onError: async (error) => {
+        if (settled) return;
         cleanup();
 
         log.error(`Claude error for user ${userId}: ${error}`);

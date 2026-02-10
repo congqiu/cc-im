@@ -31,4 +31,5 @@ export function initFeishu(config: Config, eventDispatcher: Lark.EventDispatcher
 
 export function stopFeishu() {
   log.info('Stopping WSClient...');
+  wsClient?.close();
 }

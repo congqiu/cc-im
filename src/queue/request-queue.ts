@@ -14,13 +14,16 @@ interface UserQueue {
 
 const MAX_QUEUE_SIZE = 3;
 
+export type EnqueueResult = 'running' | 'queued' | 'rejected';
+
 export class RequestQueue {
   private queues: Map<string, UserQueue> = new Map();
 
   /**
-   * Enqueue a task for a user. Returns false if the queue is full.
+   * Enqueue a task for a user.
+   * Returns 'running' if started immediately, 'queued' if waiting, 'rejected' if full.
    */
-  enqueue(userId: string, prompt: string, execute: (prompt: string) => Promise<void>): boolean {
+  enqueue(userId: string, prompt: string, execute: (prompt: string) => Promise<void>): EnqueueResult {
     let queue = this.queues.get(userId);
     if (!queue) {
       queue = { running: false, tasks: [] };
@@ -28,19 +31,19 @@ export class RequestQueue {
     }
 
     if (queue.running && queue.tasks.length >= MAX_QUEUE_SIZE) {
-      return false;
+      return 'rejected';
     }
 
     if (queue.running) {
       queue.tasks.push({ prompt, execute });
       log.info(`Queued task for user ${userId}, queue size: ${queue.tasks.length}`);
-      return true;
+      return 'queued';
     }
 
     // Not running, start immediately
     queue.running = true;
     this.run(userId, prompt, execute);
-    return true;
+    return 'running';
   }
 
   private async run(userId: string, prompt: string, execute: (prompt: string) => Promise<void>) {

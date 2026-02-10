@@ -27,8 +27,15 @@ export function parseStreamLine(line: string): StreamEvent | null {
 }
 
 export function extractTextDelta(event: StreamEvent): ParsedDelta | null {
-  if (isContentBlockDelta(event) && event.event.delta?.text) {
+  if (isContentBlockDelta(event) && event.event.delta?.type === 'text_delta' && event.event.delta.text) {
     return { text: event.event.delta.text };
+  }
+  return null;
+}
+
+export function extractThinkingDelta(event: StreamEvent): ParsedDelta | null {
+  if (isContentBlockDelta(event) && event.event.delta?.type === 'thinking_delta' && event.event.delta.thinking) {
+    return { text: event.event.delta.thinking };
   }
   return null;
 }

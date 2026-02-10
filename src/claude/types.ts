@@ -13,8 +13,9 @@ export interface StreamContentBlockDelta {
     type: 'content_block_delta';
     index: number;
     delta: {
-      type: 'text_delta';
-      text: string;
+      type: string;
+      text?: string;
+      thinking?: string;
     };
   };
 }

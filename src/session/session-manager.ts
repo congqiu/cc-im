@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLogger } from '../logger.js';
@@ -24,6 +25,8 @@ export class SessionManager {
   private sessions: Map<string, UserSession> = new Map();
   private defaultWorkDir: string;
   private allowedBaseDirs: string[];
+  private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly SAVE_DEBOUNCE_MS = 500;
 
   constructor(defaultWorkDir: string, allowedBaseDirs: string[]) {
     this.defaultWorkDir = defaultWorkDir;
@@ -50,7 +53,8 @@ export class SessionManager {
   }
 
   setWorkDir(userId: string, workDir: string): string {
-    const resolved = resolve(workDir);
+    const currentDir = this.getWorkDir(userId);
+    const resolved = resolve(currentDir, workDir);
     if (!existsSync(resolved)) {
       throw new Error(`目录不存在: ${resolved}`);
     }
@@ -102,6 +106,14 @@ export class SessionManager {
   }
 
   private save() {
+    if (this.saveTimer) return;
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null;
+      this.flush();
+    }, SessionManager.SAVE_DEBOUNCE_MS);
+  }
+
+  private flush() {
     try {
       const dir = dirname(SESSIONS_FILE);
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -109,7 +121,9 @@ export class SessionManager {
       for (const [key, val] of this.sessions) {
         obj[key] = val;
       }
-      writeFileSync(SESSIONS_FILE, JSON.stringify(obj, null, 2));
+      writeFile(SESSIONS_FILE, JSON.stringify(obj, null, 2)).catch((err) => {
+        log.error('Failed to save sessions:', err);
+      });
     } catch (err) {
       log.error('Failed to save sessions:', err);
     }
