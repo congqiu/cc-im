@@ -12,6 +12,7 @@ export interface Config {
   allowedBaseDirs: string[];
   claudeSkipPermissions: boolean;
   claudeTimeoutMs: number;
+  claudeModel?: string;
 }
 
 interface FileConfig {

@@ -1,5 +1,6 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
 import { readFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { Config } from '../config.js';
@@ -13,6 +14,30 @@ import { createLogger } from '../logger.js';
 const log = createLogger('EventHandler');
 
 const THROTTLE_MS = 200;
+
+// 费用跟踪（按用户累积）
+interface CostRecord {
+  totalCost: number;
+  totalDurationMs: number;
+  requestCount: number;
+}
+const userCosts = new Map<string, CostRecord>();
+
+function trackCost(userId: string, cost: number, durationMs: number) {
+  const record = userCosts.get(userId) ?? { totalCost: 0, totalDurationMs: 0, requestCount: 0 };
+  record.totalCost += cost;
+  record.totalDurationMs += durationMs;
+  record.requestCount += 1;
+  userCosts.set(userId, record);
+}
+
+// 仅终端模式可用的命令
+const TERMINAL_ONLY_COMMANDS = new Set([
+  '/context', '/rewind', '/resume', '/copy', '/export',
+  '/config', '/init', '/memory', '/permissions', '/theme',
+  '/vim', '/statusline', '/terminal-setup', '/debug',
+  '/tasks', '/mcp', '/teleport', '/add-dir',
+]);
 
 // 跟踪正在执行的任务
 interface TaskInfo {
@@ -215,6 +240,144 @@ export function createEventDispatcher(config: Config) {
         return;
       }
 
+      // Handle /help command
+      if (text.trim() === '/help') {
+        const helpText = [
+          '📋 可用命令:',
+          '',
+          '/help           - 显示此帮助信息',
+          '/clear          - 清除会话，开始新对话',
+          '/compact [说明]  - 压缩对话上下文（节省 token）',
+          '/cost           - 显示本次会话费用统计',
+          '/status         - 显示 Claude Code 状态信息',
+          '/model [模型名]  - 查看或切换模型',
+          '/doctor         - 检查 Claude Code 健康状态',
+          '/cd <路径>      - 切换工作目录',
+          '/pwd            - 查看当前工作目录',
+          '/list           - 列出所有工作区',
+          '/todos          - 列出当前 TODO 项',
+        ].join('\n');
+        await sendTextReply(chatId, helpText);
+        return;
+      }
+
+      // Handle /cost command
+      if (text.trim() === '/cost') {
+        const record = userCosts.get(senderId);
+        if (!record || record.requestCount === 0) {
+          await sendTextReply(chatId, '暂无费用记录（本次服务启动后）。');
+        } else {
+          const lines = [
+            '💰 费用统计（本次服务启动后）:',
+            '',
+            `请求次数: ${record.requestCount}`,
+            `总费用: $${record.totalCost.toFixed(4)}`,
+            `总耗时: ${(record.totalDurationMs / 1000).toFixed(1)}s`,
+            `平均每次: $${(record.totalCost / record.requestCount).toFixed(4)}`,
+          ];
+          await sendTextReply(chatId, lines.join('\n'));
+        }
+        return;
+      }
+
+      // Handle /status command
+      if (text.trim() === '/status') {
+        const version = await getClaudeVersion(config.claudeCliPath);
+        const workDir = sessionManager.getWorkDir(senderId);
+        const convId = sessionManager.getConvId(senderId);
+        const sessionId = sessionManager.getSessionIdForConv(senderId, convId);
+        const record = userCosts.get(senderId);
+        const lines = [
+          '📊 Claude Code 状态:',
+          '',
+          `版本: ${version}`,
+          `工作目录: ${workDir}`,
+          `会话 ID: ${sessionId ?? '（无）'}`,
+          `跳过权限: ${config.claudeSkipPermissions ? '是' : '否'}`,
+          `超时设置: ${config.claudeTimeoutMs / 1000}s`,
+          `累计费用: $${record?.totalCost.toFixed(4) ?? '0.0000'}`,
+        ];
+        await sendTextReply(chatId, lines.join('\n'));
+        return;
+      }
+
+      // Handle /model command
+      if (text.trim() === '/model' || text.trim().startsWith('/model ')) {
+        const modelArg = text.trim().slice(6).trim();
+        if (!modelArg) {
+          await sendTextReply(chatId, `当前模型: ${config.claudeModel ?? '默认 (由 Claude Code 决定)'}\n\n可选模型: sonnet, opus, haiku 或完整模型名\n用法: /model <模型名>`);
+        } else {
+          config.claudeModel = modelArg;
+          await sendTextReply(chatId, `模型已切换为: ${modelArg}\n后续对话将使用此模型。`);
+        }
+        return;
+      }
+
+      // Handle /doctor command
+      if (text.trim() === '/doctor') {
+        const version = await getClaudeVersion(config.claudeCliPath);
+        const lines = [
+          '🏥 Claude Code 健康检查:',
+          '',
+          `CLI 路径: ${config.claudeCliPath}`,
+          `版本: ${version}`,
+          `工作目录: ${sessionManager.getWorkDir(senderId)}`,
+          `允许的基础目录: ${config.allowedBaseDirs.join(', ')}`,
+          `活跃任务数: ${runningTasks.size}`,
+        ];
+        await sendTextReply(chatId, lines.join('\n'));
+        return;
+      }
+
+      // Handle /compact command - 通过 CLI 发送压缩请求
+      if (text.trim() === '/compact' || text.trim().startsWith('/compact ')) {
+        const convId = sessionManager.getConvId(senderId);
+        const sessionId = sessionManager.getSessionIdForConv(senderId, convId);
+        if (!sessionId) {
+          await sendTextReply(chatId, '当前没有活动会话，无需压缩。');
+          return;
+        }
+        const instructions = text.trim().slice(8).trim();
+        const compactPrompt = instructions
+          ? `请压缩并总结之前的对话上下文，聚焦于: ${instructions}`
+          : '请压缩并总结之前的对话上下文，保留关键信息。';
+
+        // 将 compact 作为普通请求排队执行
+        const workDirSnapshot = sessionManager.getWorkDir(senderId);
+        const enqueueResult = requestQueue.enqueue(senderId, convId, compactPrompt, async (prompt) => {
+          await handleClaudeRequest(config, sessionManager, senderId, chatId, prompt, workDirSnapshot, convId);
+        });
+        if (enqueueResult === 'rejected') {
+          await sendTextReply(chatId, '请求队列已满，请等待当前任务完成后再试。');
+        } else if (enqueueResult === 'queued') {
+          await sendTextReply(chatId, '前面还有任务在处理中，压缩请求已排队等待。');
+        }
+        return;
+      }
+
+      // Handle /todos command - 转发给 Claude
+      if (text.trim() === '/todos') {
+        const workDirSnapshot = sessionManager.getWorkDir(senderId);
+        const convIdSnapshot = sessionManager.getConvId(senderId);
+        const todosPrompt = '请列出当前项目中所有的 TODO 项（检查代码中的 TODO、FIXME、HACK 注释）。';
+        const enqueueResult = requestQueue.enqueue(senderId, convIdSnapshot, todosPrompt, async (prompt) => {
+          await handleClaudeRequest(config, sessionManager, senderId, chatId, prompt, workDirSnapshot, convIdSnapshot);
+        });
+        if (enqueueResult === 'rejected') {
+          await sendTextReply(chatId, '请求队列已满，请等待当前任务完成后再试。');
+        } else if (enqueueResult === 'queued') {
+          await sendTextReply(chatId, '前面还有任务在处理中，请求已排队等待。');
+        }
+        return;
+      }
+
+      // Handle terminal-only commands
+      const cmdName = text.trim().split(/\s+/)[0];
+      if (TERMINAL_ONLY_COMMANDS.has(cmdName)) {
+        await sendTextReply(chatId, `${cmdName} 命令仅在终端交互模式下可用，飞书端暂不支持。\n\n输入 /help 查看可用命令。`);
+        return;
+      }
+
       // Snapshot workDir and convId at enqueue time so /cd or /clear during queue wait doesn't affect this task
       const workDirSnapshot = sessionManager.getWorkDir(senderId);
       const convIdSnapshot = sessionManager.getConvId(senderId);
@@ -337,6 +500,9 @@ async function handleClaudeRequest(
 
         log.info(`Claude completed for user ${userId}: success=${result.success}, cost=$${result.cost.toFixed(4)}`);
 
+        // 累积费用统计
+        trackCost(userId, result.cost, result.durationMs);
+
         // 优先使用流式累积的原始文本，避免 result.result 中的 HTML 实体编码
         const finalContent = result.accumulated || result.result || '(无输出)';
         try {
@@ -359,7 +525,7 @@ async function handleClaudeRequest(
         }
         settle();
       },
-    }, { skipPermissions: config.claudeSkipPermissions });
+    }, { skipPermissions: config.claudeSkipPermissions, model: config.claudeModel });
 
     // 将任务 handle 和 settle 函数存储到 Map 中，以便能够在用户点击停止按钮时中止
     runningTasks.set(taskKey, { handle, latestContent: '', settle });
@@ -377,4 +543,16 @@ function listClaudeProjects(allowedBaseDirs: string[]): string[] {
   } catch {
     return [];
   }
+}
+
+function getClaudeVersion(cliPath: string): Promise<string> {
+  return new Promise((resolve) => {
+    execFile(cliPath, ['--version'], { timeout: 5000 }, (err, stdout) => {
+      if (err) {
+        resolve('未知');
+      } else {
+        resolve(stdout.trim() || '未知');
+      }
+    });
+  });
 }

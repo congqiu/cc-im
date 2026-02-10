@@ -22,7 +22,7 @@ export function runClaude(
   sessionId: string | undefined,
   workDir: string,
   callbacks: ClaudeRunCallbacks,
-  options?: { skipPermissions?: boolean; timeoutMs?: number },
+  options?: { skipPermissions?: boolean; timeoutMs?: number; model?: string },
 ): ClaudeRunHandle {
   const args = [
     '-p',
@@ -33,6 +33,10 @@ export function runClaude(
 
   if (options?.skipPermissions) {
     args.push('--dangerously-skip-permissions');
+  }
+
+  if (options?.model) {
+    args.push('--model', options.model);
   }
 
   if (sessionId) {
