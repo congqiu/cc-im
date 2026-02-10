@@ -61,7 +61,9 @@ pnpm start
 1. 在[飞书开放平台](https://open.feishu.cn)创建应用
 2. 开启机器人能力
 3. 添加权限：`im:message`、`im:message:send_as_bot`
-4. 事件订阅中启用长连接模式，订阅 `im.message.receive_v1` 事件
+4. 事件订阅中启用长连接模式，订阅以下事件：
+   - `im.message.receive_v1` - 接收消息
+   - `card.action.trigger` - 卡片交互（支持停止按钮）
 5. 发布应用
 
 ## 命令

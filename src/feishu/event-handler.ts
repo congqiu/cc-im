@@ -6,13 +6,21 @@ import type { Config } from '../config.js';
 import { AccessControl } from '../access/access-control.js';
 import { SessionManager } from '../session/session-manager.js';
 import { RequestQueue } from '../queue/request-queue.js';
-import { runClaude } from '../claude/cli-runner.js';
+import { runClaude, type ClaudeRunHandle } from '../claude/cli-runner.js';
 import { sendThinkingCard, updateCard, sendFinalCards, sendTextReply } from './message-sender.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('EventHandler');
 
 const THROTTLE_MS = 200;
+
+// 跟踪正在执行的任务
+interface TaskInfo {
+  handle: ClaudeRunHandle;
+  latestContent: string;
+  settle: () => void;  // 添加 settle 函数，用于在停止时标记任务已完成
+}
+const runningTasks = new Map<string, TaskInfo>();
 
 export function createEventDispatcher(config: Config) {
   const accessControl = new AccessControl(config.allowedUserIds);
@@ -23,7 +31,82 @@ export function createEventDispatcher(config: Config) {
   const processedMessages = new Map<string, number>();
   const DEDUP_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-  const dispatcher = new Lark.EventDispatcher({});
+  const dispatcher = new Lark.EventDispatcher({
+    // @ts-ignore - defaultCallback 是自定义选项
+    // 添加通用事件监听器，捕获所有事件
+    defaultCallback: async (data: any) => {
+      const eventType = data?.header?.event_type || data?.type || 'unknown';
+      log.info(`Received event: ${eventType}`);
+
+      // 如果是卡片交互事件，记录详细信息
+      if (eventType.includes('card') || eventType.includes('action')) {
+        log.info('Card/Action event data:', JSON.stringify(data, null, 2));
+      }
+    },
+  });
+
+  // 注册卡片交互事件处理器
+  dispatcher.register({
+    'card.action.trigger': async (data: any) => {
+      log.info('Received card action trigger event:', JSON.stringify(data, null, 2));
+
+      const action = data.action;
+      const userId = data.operator?.open_id || data.sender?.sender_id?.open_id;
+
+      log.info(`Card action - userId: ${userId}, action value: ${action?.value}`);
+
+      if (!userId) {
+        log.warn('No userId found in card action event');
+        return;
+      }
+
+      // 解析按钮的 value（可能被双重 JSON 编码）
+      let actionData: { action: string; message_id: string };
+      try {
+        let parsed = JSON.parse(action.value);
+        // 如果解析结果是字符串，说明被双重编码了，需要再解析一次
+        if (typeof parsed === 'string') {
+          parsed = JSON.parse(parsed);
+        }
+        actionData = parsed;
+        log.info(`Parsed action data:`, actionData);
+      } catch (err) {
+        log.error('Failed to parse action value:', err);
+        return;
+      }
+
+      // 处理停止按钮
+      if (actionData.action === 'stop') {
+        const messageId = actionData.message_id;
+        const taskKey = `${userId}:${messageId}`;
+        const taskInfo = runningTasks.get(taskKey);
+
+        log.info(`Stop button clicked - taskKey: ${taskKey}, handle exists: ${!!taskInfo}`);
+
+        if (taskInfo) {
+          log.info(`User ${userId} stopped task for message ${messageId}`);
+
+          // 保存当前内容
+          const stoppedContent = taskInfo.latestContent || '(任务已停止，暂无输出)';
+
+          // 先从 Map 中删除任务，防止 onComplete 覆盖
+          runningTasks.delete(taskKey);
+
+          // 标记任务已完成
+          taskInfo.settle();
+
+          // 中止任务
+          taskInfo.handle.abort();
+
+          // 更新卡片状态，显示已经输出的内容
+          await updateCard(messageId, stoppedContent, 'error', '⏹️ 已停止 - 用户手动中止');
+        } else {
+          log.warn(`No running task found for key: ${taskKey}`);
+          log.info(`Current running tasks: ${Array.from(runningTasks.keys()).join(', ')}`);
+        }
+      }
+    },
+  });
 
   dispatcher.register({
     'im.message.receive_v1': async (data: any) => {
@@ -177,12 +260,15 @@ async function handleClaudeRequest(
     let pendingUpdate: ReturnType<typeof setTimeout> | null = null;
     let latestContent = '';
     let settled = false;
+    const taskKey = `${userId}:${messageId}`;
 
     const cleanup = () => {
       if (pendingUpdate) {
         clearTimeout(pendingUpdate);
         pendingUpdate = null;
       }
+      // 从运行任务列表中移除
+      runningTasks.delete(taskKey);
     };
 
     const settle = () => {
@@ -194,6 +280,13 @@ async function handleClaudeRequest(
 
     const throttledUpdate = (content: string) => {
       latestContent = content;
+
+      // 更新 runningTasks 中的最新内容
+      const taskInfo = runningTasks.get(taskKey);
+      if (taskInfo) {
+        taskInfo.latestContent = content;
+      }
+
       const now = Date.now();
       const elapsed = now - lastUpdateTime;
 
@@ -258,10 +351,10 @@ async function handleClaudeRequest(
         }
         settle();
       },
-    }, {
-      skipPermissions: config.claudeSkipPermissions,
-      timeoutMs: config.claudeTimeoutMs,
-    });
+    }, { skipPermissions: config.claudeSkipPermissions });
+
+    // 将任务 handle 和 settle 函数存储到 Map 中，以便能够在用户点击停止按钮时中止
+    runningTasks.set(taskKey, { handle, latestContent: '', settle });
   });
 }
 

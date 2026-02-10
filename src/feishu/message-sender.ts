@@ -10,11 +10,18 @@ export async function sendThinkingCard(chatId: string): Promise<string> {
     params: { receive_id_type: 'chat_id' },
     data: {
       receive_id: chatId,
-      content: buildCard({ content: '正在思考...', status: 'thinking', note: '请稍候' }),
+      content: buildCard({ content: '正在思考...', status: 'thinking', note: '请稍候' }, 'pending'),
       msg_type: 'interactive',
     },
   });
-  return res.data?.message_id ?? '';
+  const messageId = res.data?.message_id ?? '';
+
+  // 获取到真实的 message_id 后，更新卡片以包含正确的停止按钮
+  if (messageId) {
+    await updateCard(messageId, '正在思考...', 'thinking', '请稍候');
+  }
+
+  return messageId;
 }
 
 export async function updateCard(messageId: string, content: string, status: CardStatus, note?: string) {
@@ -23,7 +30,7 @@ export async function updateCard(messageId: string, content: string, status: Car
     await client.im.v1.message.patch({
       path: { message_id: messageId },
       data: {
-        content: buildCard({ content, status, note }),
+        content: buildCard({ content, status, note }, messageId),
       },
     });
   } catch (err) {

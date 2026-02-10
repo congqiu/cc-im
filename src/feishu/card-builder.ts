@@ -32,7 +32,7 @@ export function truncateForCard(text: string): string {
   return `...(前文已省略)...\n${clean}`;
 }
 
-export function buildCard(options: CardOptions): string {
+export function buildCard(options: CardOptions, messageId?: string): string {
   const { content, status, note } = options;
 
   const elements: unknown[] = [
@@ -46,6 +46,24 @@ export function buildCard(options: CardOptions): string {
     elements.push({
       tag: 'note',
       elements: [{ tag: 'plain_text', content: note }],
+    });
+  }
+
+  // 在思考和流式输出状态时添加停止按钮
+  if ((status === 'thinking' || status === 'streaming') && messageId) {
+    elements.push({
+      tag: 'action',
+      actions: [
+        {
+          tag: 'button',
+          text: {
+            tag: 'plain_text',
+            content: '⏹️ 停止',
+          },
+          type: 'danger',
+          value: JSON.stringify({ action: 'stop', message_id: messageId }),
+        },
+      ],
     });
   }
 
