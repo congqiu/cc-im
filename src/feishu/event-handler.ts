@@ -168,8 +168,14 @@ export function createEventDispatcher(config: Config) {
 
       // Handle /clear command
       if (text.trim() === '/clear') {
-        sessionManager.clearSession(senderId);
-        await sendTextReply(chatId, '会话已清除，下次对话将开始新的上下文。');
+        const cleared = sessionManager.clearSession(senderId);
+        if (cleared) {
+          log.info(`User ${senderId} cleared session successfully`);
+          await sendTextReply(chatId, '✅ 会话已清除，下次对话将开始新的上下文。');
+        } else {
+          log.warn(`User ${senderId} tried to clear but no session exists`);
+          await sendTextReply(chatId, '当前没有活动会话。');
+        }
         return;
       }
 

@@ -1,4 +1,4 @@
-import { readFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -72,7 +72,9 @@ export class SessionManager {
     } else {
       this.sessions.set(userId, { workDir: resolved });
     }
-    this.save();
+    // 切换目录也立即同步保存，确保会话重置生效
+    this.flushSync();
+    log.info(`WorkDir changed for user ${userId}: ${resolved}, session cleared`);
     return resolved;
   }
 
@@ -80,7 +82,9 @@ export class SessionManager {
     const session = this.sessions.get(userId);
     if (session?.sessionId) {
       session.sessionId = undefined;
-      this.save();
+      // 立即同步保存，确保清除操作生效
+      this.flushSync();
+      log.info(`Session cleared for user: ${userId}`);
       return true;
     }
     return false;
@@ -126,6 +130,22 @@ export class SessionManager {
       });
     } catch (err) {
       log.error('Failed to save sessions:', err);
+    }
+  }
+
+  private flushSync() {
+    try {
+      const dir = dirname(SESSIONS_FILE);
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      const obj: Record<string, UserSession> = {};
+      for (const [key, val] of this.sessions) {
+        obj[key] = val;
+      }
+      writeFileSync(SESSIONS_FILE, JSON.stringify(obj, null, 2), 'utf-8');
+      log.info('Sessions saved synchronously');
+    } catch (err) {
+      log.error('Failed to save sessions synchronously:', err);
+      throw err;
     }
   }
 }
