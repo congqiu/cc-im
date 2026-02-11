@@ -457,8 +457,8 @@ async function handleClaudeRequest(
         cleanup();
 
         const note = result.cost > 0
-          ? `耗时 ${(result.durationMs / 1000).toFixed(1)}s | 费用 $${result.cost.toFixed(4)}`
-          : '完成';
+          ? `耗时 ${(result.durationMs / 1000).toFixed(1)}s | 费用 $${result.cost.toFixed(4)}${result.model ? ` | ${result.model}` : ''}`
+          : `完成${result.model ? ` | ${result.model}` : ''}`;
 
         log.info(`Claude completed for user ${userId}: success=${result.success}, cost=$${result.cost.toFixed(4)}`);
 

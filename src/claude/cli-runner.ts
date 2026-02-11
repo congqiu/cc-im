@@ -62,6 +62,7 @@ export function runClaude(
   let accumulated = '';
   let accumulatedThinking = '';
   let completed = false;
+  let model = '';
   let timeoutHandle: NodeJS.Timeout | null = null;
 
   // 设置超时
@@ -81,6 +82,7 @@ export function runClaude(
     if (!event) return;
 
     if (isStreamInit(event)) {
+      model = event.model;
       callbacks.onSessionId?.(event.session_id);
     }
 
@@ -105,6 +107,7 @@ export function runClaude(
         clearTimeout(timeoutHandle);
       }
       result.accumulated = accumulated;
+      result.model = model;
       if (!accumulated && result.result) {
         accumulated = result.result;
       }
@@ -170,6 +173,7 @@ export function runClaude(
           accumulated,
           cost: 0,
           durationMs: 0,
+          model,
         });
       }
     }

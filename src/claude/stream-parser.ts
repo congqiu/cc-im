@@ -10,6 +10,7 @@ export interface ParsedResult {
   accumulated: string;
   cost: number;
   durationMs: number;
+  model?: string;
 }
 
 export function parseStreamLine(line: string): StreamEvent | null {
