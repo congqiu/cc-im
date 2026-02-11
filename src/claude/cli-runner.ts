@@ -22,7 +22,7 @@ export function runClaude(
   sessionId: string | undefined,
   workDir: string,
   callbacks: ClaudeRunCallbacks,
-  options?: { skipPermissions?: boolean; timeoutMs?: number; model?: string },
+  options?: { skipPermissions?: boolean; timeoutMs?: number; model?: string; chatId?: string; hookPort?: number },
 ): ClaudeRunHandle {
   const args = [
     '-p',
@@ -45,10 +45,18 @@ export function runClaude(
 
   args.push('--', prompt);
 
+  const env: Record<string, string | undefined> = { ...process.env };
+  if (options?.chatId) {
+    env.CC_BOT_CHAT_ID = options.chatId;
+  }
+  if (options?.hookPort) {
+    env.CC_BOT_HOOK_PORT = String(options.hookPort);
+  }
+
   const child = spawn(cliPath, args, {
     cwd: workDir,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env },
+    env,
   });
 
   let accumulated = '';

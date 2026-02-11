@@ -1,7 +1,7 @@
 {
   "name": "cc-bot",
   "version": "1.0.0",
-  "description": "Feishu bot bridge for Claude Code CLI",
+  "description": "Multi-platform bot bridge (Feishu & Telegram) for Claude Code CLI",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -22,6 +22,7 @@
   "keywords": [
     "feishu",
     "lark",
+    "telegram",
     "claude",
     "claude-code",
     "bot",
@@ -31,6 +32,7 @@
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.45.0",
     "dotenv": "^16.4.7",
+    "telegraf": "^4.16.3",
     "uuid": "^11.1.0"
   },
   "devDependencies": {

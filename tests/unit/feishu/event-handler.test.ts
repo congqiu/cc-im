@@ -56,6 +56,8 @@ vi.mock('../../../src/feishu/message-sender.js', () => ({
   updateCard: vi.fn().mockResolvedValue(undefined),
   sendFinalCards: vi.fn().mockResolvedValue(undefined),
   sendTextReply: vi.fn().mockResolvedValue(undefined),
+  sendPermissionCard: vi.fn().mockResolvedValue('perm-msg-123'),
+  updatePermissionCard: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../../../src/claude/cli-runner.js', () => ({
@@ -75,20 +77,113 @@ vi.mock('node:child_process', () => ({
   }),
 }));
 
+vi.mock('../../../src/hook/permission-server.js', () => ({
+  setPermissionSender: vi.fn(),
+  resolveLatestPermission: vi.fn(),
+  getPendingCount: vi.fn(() => 0),
+  listPending: vi.fn(() => []),
+}));
+
+vi.mock('../../../src/constants.js', () => ({
+  TERMINAL_ONLY_COMMANDS: new Set([
+    '/context', '/rewind', '/resume', '/copy', '/export',
+    '/config', '/init', '/memory', '/permissions', '/theme',
+    '/vim', '/statusline', '/terminal-setup', '/debug',
+    '/tasks', '/mcp', '/teleport', '/add-dir',
+  ]),
+  DEDUP_TTL_MS: 5 * 60 * 1000,
+  THROTTLE_MS: 200,
+  READ_ONLY_TOOLS: ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Task', 'TodoRead'],
+}));
+
+vi.mock('../../../src/commands/handler.js', () => {
+  const { sendTextReply } = vi.importActual('../../../src/feishu/message-sender.js') as any;
+
+  return {
+    CommandHandler: vi.fn().mockImplementation(function (this: any, deps: any) {
+      this.deps = deps;
+
+      // Mock handlers that actually call sendTextReply so tests can verify them
+      this.handleHelp = vi.fn(async (chatId: string, platform: string) => {
+        await deps.sender.sendTextReply(chatId, '可用命令:\n...');
+        return true;
+      });
+
+      this.handleClear = vi.fn(async (chatId: string, userId: string) => {
+        await deps.sender.sendTextReply(chatId, '✅ 会话已清除');
+        return true;
+      });
+
+      this.handleCd = vi.fn(async (chatId: string, userId: string, args: string) => {
+        if (args.includes('/forbidden')) {
+          await deps.sender.sendTextReply(chatId, '目录不在允许范围内');
+        } else {
+          await deps.sender.sendTextReply(chatId, '工作目录已切换');
+        }
+        return true;
+      });
+
+      this.handlePwd = vi.fn(async (chatId: string, userId: string) => {
+        await deps.sender.sendTextReply(chatId, '当前工作目录: /work');
+        return true;
+      });
+
+      this.handleList = vi.fn(async (chatId: string, userId: string) => {
+        await deps.sender.sendTextReply(chatId, 'Claude Code 工作区列表');
+        return true;
+      });
+
+      this.handleCost = vi.fn(async (chatId: string, userId: string) => {
+        await deps.sender.sendTextReply(chatId, '暂无费用记录');
+        return true;
+      });
+
+      this.handleStatus = vi.fn(async (chatId: string, userId: string) => {
+        await deps.sender.sendTextReply(chatId, 'Claude Code 状态');
+        return true;
+      });
+
+      this.handleModel = vi.fn(async (chatId: string, args: string) => {
+        if (!args.trim()) {
+          await deps.sender.sendTextReply(chatId, '当前模型: 默认');
+        } else {
+          await deps.sender.sendTextReply(chatId, `模型已切换为: ${args.trim()}`);
+        }
+        return true;
+      });
+
+      this.handleDoctor = vi.fn(async (chatId: string, userId: string) => {
+        await deps.sender.sendTextReply(chatId, 'Claude Code 健康检查');
+        return true;
+      });
+
+      this.handleCompact = vi.fn().mockResolvedValue(true);
+      this.handleTodos = vi.fn().mockResolvedValue(true);
+      this.handleAllow = vi.fn().mockResolvedValue(true);
+      this.handleDeny = vi.fn().mockResolvedValue(true);
+      this.handleAllowAll = vi.fn().mockResolvedValue(true);
+      this.handlePending = vi.fn().mockResolvedValue(true);
+    }),
+  };
+});
+
 // Import after mocks
 import { createEventDispatcher } from '../../../src/feishu/event-handler.js';
 import * as messageSender from '../../../src/feishu/message-sender.js';
 
 describe('Event Handler', () => {
   const mockConfig = {
+    enabledPlatforms: ['feishu' as const],
     feishuAppId: 'test-app-id',
     feishuAppSecret: 'test-secret',
+    telegramBotToken: '',
     allowedUserIds: [],
     claudeCliPath: '/claude',
     claudeWorkDir: '/work',
     allowedBaseDirs: ['/work'],
     claudeSkipPermissions: false,
     claudeTimeoutMs: 300000,
+    hookPort: 18900,
   };
 
   let mockDispatcher: any;
@@ -96,6 +191,13 @@ describe('Event Handler', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
+
+  // Helper function to get message handler safely
+  function getMessageHandler() {
+    const call = mockRegister.mock.calls.find((call: any) => 'im.message.receive_v1' in call[0]);
+    if (!call) throw new Error('Message handler not registered');
+    return call[0]['im.message.receive_v1'];
+  }
 
   it('应该创建 EventDispatcher', () => {
     const dispatcher = createEventDispatcher(mockConfig);
@@ -118,8 +220,7 @@ describe('Event Handler', () => {
     createEventDispatcher(mockConfig);
 
     // 获取 im.message.receive_v1 的处理器
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
@@ -145,8 +246,7 @@ describe('Event Handler', () => {
   it('/clear 命令应该清除会话', async () => {
     createEventDispatcher(mockConfig);
 
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
@@ -172,8 +272,7 @@ describe('Event Handler', () => {
   it('/pwd 命令应该返回当前目录', async () => {
     createEventDispatcher(mockConfig);
 
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
@@ -199,8 +298,7 @@ describe('Event Handler', () => {
   it('/cd 成功应该切换目录', async () => {
     createEventDispatcher(mockConfig);
 
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
@@ -226,8 +324,7 @@ describe('Event Handler', () => {
   it('/cd 失败应该返回错误', async () => {
     createEventDispatcher(mockConfig);
 
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
@@ -253,8 +350,7 @@ describe('Event Handler', () => {
   it('终端命令应该被拦截', async () => {
     createEventDispatcher(mockConfig);
 
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
@@ -280,8 +376,7 @@ describe('Event Handler', () => {
   it('非文本消息应该返回提示', async () => {
     createEventDispatcher(mockConfig);
 
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
@@ -307,8 +402,7 @@ describe('Event Handler', () => {
   it('群聊无 @mention 应该被忽略', async () => {
     createEventDispatcher(mockConfig);
 
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
@@ -333,8 +427,7 @@ describe('Event Handler', () => {
   it('相同 messageId 应该只处理一次（去重）', async () => {
     createEventDispatcher(mockConfig);
 
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
@@ -364,8 +457,7 @@ describe('Event Handler', () => {
   it('/status 命令应该返回状态信息', async () => {
     createEventDispatcher(mockConfig);
 
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
@@ -391,8 +483,7 @@ describe('Event Handler', () => {
   it('/model 无参数应该显示当前模型', async () => {
     createEventDispatcher(mockConfig);
 
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
@@ -418,8 +509,7 @@ describe('Event Handler', () => {
   it('/model 有参数应该切换模型', async () => {
     createEventDispatcher(mockConfig);
 
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
@@ -445,8 +535,7 @@ describe('Event Handler', () => {
   it('/doctor 命令应该返回健康检查信息', async () => {
     createEventDispatcher(mockConfig);
 
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
@@ -472,8 +561,7 @@ describe('Event Handler', () => {
   it('/cost 无记录应该返回提示', async () => {
     createEventDispatcher(mockConfig);
 
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
@@ -499,8 +587,7 @@ describe('Event Handler', () => {
   it('/list 命令应该列出工作区', async () => {
     createEventDispatcher(mockConfig);
 
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
@@ -523,8 +610,7 @@ describe('Event Handler', () => {
   it('没有发送者 ID 应该被忽略', async () => {
     createEventDispatcher(mockConfig);
 
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
@@ -549,8 +635,7 @@ describe('Event Handler', () => {
     };
     createEventDispatcher(restrictedConfig);
 
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
@@ -576,8 +661,7 @@ describe('Event Handler', () => {
   it('空文本消息应该被忽略', async () => {
     createEventDispatcher(mockConfig);
 
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
@@ -600,8 +684,7 @@ describe('Event Handler', () => {
   it('消息内容解析失败应该被忽略', async () => {
     createEventDispatcher(mockConfig);
 
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
@@ -625,8 +708,7 @@ describe('Event Handler', () => {
   it('应该去除飞书 @mention 占位符', async () => {
     createEventDispatcher(mockConfig);
 
-    const messageHandler = mockRegister.mock.calls
-      .find((call: any) => 'im.message.receive_v1' in call[0])[0]['im.message.receive_v1'];
+    const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {

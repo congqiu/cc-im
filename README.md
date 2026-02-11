@@ -1,76 +1,196 @@
 # cc-bot
 
-飞书机器人 ↔ Claude Code CLI 桥接服务。
+多平台（飞书 & Telegram）机器人 ↔ Claude Code CLI 桥接服务。
 
-用户在飞书中发消息，服务器接收后调用 Claude Code 执行，并将输出实时流式推送回飞书消息卡片。
+用户在飞书或 Telegram 中发消息，服务器接收后调用 Claude Code 执行，并将输出实时流式推送回聊天窗口。
 
 ## 功能
 
-- 流式输出：通过飞书卡片 PATCH 更新实现实时显示（500ms 节流）
-- 会话管理：每用户独立 session，支持 `/clear` 重置
-- 并发控制：每用户同时一个 CLI 进程，额外消息排队（最多 3 条）
-- 长消息分片：超长内容自动拆分为多条续接卡片
-- 白名单：通过环境变量配置访问控制
+- **多平台支持**：飞书和 Telegram，可同时运行或单独使用
+- **流式输出**：实时显示 Claude Code 执行进度（飞书通过卡片 PATCH、Telegram 通过 editMessage）
+- **会话管理**：每用户独立 session，支持 `/clear` 重置
+- **并发控制**：同会话串行执行，不同会话可并发，最多排队 3 条消息
+- **长消息分片**：超长内容自动拆分为多条消息
+- **权限确认**：通过 Hook 机制实现工具调用的交互式审批
+- **白名单**：通过环境变量或配置文件控制访问
+- **停止按钮**：执行过程中可随时停止
 
 ## 快速开始
 
-### 方式一：npx 一键启动
+### 同时运行多个平台
+
+可以同时启用飞书和 Telegram，只需配置两个平台的凭证即可：
 
 ```bash
-# 配置环境变量
 export FEISHU_APP_ID=your_app_id
 export FEISHU_APP_SECRET=your_app_secret
-
-# 启动服务
+export TELEGRAM_BOT_TOKEN=your_bot_token
 npx cc-bot
 ```
 
-### 方式二：从源码运行
+服务会自动检测已配置的平台并启动对应的 bot。
+
+### Telegram 平台
+
+1. 通过 [@BotFather](https://t.me/BotFather) 创建 Bot，获取 Token
+2. 配置并启动：
 
 ```bash
-# 安装依赖
+# 方式一：环境变量
+export TELEGRAM_BOT_TOKEN=your_bot_token
+npx cc-bot
+
+# 方式二：从源码运行
 pnpm install
-
-# 配置环境变量
 cp .env.example .env
-# 编辑 .env 填入飞书应用凭证
-
-# 开发模式
+# 编辑 .env，填入 TELEGRAM_BOT_TOKEN
 pnpm dev
-
-# 生产模式
-pnpm build
-pnpm start
 ```
+
+3. 在 Telegram 中找到你的 Bot，发送 `/start` 开始使用
+
+### 飞书平台
+
+1. 在[飞书开放平台](https://open.feishu.cn)创建应用
+2. 开启机器人能力
+3. 添加权限：`im:message`、`im:message:send_as_bot`
+4. 事件订阅中启用 **长连接模式**，订阅以下事件：
+   - `im.message.receive_v1` — 接收消息
+   - `card.action.trigger` — 卡片交互（停止按钮）
+5. 发布应用
+6. 配置并启动：
+
+```bash
+export FEISHU_APP_ID=your_app_id
+export FEISHU_APP_SECRET=your_app_secret
+npx cc-bot
+```
+
+### 从源码构建
+
+```bash
+git clone <repo-url>
+cd cc-bot
+pnpm install
+cp .env.example .env
+# 编辑 .env 填入对应平台凭证
+
+pnpm dev      # 开发模式
+pnpm build    # 编译
+pnpm start    # 生产模式
+```
+
+## 命令列表
+
+| 命令 | 说明 |
+|------|------|
+| `/start` | 显示欢迎信息（Telegram） |
+| `/help` | 显示帮助信息 |
+| `/clear` | 清除当前会话，开始新对话 |
+| `/cd <path>` | 切换工作目录（同时重置会话） |
+| `/pwd` | 查看当前工作目录 |
+| `/list` | 列出���有工作区 |
+| `/cost` | 查看 Claude API 用量和费用 |
+| `/status` | 查看当前会话状态 |
+| `/model [name]` | 查看或切换模型 |
+| `/doctor` | 运行 Claude 诊断 |
+| `/compact [topic]` | 压缩当前对话上下文 |
+| `/todos` | 查看待办事项 |
+
+### 权限相关命令
+
+当 `CLAUDE_SKIP_PERMISSIONS=false`（默认）时，Claude Code 执行敏感操作（如 Bash 命令、写文件）会弹出权限确认卡片：
+
+| 命令 | 说明 |
+|------|------|
+| `/allow` 或 `/y` | 允许当前待确认的操作 |
+| `/deny` 或 `/n` | 拒绝当前待确认的操作 |
+| `/allowall` | 允许所有待确认的操作 |
+| `/pending` | 查看当前待确认的操作列表 |
 
 ## 环境变量
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `FEISHU_APP_ID` | 飞书应用 App ID | 必填 |
-| `FEISHU_APP_SECRET` | 飞书应用 App Secret | 必填 |
-| `ALLOWED_USER_IDS` | 白名单 open_id，逗号分隔，留空不限制 | 空 |
-| `CLAUDE_CLI_PATH` | Claude CLI 路径 | `claude` |
-| `CLAUDE_WORK_DIR` | 默认工作目录（用户可通过 `/cd` 切换） | 当前目录 |
+| `PLATFORM` | 平台选择（`telegram` 或 `feishu`），留空自动检测 | 自动检测 |
+| `FEISHU_APP_ID` | 飞书应用 App ID | 飞书平台必填 |
+| `FEISHU_APP_SECRET` | 飞书应用 App Secret | 飞书平台必填 |
+| `TELEGRAM_BOT_TOKEN` | Telegram Bot Token | Telegram 平台必填 |
+| `ALLOWED_USER_IDS` | 白名单用户 ID，逗号分隔，留空不限制 | 空（不限制） |
+| `CLAUDE_CLI_PATH` | Claude CLI 可执行文件路径 | `claude` |
+| `CLAUDE_WORK_DIR` | 默认工作目录 | 当前目录 |
 | `ALLOWED_BASE_DIRS` | 允许 `/cd` 切换的基础目录，逗号分隔 | 同 `CLAUDE_WORK_DIR` |
-| `CLAUDE_SKIP_PERMISSIONS` | 跳过 CLI 权限检查 | `false` |
-| `CLAUDE_TIMEOUT_MS` | 执行超时（毫秒） | `300000` |
+| `CLAUDE_SKIP_PERMISSIONS` | 跳过权限检查（生产环境建议 `false`） | `false` |
+| `CLAUDE_TIMEOUT_MS` | 执行超时（毫秒） | `300000`（5分钟） |
+| `HOOK_SERVER_PORT` | 权限确认 Hook 服务端口 | `18900` |
 
-## 飞书应用配置
+### 白名单用户 ID 格式
 
-1. 在[飞书开放平台](https://open.feishu.cn)创建应用
-2. 开启机器人能力
-3. 添加权限：`im:message`、`im:message:send_as_bot`
-4. 事件订阅中启用长连接模式，订阅以下事件：
-   - `im.message.receive_v1` - 接收消息
-   - `card.action.trigger` - 卡片交互（支持停止按钮）
-5. 发布应用
+- **飞书**：open_id 格式，如 `ou_xxxx`
+- **Telegram**：用户数字 ID，如 `123456789`（可通过 [@userinfobot](https://t.me/userinfobot) 获取）
 
-## 命令
+## 配置文件
 
-| 命令 | 说明 |
-|------|------|
-| `/clear` | 清除当前会话，开始新的对话上下文 |
-| `/cd <path>` | 切换工作目录（同时重置会话） |
-| `/pwd` | 查看当前工作目录 |
-| `/list` | 列出 Claude Code 操作过的所有工作区 |
+除环境变量外，也支持通过 `~/.cc-bot` JSON 文件配置：
+
+```json
+{
+  "platform": "telegram",
+  "telegramBotToken": "your_bot_token",
+  "allowedUserIds": ["123456789"],
+  "claudeCliPath": "/usr/local/bin/claude",
+  "claudeWorkDir": "/home/user/projects",
+  "allowedBaseDirs": ["/home/user/projects", "/tmp"],
+  "claudeSkipPermissions": false,
+  "claudeTimeoutMs": 300000
+}
+```
+
+环境变量优先级高于配置文件。
+
+## 权限确认机制
+
+当 `CLAUDE_SKIP_PERMISSIONS=false` 时，系统会通过 PreToolUse Hook 拦截敏感操作：
+
+1. Claude Code 尝试调用工具（如执行 Bash 命令）
+2. Hook 脚本将请求发送到权限确认服务（端口由 `HOOK_SERVER_PORT` 指定）
+3. 服务向用户发送权限确认卡片/消息
+4. 用户回复 `/allow` 或 `/deny`
+5. 决定结果返回给 Claude Code，继续或中止操作
+
+以下只读工具会自动放行，无需确认：
+`Read`、`Glob`、`Grep`、`WebFetch`、`WebSearch`、`Task`、`TodoRead`
+
+## 项目结构
+
+```
+src/
+├── index.ts                  # 入口，平台选择与启动
+├── config.ts                 # 配置加载（环境变量 + ~/.cc-bot）
+├── claude/
+│   ├── cli-runner.ts         # Claude CLI 子进程管理
+│   ├── stream-parser.ts      # 流式输出解析
+│   └── types.ts              # Claude 消息类型定义
+├── feishu/
+│   ├── client.ts             # 飞书 SDK 初始化
+│   ├── event-handler.ts      # 飞书事件处理
+│   ├── message-sender.ts     # 飞书消息发送
+│   └── card-builder.ts       # 飞书卡片构建
+├── telegram/
+│   ├── client.ts             # Telegraf 初始化
+│   ├── event-handler.ts      # Telegram 事件处理
+│   └── message-sender.ts     # Telegram 消息发送
+├── hook/
+│   ├── permission-server.ts  # 权限确认 HTTP 服务
+│   └── hook-script.ts        # Claude Code PreToolUse Hook
+├── session/
+│   └── manager.ts            # 会话管理
+├── queue/
+│   └── request-queue.ts      # 请求队列与并发控制
+└── access/
+    └── control.ts            # 白名单访问控制
+```
+
+## License
+
+MIT

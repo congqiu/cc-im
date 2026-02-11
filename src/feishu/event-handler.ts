@@ -1,26 +1,18 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
-import { readFileSync } from 'node:fs';
-import { execFile } from 'node:child_process';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 import type { Config } from '../config.js';
 import { AccessControl } from '../access/access-control.js';
 import { SessionManager } from '../session/session-manager.js';
 import { RequestQueue } from '../queue/request-queue.js';
 import { runClaude, type ClaudeRunHandle } from '../claude/cli-runner.js';
-import { sendThinkingCard, updateCard, sendFinalCards, sendTextReply } from './message-sender.js';
+import { sendThinkingCard, updateCard, sendFinalCards, sendTextReply, sendPermissionCard, updatePermissionCard } from './message-sender.js';
+import { setPermissionSender } from '../hook/permission-server.js';
+import { CommandHandler, type CostRecord, type CommandHandlerDeps } from '../commands/handler.js';
+import { TERMINAL_ONLY_COMMANDS, DEDUP_TTL_MS, THROTTLE_MS } from '../constants.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('EventHandler');
 
-const THROTTLE_MS = 200;
-
 // 费用跟踪（按用户累积）
-interface CostRecord {
-  totalCost: number;
-  totalDurationMs: number;
-  requestCount: number;
-}
 const userCosts = new Map<string, CostRecord>();
 
 function trackCost(userId: string, cost: number, durationMs: number) {
@@ -30,14 +22,6 @@ function trackCost(userId: string, cost: number, durationMs: number) {
   record.requestCount += 1;
   userCosts.set(userId, record);
 }
-
-// 仅终端模式可用的命令
-const TERMINAL_ONLY_COMMANDS = new Set([
-  '/context', '/rewind', '/resume', '/copy', '/export',
-  '/config', '/init', '/memory', '/permissions', '/theme',
-  '/vim', '/statusline', '/terminal-setup', '/debug',
-  '/tasks', '/mcp', '/teleport', '/add-dir',
-]);
 
 // 跟踪正在执行的任务
 interface TaskInfo {
@@ -52,9 +36,25 @@ export function createEventDispatcher(config: Config) {
   const sessionManager = new SessionManager(config.claudeWorkDir, config.allowedBaseDirs);
   const requestQueue = new RequestQueue();
 
+  // Create command handler with dependencies
+  const commandHandler = new CommandHandler({
+    config,
+    sessionManager,
+    requestQueue,
+    sender: { sendTextReply },
+    userCosts,
+    runningTasksSize: 0, // Will be updated dynamically
+  });
+
+  // Register feishu permission sender
+  setPermissionSender({
+    sendPermissionCard,
+    updatePermissionCard: (_chatId: string, messageId: string, toolName: string, decision: 'allow' | 'deny') =>
+      updatePermissionCard(messageId, toolName, decision),
+  });
+
   // Dedup: track processed message IDs with timestamps
   const processedMessages = new Map<string, number>();
-  const DEDUP_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
   const dispatcher = new Lark.EventDispatcher({
     // @ts-ignore - defaultCallback 是自定义选项
@@ -227,147 +227,99 @@ export function createEventDispatcher(config: Config) {
         return;
       }
 
-      // Handle /list command
-      if (text.trim() === '/list') {
-        const dirs = listClaudeProjects(config.allowedBaseDirs);
-        if (dirs.length === 0) {
-          await sendTextReply(chatId, '未找到 Claude Code 工作区记录。');
-        } else {
-          const current = sessionManager.getWorkDir(senderId);
-          const lines = dirs.map((d) => (d === current ? `▶ ${d}` : `  ${d}`));
-          await sendTextReply(chatId, `Claude Code 工作区列表:\n${lines.join('\n')}\n\n使用 /cd <路径> 切换`);
-        }
-        return;
-      }
+      // Update runningTasksSize for CommandHandler
+      commandHandler.updateRunningTasksSize(runningTasks.size);
 
       // Handle /help command
       if (text.trim() === '/help') {
-        const helpText = [
-          '📋 可用命令:',
-          '',
-          '/help           - 显示此帮助信息',
-          '/clear          - 清除会话，开始新对话',
-          '/compact [说明]  - 压缩对话上下文（节省 token）',
-          '/cost           - 显示本次会话费用统计',
-          '/status         - 显示 Claude Code 状态信息',
-          '/model [模型名]  - 查看或切换模型',
-          '/doctor         - 检查 Claude Code 健康状态',
-          '/cd <路径>      - 切换工作目录',
-          '/pwd            - 查看当前工作目录',
-          '/list           - 列出所有工作区',
-          '/todos          - 列出当前 TODO 项',
-        ].join('\n');
-        await sendTextReply(chatId, helpText);
+        await commandHandler.handleHelp(chatId, 'feishu');
+        return;
+      }
+
+      // Handle /clear command
+      if (text.trim() === '/clear') {
+        await commandHandler.handleClear(chatId, senderId);
+        return;
+      }
+
+      // Handle /cd command
+      if (text.trim().startsWith('/cd ') || text.trim() === '/cd') {
+        const args = text.trim().slice(3);
+        await commandHandler.handleCd(chatId, senderId, args);
+        return;
+      }
+
+      // Handle /pwd command
+      if (text.trim() === '/pwd') {
+        await commandHandler.handlePwd(chatId, senderId);
+        return;
+      }
+
+      // Handle /list command
+      if (text.trim() === '/list') {
+        await commandHandler.handleList(chatId, senderId);
         return;
       }
 
       // Handle /cost command
       if (text.trim() === '/cost') {
-        const record = userCosts.get(senderId);
-        if (!record || record.requestCount === 0) {
-          await sendTextReply(chatId, '暂无费用记录（本次服务启动后）。');
-        } else {
-          const lines = [
-            '💰 费用统计（本次服务启动后）:',
-            '',
-            `请求次数: ${record.requestCount}`,
-            `总费用: $${record.totalCost.toFixed(4)}`,
-            `总耗时: ${(record.totalDurationMs / 1000).toFixed(1)}s`,
-            `平均每次: $${(record.totalCost / record.requestCount).toFixed(4)}`,
-          ];
-          await sendTextReply(chatId, lines.join('\n'));
-        }
+        await commandHandler.handleCost(chatId, senderId);
         return;
       }
 
       // Handle /status command
       if (text.trim() === '/status') {
-        const version = await getClaudeVersion(config.claudeCliPath);
-        const workDir = sessionManager.getWorkDir(senderId);
-        const convId = sessionManager.getConvId(senderId);
-        const sessionId = sessionManager.getSessionIdForConv(senderId, convId);
-        const record = userCosts.get(senderId);
-        const lines = [
-          '📊 Claude Code 状态:',
-          '',
-          `版本: ${version}`,
-          `工作目录: ${workDir}`,
-          `会话 ID: ${sessionId ?? '（无）'}`,
-          `跳过权限: ${config.claudeSkipPermissions ? '是' : '否'}`,
-          `超时设置: ${config.claudeTimeoutMs / 1000}s`,
-          `累计费用: $${record?.totalCost.toFixed(4) ?? '0.0000'}`,
-        ];
-        await sendTextReply(chatId, lines.join('\n'));
+        await commandHandler.handleStatus(chatId, senderId);
         return;
       }
 
       // Handle /model command
       if (text.trim() === '/model' || text.trim().startsWith('/model ')) {
-        const modelArg = text.trim().slice(6).trim();
-        if (!modelArg) {
-          await sendTextReply(chatId, `当前模型: ${config.claudeModel ?? '默认 (由 Claude Code 决定)'}\n\n可选模型: sonnet, opus, haiku 或完整模型名\n用法: /model <模型名>`);
-        } else {
-          config.claudeModel = modelArg;
-          await sendTextReply(chatId, `模型已切换为: ${modelArg}\n后续对话将使用此模型。`);
-        }
+        const args = text.trim().slice(6);
+        await commandHandler.handleModel(chatId, args);
         return;
       }
 
       // Handle /doctor command
       if (text.trim() === '/doctor') {
-        const version = await getClaudeVersion(config.claudeCliPath);
-        const lines = [
-          '🏥 Claude Code 健康检查:',
-          '',
-          `CLI 路径: ${config.claudeCliPath}`,
-          `版本: ${version}`,
-          `工作目录: ${sessionManager.getWorkDir(senderId)}`,
-          `允许的基础目录: ${config.allowedBaseDirs.join(', ')}`,
-          `活跃任务数: ${runningTasks.size}`,
-        ];
-        await sendTextReply(chatId, lines.join('\n'));
+        await commandHandler.handleDoctor(chatId, senderId);
         return;
       }
 
-      // Handle /compact command - 通过 CLI 发送压缩请求
+      // Handle /compact command
       if (text.trim() === '/compact' || text.trim().startsWith('/compact ')) {
-        const convId = sessionManager.getConvId(senderId);
-        const sessionId = sessionManager.getSessionIdForConv(senderId, convId);
-        if (!sessionId) {
-          await sendTextReply(chatId, '当前没有活动会话，无需压缩。');
-          return;
-        }
-        const instructions = text.trim().slice(8).trim();
-        const compactPrompt = instructions
-          ? `请压缩并总结之前的对话上下文，聚焦于: ${instructions}`
-          : '请压缩并总结之前的对话上下文，保留关键信息。';
-
-        // 将 compact 作为普通请求排队执行
-        const workDirSnapshot = sessionManager.getWorkDir(senderId);
-        const enqueueResult = requestQueue.enqueue(senderId, convId, compactPrompt, async (prompt) => {
-          await handleClaudeRequest(config, sessionManager, senderId, chatId, prompt, workDirSnapshot, convId);
-        });
-        if (enqueueResult === 'rejected') {
-          await sendTextReply(chatId, '请求队列已满，请等待当前任务完成后再试。');
-        } else if (enqueueResult === 'queued') {
-          await sendTextReply(chatId, '前面还有任务在处理中，压缩请求已排队等待。');
-        }
+        const args = text.trim().slice(8);
+        await commandHandler.handleCompact(chatId, senderId, args, handleClaudeRequest);
         return;
       }
 
-      // Handle /todos command - 转发给 Claude
+      // Handle /todos command
       if (text.trim() === '/todos') {
-        const workDirSnapshot = sessionManager.getWorkDir(senderId);
-        const convIdSnapshot = sessionManager.getConvId(senderId);
-        const todosPrompt = '请列出当前项目中所有的 TODO 项（检查代码中的 TODO、FIXME、HACK 注释）。';
-        const enqueueResult = requestQueue.enqueue(senderId, convIdSnapshot, todosPrompt, async (prompt) => {
-          await handleClaudeRequest(config, sessionManager, senderId, chatId, prompt, workDirSnapshot, convIdSnapshot);
-        });
-        if (enqueueResult === 'rejected') {
-          await sendTextReply(chatId, '请求队列已满，请等待当前任务完成后再试。');
-        } else if (enqueueResult === 'queued') {
-          await sendTextReply(chatId, '前面还有任务在处理中，请求已排队等待。');
-        }
+        await commandHandler.handleTodos(chatId, senderId, handleClaudeRequest);
+        return;
+      }
+
+      // Handle /allow, /y
+      if (text.trim() === '/allow' || text.trim() === '/y') {
+        await commandHandler.handleAllow(chatId);
+        return;
+      }
+
+      // Handle /deny, /n
+      if (text.trim() === '/deny' || text.trim() === '/n') {
+        await commandHandler.handleDeny(chatId);
+        return;
+      }
+
+      // Handle /allowall
+      if (text.trim() === '/allowall') {
+        await commandHandler.handleAllowAll(chatId);
+        return;
+      }
+
+      // Handle /pending
+      if (text.trim() === '/pending') {
+        await commandHandler.handlePending(chatId);
         return;
       }
 
@@ -431,6 +383,8 @@ async function handleClaudeRequest(
     let pendingUpdate: ReturnType<typeof setTimeout> | null = null;
     let latestContent = '';
     let settled = false;
+    let firstContentLogged = false;
+    const startTime = Date.now();
     const taskKey = `${userId}:${messageId}`;
 
     const cleanup = () => {
@@ -483,11 +437,19 @@ async function handleClaudeRequest(
         log.info(`Session created for user ${userId}, convId=${convId}: ${id}`);
       },
       onThinking: (thinking) => {
+        if (!firstContentLogged) {
+          firstContentLogged = true;
+          log.debug(`First content (thinking) for user ${userId} after ${Date.now() - startTime}ms`);
+        }
         // 思考阶段也更新卡片，让用户看到 Claude 在想什么
         const display = `💭 **思考中...**\n\n${thinking}`;
         throttledUpdate(display);
       },
       onText: (accumulated) => {
+        if (!firstContentLogged) {
+          firstContentLogged = true;
+          log.debug(`First content (text) for user ${userId} after ${Date.now() - startTime}ms`);
+        }
         throttledUpdate(accumulated);
       },
       onComplete: async (result) => {
@@ -525,34 +487,9 @@ async function handleClaudeRequest(
         }
         settle();
       },
-    }, { skipPermissions: config.claudeSkipPermissions, model: config.claudeModel });
+    }, { skipPermissions: config.claudeSkipPermissions, model: config.claudeModel, chatId, hookPort: config.hookPort });
 
     // 将任务 handle 和 settle 函数存储到 Map 中，以便能够在用户点击停止按钮时中止
     runningTasks.set(taskKey, { handle, latestContent: '', settle });
-  });
-}
-
-function listClaudeProjects(allowedBaseDirs: string[]): string[] {
-  const configPath = join(homedir(), '.claude.json');
-  try {
-    const data = JSON.parse(readFileSync(configPath, 'utf-8'));
-    const projects: Record<string, unknown> = data.projects ?? {};
-    return Object.keys(projects)
-      .filter((dir) => allowedBaseDirs.some((base) => dir === base || dir.startsWith(base + '/')))
-      .sort();
-  } catch {
-    return [];
-  }
-}
-
-function getClaudeVersion(cliPath: string): Promise<string> {
-  return new Promise((resolve) => {
-    execFile(cliPath, ['--version'], { timeout: 5000 }, (err, stdout) => {
-      if (err) {
-        resolve('未知');
-      } else {
-        resolve(stdout.trim() || '未知');
-      }
-    });
   });
 }

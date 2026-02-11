@@ -1,5 +1,5 @@
 import { getClient } from './client.js';
-import { buildCard, splitLongContent, type CardStatus } from './card-builder.js';
+import { buildCard, buildPermissionCard, buildPermissionResultCard, splitLongContent, type CardStatus } from './card-builder.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('MessageSender');
@@ -75,5 +75,37 @@ export async function sendTextReply(chatId: string, text: string) {
     });
   } catch (err) {
     log.error('Failed to send text reply:', err);
+  }
+}
+
+export async function sendPermissionCard(
+  chatId: string,
+  requestId: string,
+  toolName: string,
+  toolInput: Record<string, unknown>,
+): Promise<string> {
+  const client = getClient();
+  const res = await client.im.v1.message.create({
+    params: { receive_id_type: 'chat_id' },
+    data: {
+      receive_id: chatId,
+      content: buildPermissionCard(requestId, toolName, toolInput),
+      msg_type: 'interactive',
+    },
+  });
+  return res.data?.message_id ?? '';
+}
+
+export async function updatePermissionCard(messageId: string, toolName: string, decision: 'allow' | 'deny') {
+  const client = getClient();
+  try {
+    await client.im.v1.message.patch({
+      path: { message_id: messageId },
+      data: {
+        content: buildPermissionResultCard(toolName, decision),
+      },
+    });
+  } catch (err) {
+    log.error('Failed to update permission card:', err);
   }
 }

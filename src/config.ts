@@ -3,9 +3,13 @@ import { readFileSync, accessSync, constants } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
+export type Platform = 'feishu' | 'telegram';
+
 export interface Config {
+  enabledPlatforms: Platform[]; // 改为支持多平台
   feishuAppId: string;
   feishuAppSecret: string;
+  telegramBotToken: string;
   allowedUserIds: string[];
   claudeCliPath: string;
   claudeWorkDir: string;
@@ -13,11 +17,14 @@ export interface Config {
   claudeSkipPermissions: boolean;
   claudeTimeoutMs: number;
   claudeModel?: string;
+  hookPort: number;
 }
 
 interface FileConfig {
+  platform?: Platform;
   feishuAppId?: string;
   feishuAppSecret?: string;
+  telegramBotToken?: string;
   allowedUserIds?: string[];
   claudeCliPath?: string;
   claudeWorkDir?: string;
@@ -50,14 +57,44 @@ function parseCommaSeparated(value: string): string[] {
   return value.split(',').map((s) => s.trim()).filter(Boolean);
 }
 
+function detectPlatforms(file: FileConfig): Platform[] {
+  const platforms: Platform[] = [];
+
+  // 检测 Telegram
+  const telegramToken = process.env.TELEGRAM_BOT_TOKEN ?? file.telegramBotToken;
+  if (telegramToken) {
+    platforms.push('telegram');
+  }
+
+  // 检测飞书
+  const feishuAppId = process.env.FEISHU_APP_ID ?? file.feishuAppId;
+  const feishuAppSecret = process.env.FEISHU_APP_SECRET ?? file.feishuAppSecret;
+  if (feishuAppId && feishuAppSecret) {
+    platforms.push('feishu');
+  }
+
+  // 如果都没配置，抛出错误
+  if (platforms.length === 0) {
+    throw new Error(
+      '至少需要配置一个平台：\n' +
+      '  Telegram: 设置 TELEGRAM_BOT_TOKEN\n' +
+      '  飞书: 设置 FEISHU_APP_ID 和 FEISHU_APP_SECRET'
+    );
+  }
+
+  return platforms;
+}
+
 export function loadConfig(): Config {
   const file = loadFileConfig();
+  const enabledPlatforms = detectPlatforms(file);
 
-  const appId = process.env.FEISHU_APP_ID ?? file.feishuAppId;
-  const appSecret = process.env.FEISHU_APP_SECRET ?? file.feishuAppSecret;
-  if (!appId || !appSecret) {
-    throw new Error('FEISHU_APP_ID and FEISHU_APP_SECRET must be set (via env or ~/.cc-bot)');
-  }
+  // 飞书配置
+  const appId = process.env.FEISHU_APP_ID ?? file.feishuAppId ?? '';
+  const appSecret = process.env.FEISHU_APP_SECRET ?? file.feishuAppSecret ?? '';
+
+  // Telegram 配置
+  const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN ?? file.telegramBotToken ?? '';
 
   const allowedUserIds =
     process.env.ALLOWED_USER_IDS !== undefined
@@ -98,14 +135,22 @@ export function loadConfig(): Config {
     );
   }
 
+  const hookPort =
+    process.env.HOOK_SERVER_PORT !== undefined
+      ? parseInt(process.env.HOOK_SERVER_PORT, 10) || 18900
+      : 18900;
+
   return {
+    enabledPlatforms,
     feishuAppId: appId,
     feishuAppSecret: appSecret,
+    telegramBotToken,
     allowedUserIds,
     claudeCliPath,
     claudeWorkDir,
     allowedBaseDirs,
     claudeSkipPermissions,
     claudeTimeoutMs,
+    hookPort,
   };
 }

@@ -103,3 +103,53 @@ export function splitLongContent(text: string, maxLen = MAX_CARD_CONTENT_LENGTH)
   }
   return parts;
 }
+
+export function buildPermissionCard(requestId: string, toolName: string, toolInput: Record<string, unknown>): string {
+  let inputSummary: string;
+  if (toolName === 'Bash' && toolInput.command) {
+    inputSummary = String(toolInput.command);
+  } else if (toolName === 'Write' && toolInput.file_path) {
+    inputSummary = `文件: ${toolInput.file_path}\n内容长度: ${String(toolInput.content ?? '').length} 字符`;
+  } else if (toolName === 'Edit' && toolInput.file_path) {
+    inputSummary = `文件: ${toolInput.file_path}`;
+  } else {
+    const keys = Object.keys(toolInput);
+    if (keys.length === 0) {
+      inputSummary = '(无参数)';
+    } else {
+      const lines = keys.slice(0, 5).map((k) => {
+        const v = String(toolInput[k] ?? '');
+        return `${k}: ${v.length > 200 ? v.slice(0, 200) + '...' : v}`;
+      });
+      inputSummary = lines.join('\n');
+    }
+  }
+
+  const card = {
+    config: { wide_screen_mode: true },
+    header: {
+      template: 'orange',
+      title: { tag: 'plain_text', content: `🔐 权限确认 - ${toolName}` },
+    },
+    elements: [
+      { tag: 'markdown', content: truncateForCard(inputSummary) },
+      { tag: 'note', elements: [{ tag: 'plain_text', content: `ID: ${requestId} | 回复 /allow 允许 · /deny 拒绝` }] },
+    ],
+  };
+  return JSON.stringify(card);
+}
+
+export function buildPermissionResultCard(toolName: string, decision: 'allow' | 'deny'): string {
+  const isAllowed = decision === 'allow';
+  const card = {
+    config: { wide_screen_mode: true },
+    header: {
+      template: isAllowed ? 'green' : 'red',
+      title: { tag: 'plain_text', content: `🔐 ${toolName} - ${isAllowed ? '已允许 ✓' : '已拒绝 ✗'}` },
+    },
+    elements: [
+      { tag: 'markdown', content: isAllowed ? '✅ 操作已允许执行。' : '❌ 操作已被拒绝。' },
+    ],
+  };
+  return JSON.stringify(card);
+}
