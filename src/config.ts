@@ -2,6 +2,9 @@ import 'dotenv/config';
 import { readFileSync, accessSync, constants } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { createLogger } from './logger.js';
+
+const logger = createLogger('Config');
 
 export type Platform = 'feishu' | 'telegram';
 
@@ -34,19 +37,19 @@ interface FileConfig {
 }
 
 function loadFileConfig(): FileConfig {
-  const configPath = join(homedir(), '.cc-bot');
+  const configPath = join(homedir(), '.cc-bot', 'config.json');
   try {
     const content = readFileSync(configPath, 'utf-8');
+    logger.debug(`Loaded configuration from ${configPath}`);
     return JSON.parse(content);
   } catch (err: unknown) {
     const error = err as NodeJS.ErrnoException;
-    // ENOENT 是正常的（文件不存在），其他错误需要提示
     if (error.code !== 'ENOENT') {
       if (error instanceof SyntaxError) {
-        console.warn(`警告: 配置文件 ${configPath} 格式错误，将使用环境变量`);
-        console.warn(`错误详情: ${error.message}`);
+        logger.warn(`警告: 配置文件 ${configPath} 格式错误，将使用环境变量`);
+        logger.warn(`错误详情: ${error.message}`);
       } else {
-        console.warn(`警告: 无法读取配置文件 ${configPath}: ${error.message}`);
+        logger.warn(`警告: 无法读取配置文件 ${configPath}: ${error.message}`);
       }
     }
     return {};

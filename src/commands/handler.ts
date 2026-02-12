@@ -71,7 +71,7 @@ export class CommandHandler {
       '',
       startCmd,
       '/help           - 显示此帮助信息',
-      '/clear          - 清除会话，开始新对话',
+      '/new            - 开始新会话',
       '/compact [说明]  - 压缩对话上下文（节省 token）',
       '/cost           - 显示本次会话费用统计',
       '/status         - 显示 Claude Code 状态信息',
@@ -92,12 +92,12 @@ export class CommandHandler {
   }
 
   /**
-   * 处理 /clear 命令
+   * 处理 /new 命令 - 开始新会话
    */
-  async handleClear(chatId: string, userId: string): Promise<boolean> {
-    const cleared = this.deps.sessionManager.clearSession(userId);
-    if (cleared) {
-      await this.deps.sender.sendTextReply(chatId, '✅ 会话已清除，新消息将开始新的上下文。');
+  async handleNew(chatId: string, userId: string): Promise<boolean> {
+    const created = this.deps.sessionManager.newSession(userId);
+    if (created) {
+      await this.deps.sender.sendTextReply(chatId, '✅ 已开始新会话，之前的上下文不会延续。');
     } else {
       await this.deps.sender.sendTextReply(chatId, '当前没有活动会话。');
     }

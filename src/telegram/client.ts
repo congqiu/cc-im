@@ -19,11 +19,20 @@ export async function initTelegram(config: Config, setupHandlers: (bot: Telegraf
   setupHandlers(bot);
 
   try {
-    await bot.launch();
+    // 添加超时保护，避免卡住
+    const launchTimeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Telegram bot launch timeout after 30s')), 30000)
+    );
+
+    await Promise.race([
+      bot.launch(),
+      launchTimeout
+    ]);
+
     log.info('Telegram bot launched successfully');
   } catch (err) {
     log.error('Failed to launch Telegram bot:', err);
-    process.exit(1);
+    throw err; // 抛出错误而不是直接退出，让调用方决定如何处理
   }
 }
 

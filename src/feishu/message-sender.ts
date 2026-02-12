@@ -6,19 +6,21 @@ const log = createLogger('MessageSender');
 
 export async function sendThinkingCard(chatId: string): Promise<string> {
   const client = getClient();
+  // 初始创建时使用 'processing' 状态，不带停止按钮
   const res = await client.im.v1.message.create({
     params: { receive_id_type: 'chat_id' },
     data: {
       receive_id: chatId,
-      content: buildCard({ content: '正在思考...', status: 'thinking', note: '请稍候' }, 'pending'),
+      content: buildCard({ content: '正在启动...', status: 'processing', note: '请稍候' }), // 不传递 messageId
       msg_type: 'interactive',
     },
   });
   const messageId = res.data?.message_id ?? '';
 
-  // 获取到真实的 message_id 后，更新卡片以包含正确的停止按钮
+  // 获取到真实的 message_id 后，立即更新卡片为 processing 状态并添加停止按钮
   if (messageId) {
-    await updateCard(messageId, '正在思考...', 'thinking', '请稍候');
+    await updateCard(messageId, '等待 Claude 响应...', 'processing', '请稍候');
+    log.debug(`Processing card created with stop button: ${messageId}`);
   }
 
   return messageId;
@@ -27,14 +29,19 @@ export async function sendThinkingCard(chatId: string): Promise<string> {
 export async function updateCard(messageId: string, content: string, status: CardStatus, note?: string) {
   const client = getClient();
   try {
+    // 只在 processing/thinking/streaming 状态时传递 messageId（用于显示停止按钮）
+    const buttonMessageId = (status === 'processing' || status === 'thinking' || status === 'streaming') ? messageId : undefined;
+
     await client.im.v1.message.patch({
       path: { message_id: messageId },
       data: {
-        content: buildCard({ content, status, note }, messageId),
+        content: buildCard({ content, status, note }, buttonMessageId),
       },
     });
+    log.info(`Card ${messageId} updated to status: ${status}`);
   } catch (err) {
     log.error('Failed to update card:', err);
+    throw err; // 重新抛出错误以便调用方知道更新失败
   }
 }
 

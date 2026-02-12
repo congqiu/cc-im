@@ -14,12 +14,12 @@ export async function main() {
 
   const config = loadConfig();
   log.info(`Enabled platforms: ${config.enabledPlatforms.join(', ')}`);
-  log.info(`Allowed users: ${config.allowedUserIds.length === 0 ? 'ALL (dev mode)' : config.allowedUserIds.join(', ')}`);
+  log.info(`Allowed users: ${config.allowedUserIds.length === 0 ? 'ALL (dev mode)' : config.allowedUserIds.length + ' users configured'}`);
   log.info(`Claude CLI: ${config.claudeCliPath}`);
   log.info(`Default work directory: ${config.claudeWorkDir}`);
   log.info(`Skip permissions: ${config.claudeSkipPermissions}`);
   log.info(`Timeout: ${config.claudeTimeoutMs}ms`);
-  log.info(`Allowed base dirs: ${config.allowedBaseDirs.join(', ')}`);
+  log.info(`Allowed base dirs: ${config.allowedBaseDirs.length} dirs configured`);
 
   /**
    * Permission Hook Server
@@ -49,25 +49,58 @@ export async function main() {
     log.info(`Permission hook server started on port ${config.hookPort}`);
   }
 
-  // Initialize enabled platforms
+  // Initialize enabled platforms in parallel
   const activeBots: string[] = [];
+  const initTasks: Promise<{ platform: string; success: boolean }>[] = [];
 
   if (config.enabledPlatforms.includes('telegram')) {
     log.debug('Initializing Telegram platform...');
     if (config.allowedUserIds.length === 0) {
       log.warn('⚠️  ALLOWED_USER_IDS is empty - ALL users can access the bot (dev mode only!)');
     } else {
-      log.info(`Telegram whitelist: ${config.allowedUserIds.filter(id => /^\d+$/.test(id)).join(', ')}`);
+      log.info(`Telegram whitelist: ${config.allowedUserIds.filter(id => /^\d+$/.test(id)).length} users configured`);
     }
-    await initTelegram(config, (bot) => setupTelegramHandlers(bot, config));
-    activeBots.push('Telegram');
+    initTasks.push(
+      initTelegram(config, (bot) => setupTelegramHandlers(bot, config))
+        .then(() => {
+          log.info('Telegram bot initialized');
+          return { platform: 'Telegram', success: true };
+        })
+        .catch((err) => {
+          log.error('Failed to initialize Telegram bot:', err);
+          log.warn('Continuing without Telegram support');
+          return { platform: 'Telegram', success: false };
+        })
+    );
   }
 
   if (config.enabledPlatforms.includes('feishu')) {
-    const eventDispatcher = createEventDispatcher(config);
-    initFeishu(config, eventDispatcher);
-    activeBots.push('Feishu');
-    log.info('Feishu bot initialized');
+    initTasks.push(
+      Promise.resolve()
+        .then(() => {
+          const eventDispatcher = createEventDispatcher(config);
+          initFeishu(config, eventDispatcher);
+          log.info('Feishu bot initialized');
+          return { platform: 'Feishu', success: true };
+        })
+        .catch((err) => {
+          log.error('Failed to initialize Feishu bot:', err);
+          log.warn('Continuing without Feishu support');
+          return { platform: 'Feishu', success: false };
+        })
+    );
+  }
+
+  const results = await Promise.all(initTasks);
+  for (const result of results) {
+    if (result.success) {
+      activeBots.push(result.platform);
+    }
+  }
+
+  if (activeBots.length === 0) {
+    log.error('No platforms were successfully initialized!');
+    process.exit(1);
   }
 
   log.info(`Service is running with ${activeBots.join(' + ')}. Press Ctrl+C to stop.`);

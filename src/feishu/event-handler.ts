@@ -5,6 +5,7 @@ import { SessionManager } from '../session/session-manager.js';
 import { RequestQueue } from '../queue/request-queue.js';
 import { runClaude, type ClaudeRunHandle } from '../claude/cli-runner.js';
 import { sendThinkingCard, updateCard, sendFinalCards, sendTextReply, sendPermissionCard, updatePermissionCard } from './message-sender.js';
+import { buildCardObject } from './card-builder.js';
 import { setPermissionSender } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord, type CommandHandlerDeps } from '../commands/handler.js';
 import { TERMINAL_ONLY_COMMANDS, DEDUP_TTL_MS, THROTTLE_MS } from '../constants.js';
@@ -73,7 +74,7 @@ export function createEventDispatcher(config: Config) {
   // 注册卡片交互事件处理器
   dispatcher.register({
     'card.action.trigger': async (data: any) => {
-      log.info('Received card action trigger event:', JSON.stringify(data, null, 2));
+      log.debug('Received card action trigger event:', JSON.stringify(data, null, 2));
 
       const action = data.action;
       const userId = data.operator?.open_id || data.sender?.sender_id?.open_id;
@@ -85,16 +86,19 @@ export function createEventDispatcher(config: Config) {
         return;
       }
 
-      // 解析按钮的 value（可能被双重 JSON 编码）
+      // 解析按钮的 value（SDK 可能返回对象或字符串，也可能被双重 JSON 编码）
       let actionData: { action: string; message_id: string };
       try {
-        let parsed = JSON.parse(action.value);
-        // 如果解析结果是字符串，说明被双重编码了，需要再解析一次
+        let parsed = action.value;
         if (typeof parsed === 'string') {
           parsed = JSON.parse(parsed);
+          // 如果解析结果仍是字符串，说明被双重编码了，需要再解析一次
+          if (typeof parsed === 'string') {
+            parsed = JSON.parse(parsed);
+          }
         }
         actionData = parsed;
-        log.info(`Parsed action data:`, actionData);
+        log.info(`Parsed action data:`, JSON.stringify(actionData));
       } catch (err) {
         log.error('Failed to parse action value:', err);
         return;
@@ -106,7 +110,7 @@ export function createEventDispatcher(config: Config) {
         const taskKey = `${userId}:${messageId}`;
         const taskInfo = runningTasks.get(taskKey);
 
-        log.info(`Stop button clicked - taskKey: ${taskKey}, handle exists: ${!!taskInfo}`);
+        log.debug(`Stop button clicked - taskKey: ${taskKey}, handle exists: ${!!taskInfo}`);
 
         if (taskInfo) {
           log.info(`User ${userId} stopped task for message ${messageId}`);
@@ -117,17 +121,19 @@ export function createEventDispatcher(config: Config) {
           // 先从 Map 中删除任务，防止 onComplete 覆盖
           runningTasks.delete(taskKey);
 
-          // 标记任务已完成
+          // 标记任务已完成（settled=true 后 onComplete/onError 不会再更新卡片）
           taskInfo.settle();
 
           // 中止任务
           taskInfo.handle.abort();
 
-          // 更新卡片状态，显示已经输出的内容
-          await updateCard(messageId, stoppedContent, 'error', '⏹️ 已停止 - 用户手动中止');
+          // 通过回调返回值更新卡片（飞书要求 card.action.trigger 回调在 3 秒内响应）
+          const cardData = buildCardObject({ content: stoppedContent, status: 'done', note: '⏹️ 已停止' });
+          return { card: { type: 'raw', data: cardData } };
         } else {
           log.warn(`No running task found for key: ${taskKey}`);
           log.info(`Current running tasks: ${Array.from(runningTasks.keys()).join(', ')}`);
+          // 任务已结束，返回空响应保持卡片不变
         }
       }
     },
@@ -191,42 +197,6 @@ export function createEventDispatcher(config: Config) {
 
       log.info(`User ${senderId}: ${text.slice(0, 100)}${text.length > 100 ? '...' : ''}`);
 
-      // Handle /clear command
-      if (text.trim() === '/clear') {
-        const cleared = sessionManager.clearSession(senderId);
-        if (cleared) {
-          log.info(`User ${senderId} cleared session successfully`);
-          await sendTextReply(chatId, '✅ 会话已清除，新消息将开始新的上下文，并可与之前仍在执行的任务并发运行。');
-        } else {
-          log.warn(`User ${senderId} tried to clear but no session exists`);
-          await sendTextReply(chatId, '当前没有活动会话。');
-        }
-        return;
-      }
-
-      // Handle /cd command
-      if (text.trim().startsWith('/cd ')) {
-        const dir = text.trim().slice(4).trim();
-        if (!dir) {
-          await sendTextReply(chatId, `当前工作目录: ${sessionManager.getWorkDir(senderId)}`);
-          return;
-        }
-        try {
-          const resolved = sessionManager.setWorkDir(senderId, dir);
-          log.info(`User ${senderId} changed workDir to: ${resolved}`);
-          await sendTextReply(chatId, `工作目录已切换到: ${resolved}\n会话已重置。`);
-        } catch (err: any) {
-          await sendTextReply(chatId, err.message);
-        }
-        return;
-      }
-
-      // Handle /pwd command
-      if (text.trim() === '/pwd') {
-        await sendTextReply(chatId, `当前工作目录: ${sessionManager.getWorkDir(senderId)}`);
-        return;
-      }
-
       // Update runningTasksSize for CommandHandler
       commandHandler.updateRunningTasksSize(runningTasks.size);
 
@@ -236,9 +206,9 @@ export function createEventDispatcher(config: Config) {
         return;
       }
 
-      // Handle /clear command
-      if (text.trim() === '/clear') {
-        await commandHandler.handleClear(chatId, senderId);
+      // Handle /new command
+      if (text.trim() === '/new') {
+        await commandHandler.handleNew(chatId, senderId);
         return;
       }
 
@@ -330,7 +300,7 @@ export function createEventDispatcher(config: Config) {
         return;
       }
 
-      // Snapshot workDir and convId at enqueue time so /cd or /clear during queue wait doesn't affect this task
+      // Snapshot workDir and convId at enqueue time so /cd or /new during queue wait doesn't affect this task
       const workDirSnapshot = sessionManager.getWorkDir(senderId);
       const convIdSnapshot = sessionManager.getConvId(senderId);
 
@@ -454,7 +424,6 @@ async function handleClaudeRequest(
       },
       onComplete: async (result) => {
         if (settled) return;
-        cleanup();
 
         const note = result.cost > 0
           ? `耗时 ${(result.durationMs / 1000).toFixed(1)}s | 费用 $${result.cost.toFixed(4)}${result.model ? ` | ${result.model}` : ''}`
@@ -472,11 +441,10 @@ async function handleClaudeRequest(
         } catch (err) {
           log.error('Failed to send final cards:', err);
         }
-        settle();
+        settle(); // 在卡片更新后再清理任务
       },
       onError: async (error) => {
         if (settled) return;
-        cleanup();
 
         log.error(`Claude error for user ${userId}: ${error}`);
 
@@ -485,7 +453,7 @@ async function handleClaudeRequest(
         } catch (err) {
           log.error('Failed to send error card:', err);
         }
-        settle();
+        settle(); // 在卡片更新后再清理任务
       },
     }, { skipPermissions: config.claudeSkipPermissions, model: config.claudeModel, chatId, hookPort: config.hookPort });
 

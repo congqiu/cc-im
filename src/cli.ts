@@ -2,9 +2,11 @@
 import { join } from 'path';
 import { existsSync, writeFileSync, unlinkSync, mkdirSync, readFileSync, openSync, closeSync } from 'fs';
 import { execSync } from 'child_process';
+import { createLogger } from './logger.js';
 
 const DATA_DIR = join(process.env.HOME || process.env.USERPROFILE || '/tmp', '.cc-bot');
 const PID_FILE = join(DATA_DIR, 'pid');
+const logger = createLogger('CLI');
 
 function getPidFromFile() {
   if (existsSync(PID_FILE)) {
@@ -32,14 +34,14 @@ async function stop() {
   if (pid && isRunning(pid)) {
     try {
       process.kill(pid);
-      console.log(`已停止服务 (PID: ${pid})`);
+      logger.info(`已停止服务 (PID: ${pid})`);
     } catch (e: unknown) {
       const error = e as Error;
-      console.error('停止失败:', error.message);
+      logger.error('停止失败:', error.message);
       process.exit(1);
     }
   } else {
-    console.log('服务未运行');
+    logger.info('服务未运行');
   }
 
   if (existsSync(PID_FILE)) {
@@ -51,8 +53,8 @@ async function start() {
   // 先检查旧的 PID 文件
   const oldPid = getPidFromFile();
   if (oldPid && isRunning(oldPid)) {
-    console.log(`服务已在运行中 (PID: ${oldPid})`);
-    console.log(`请先运行: cc-bot stop`);
+    logger.info(`服务已在运行中 (PID: ${oldPid})`);
+    logger.info(`请先运行: cc-bot stop`);
     process.exit(1);
   }
 
@@ -79,7 +81,7 @@ async function start() {
     }
     const error = err as NodeJS.ErrnoException;
     if (error.code === 'EEXIST') {
-      console.error('服务正在启动中或 PID 文件被锁定，请稍后再试');
+      logger.error('服务正在启动中或 PID 文件被锁定，请稍后再试');
       process.exit(1);
     }
     throw err;

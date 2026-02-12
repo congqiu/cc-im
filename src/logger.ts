@@ -2,6 +2,7 @@ import { createWriteStream, mkdirSync, existsSync, readdirSync, statSync, unlink
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { WriteStream } from 'node:fs';
+import { sanitize } from './sanitize.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, '..');
@@ -67,7 +68,7 @@ function write(level: string, tag: string, msg: string, ...args: unknown[]) {
   const extra = args.length > 0
     ? ' ' + args.map((a) => (a instanceof Error ? a.stack ?? a.message : String(a))).join(' ')
     : '';
-  const line = `${getTimestamp()} [${level}] [${tag}] ${msg}${extra}\n`;
+  const line = sanitize(`${getTimestamp()} [${level}] [${tag}] ${msg}${extra}\n`);
 
   if (level === 'ERROR') {
     process.stderr.write(line);

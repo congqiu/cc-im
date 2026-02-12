@@ -122,11 +122,11 @@ export class SessionManager {
     }
     // 切换目录也立即同步保存，确保会话重置生效
     this.flushSync();
-    log.info(`WorkDir changed for user ${userId}: ${resolved}, session cleared, new convId=${this.sessions.get(userId)?.activeConvId}`);
+    log.info(`WorkDir changed for user ${userId}: ${resolved}, session cleared`);
     return resolved;
   }
 
-  clearSession(userId: string): boolean {
+  newSession(userId: string): boolean {
     const session = this.sessions.get(userId);
     if (session) {
       // 转存旧 convId 的 sessionId，供仍在运行的旧任务使用
@@ -135,9 +135,8 @@ export class SessionManager {
       }
       session.sessionId = undefined;
       session.activeConvId = this.generateConvId();
-      // 立即同步保存，确保清除操作生效
       this.flushSync();
-      log.info(`Session cleared for user: ${userId}, new convId=${session.activeConvId}`);
+      log.info(`New session started for user: ${userId}`);
       return true;
     }
     return false;

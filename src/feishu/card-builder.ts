@@ -1,4 +1,4 @@
-export type CardStatus = 'thinking' | 'streaming' | 'done' | 'error';
+export type CardStatus = 'processing' | 'thinking' | 'streaming' | 'done' | 'error';
 
 interface CardOptions {
   content: string;
@@ -7,6 +7,7 @@ interface CardOptions {
 }
 
 const HEADER_TEMPLATES: Record<CardStatus, string> = {
+  processing: 'blue',
   thinking: 'blue',
   streaming: 'blue',
   done: 'green',
@@ -14,6 +15,7 @@ const HEADER_TEMPLATES: Record<CardStatus, string> = {
 };
 
 const HEADER_TITLES: Record<CardStatus, string> = {
+  processing: 'Claude Code - 处理中...',
   thinking: 'Claude Code - 思考中...',
   streaming: 'Claude Code',
   done: 'Claude Code',
@@ -32,7 +34,7 @@ export function truncateForCard(text: string): string {
   return `...(前文已省略)...\n${clean}`;
 }
 
-export function buildCard(options: CardOptions, messageId?: string): string {
+export function buildCardObject(options: CardOptions, messageId?: string): Record<string, unknown> {
   const { content, status, note } = options;
 
   const elements: unknown[] = [
@@ -49,8 +51,8 @@ export function buildCard(options: CardOptions, messageId?: string): string {
     });
   }
 
-  // 在思考和流式输出状态时添加停止按钮
-  if ((status === 'thinking' || status === 'streaming') && messageId) {
+  // 在处理中、思考中和流式输出状态时添加停止按钮
+  if ((status === 'processing' || status === 'thinking' || status === 'streaming') && messageId) {
     elements.push({
       tag: 'action',
       actions: [
@@ -61,13 +63,13 @@ export function buildCard(options: CardOptions, messageId?: string): string {
             content: '⏹️ 停止',
           },
           type: 'danger',
-          value: JSON.stringify({ action: 'stop', message_id: messageId }),
+          value: { action: 'stop', message_id: messageId },
         },
       ],
     });
   }
 
-  const card = {
+  return {
     config: { wide_screen_mode: true, update_multi: true },
     header: {
       template: HEADER_TEMPLATES[status],
@@ -78,8 +80,10 @@ export function buildCard(options: CardOptions, messageId?: string): string {
     },
     elements,
   };
+}
 
-  return JSON.stringify(card);
+export function buildCard(options: CardOptions, messageId?: string): string {
+  return JSON.stringify(buildCardObject(options, messageId));
 }
 
 export function splitLongContent(text: string, maxLen = MAX_CARD_CONTENT_LENGTH): string[] {
@@ -126,7 +130,7 @@ export function buildPermissionCard(requestId: string, toolName: string, toolInp
   }
 
   const card = {
-    config: { wide_screen_mode: true },
+    config: { wide_screen_mode: true, update_multi: true },
     header: {
       template: 'orange',
       title: { tag: 'plain_text', content: `🔐 权限确认 - ${toolName}` },
@@ -142,7 +146,7 @@ export function buildPermissionCard(requestId: string, toolName: string, toolInp
 export function buildPermissionResultCard(toolName: string, decision: 'allow' | 'deny'): string {
   const isAllowed = decision === 'allow';
   const card = {
-    config: { wide_screen_mode: true },
+    config: { wide_screen_mode: true, update_multi: true },
     header: {
       template: isAllowed ? 'green' : 'red',
       title: { tag: 'plain_text', content: `🔐 ${toolName} - ${isAllowed ? '已允许 ✓' : '已拒绝 ✗'}` },

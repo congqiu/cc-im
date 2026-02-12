@@ -126,9 +126,9 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
       return;
     }
 
-    // Handle /clear
-    if (text === '/clear') {
-      await commandHandler.handleClear(chatId, userId);
+    // Handle /new
+    if (text === '/new') {
+      await commandHandler.handleNew(chatId, userId);
       return;
     }
 
