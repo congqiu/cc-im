@@ -7,8 +7,8 @@
 ## 功能
 
 - **多平台支持**：飞书和 Telegram，可同时运行或单独使用
-- **流式输出**：实时显示 Claude Code 执行进度（飞书通过卡片 PATCH、Telegram 通过 editMessage）
-- **会话管理**：每用户独立 session，支持 `/clear` 重置
+- **流式输出**：飞书端使用 CardKit 打字机效果，Telegram 端通过 editMessage 实时更新
+- **会话管理**：每用户独立 session，支持 `/new` 重置
 - **并发控制**：同会话串行执行，不同会话可并发，最多排队 3 条消息
 - **长消息分片**：超长内容自动拆分为多条消息
 - **权限确认**：通过 Hook 机制实现工具调用的交互式审批
@@ -53,7 +53,7 @@ pnpm dev
 
 1. 在[飞书开放平台](https://open.feishu.cn)创建应用
 2. 开启机器人能力
-3. 添加权限：`im:message`、`im:message:send_as_bot`
+3. 添加权限：`im:message`、`im:message:send_as_bot`、`im:message:patch_as_bot`、`cardkit:card`
 4. 事件订阅中启用 **长连接模式**，订阅以下事件：
    - `im.message.receive_v1` — 接收消息
    - `card.action.trigger` — 卡片交互（停止按钮）
@@ -86,7 +86,7 @@ pnpm start    # 生产模式
 |------|------|
 | `/start` | 显示欢迎信息（Telegram） |
 | `/help` | 显示帮助信息 |
-| `/clear` | 清除当前会话，开始新对话 |
+| `/new` | 开始新会话 |
 | `/cd <path>` | 切换工作目录（同时重置会话） |
 | `/pwd` | 查看当前工作目录 |
 | `/list` | 列出���有工作区 |
@@ -131,7 +131,7 @@ pnpm start    # 生产模式
 
 ## 配置文件
 
-除环境变量外，也支持通过 `~/.cc-bot` JSON 文件配置：
+除环境变量外，也支持通过 `~/.cc-bot/config.json` 文件配置：
 
 ```json
 {
@@ -165,17 +165,26 @@ pnpm start    # 生产模式
 
 ```
 src/
-├── index.ts                  # 入口，平台选择与启动
-├── config.ts                 # 配置加载（环境变量 + ~/.cc-bot）
+├── index.ts                  # 入口，多平台并行初始化
+├── config.ts                 # 配置加载（环境变量 + ~/.cc-bot/config.json）
+├── constants.ts              # 系统常量（节流、长度限制、错误码等）
+├── logger.ts                 # 带标签的日志系统（自动脱敏）
+├── sanitize.ts               # 日志脱敏规则
+├── cli.ts                    # CLI 入口
+├── access/
+│   └── access-control.ts     # 白名单访问控制
 ├── claude/
 │   ├── cli-runner.ts         # Claude CLI 子进程管理
-│   ├── stream-parser.ts      # 流式输出解析
+│   ├── stream-parser.ts      # stream-json 格式解析
 │   └── types.ts              # Claude 消息类型定义
+├── commands/
+│   └── handler.ts            # 平台无关的命令处理器
 ├── feishu/
 │   ├── client.ts             # 飞书 SDK 初始化
 │   ├── event-handler.ts      # 飞书事件处理
-│   ├── message-sender.ts     # 飞书消息发送
-│   └── card-builder.ts       # 飞书卡片构建
+│   ├── message-sender.ts     # 飞书消息发送封装
+│   ├── card-builder.ts       # 飞书卡片构建（JSON 1.0 + 2.0）
+│   └── cardkit-manager.ts    # CardKit 卡片生命周期管理
 ├── telegram/
 │   ├── client.ts             # Telegraf 初始化
 │   ├── event-handler.ts      # Telegram 事件处理
@@ -184,11 +193,9 @@ src/
 │   ├── permission-server.ts  # 权限确认 HTTP 服务
 │   └── hook-script.ts        # Claude Code PreToolUse Hook
 ├── session/
-│   └── manager.ts            # 会话管理
-├── queue/
-│   └── request-queue.ts      # 请求队列与并发控制
-└── access/
-    └── control.ts            # 白名单访问控制
+│   └── session-manager.ts    # 会话管理（持久化到 data/sessions.json）
+└── queue/
+    └── request-queue.ts      # 请求队列与并发控制
 ```
 
 ## License

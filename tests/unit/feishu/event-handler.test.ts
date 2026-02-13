@@ -52,12 +52,17 @@ vi.mock('../../../src/queue/request-queue.js', () => ({
 }));
 
 vi.mock('../../../src/feishu/message-sender.js', () => ({
-  sendThinkingCard: vi.fn().mockResolvedValue('msg-123'),
-  updateCard: vi.fn().mockResolvedValue(undefined),
+  sendThinkingCard: vi.fn().mockResolvedValue({ messageId: 'msg-123', cardId: 'card-abc' }),
+  streamContentUpdate: vi.fn().mockResolvedValue(undefined),
   sendFinalCards: vi.fn().mockResolvedValue(undefined),
+  sendErrorCard: vi.fn().mockResolvedValue(undefined),
   sendTextReply: vi.fn().mockResolvedValue(undefined),
   sendPermissionCard: vi.fn().mockResolvedValue('perm-msg-123'),
   updatePermissionCard: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../../../src/feishu/cardkit-manager.js', () => ({
+  destroySession: vi.fn(),
 }));
 
 vi.mock('../../../src/claude/cli-runner.js', () => ({

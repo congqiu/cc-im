@@ -4,11 +4,12 @@ import { AccessControl } from '../access/access-control.js';
 import { SessionManager } from '../session/session-manager.js';
 import { RequestQueue } from '../queue/request-queue.js';
 import { runClaude, type ClaudeRunHandle } from '../claude/cli-runner.js';
-import { sendThinkingCard, updateCard, sendFinalCards, sendTextReply, sendPermissionCard, updatePermissionCard } from './message-sender.js';
-import { buildCardObject } from './card-builder.js';
+import { sendThinkingCard, streamContentUpdate, sendFinalCards, sendErrorCard, sendTextReply, sendPermissionCard, updatePermissionCard, type CardHandle } from './message-sender.js';
+import { buildCardV2 } from './card-builder.js';
+import { destroySession, updateCardFull } from './cardkit-manager.js';
 import { setPermissionSender } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord, type CommandHandlerDeps } from '../commands/handler.js';
-import { TERMINAL_ONLY_COMMANDS, DEDUP_TTL_MS, THROTTLE_MS } from '../constants.js';
+import { TERMINAL_ONLY_COMMANDS, DEDUP_TTL_MS, CARDKIT_THROTTLE_MS } from '../constants.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('EventHandler');
@@ -27,6 +28,8 @@ function trackCost(userId: string, cost: number, durationMs: number) {
 // 跟踪正在执行的任务
 interface TaskInfo {
   handle: ClaudeRunHandle;
+  cardId: string;
+  messageId: string;
   latestContent: string;
   settle: () => void;  // 添加 settle 函数，用于在停止时标记任务已完成
 }
@@ -87,7 +90,7 @@ export function createEventDispatcher(config: Config) {
       }
 
       // 解析按钮的 value（SDK 可能返回对象或字符串，也可能被双重 JSON 编码）
-      let actionData: { action: string; message_id: string };
+      let actionData: { action: string; card_id?: string; message_id?: string };
       try {
         let parsed = action.value;
         if (typeof parsed === 'string') {
@@ -106,14 +109,18 @@ export function createEventDispatcher(config: Config) {
 
       // 处理停止按钮
       if (actionData.action === 'stop') {
-        const messageId = actionData.message_id;
-        const taskKey = `${userId}:${messageId}`;
+        const cardId = actionData.card_id;
+        if (!cardId) {
+          log.warn('No card_id in stop action data');
+          return;
+        }
+        const taskKey = `${userId}:${cardId}`;
         const taskInfo = runningTasks.get(taskKey);
 
         log.debug(`Stop button clicked - taskKey: ${taskKey}, handle exists: ${!!taskInfo}`);
 
         if (taskInfo) {
-          log.info(`User ${userId} stopped task for message ${messageId}`);
+          log.info(`User ${userId} stopped task for card ${cardId}`);
 
           // 保存当前内容
           const stoppedContent = taskInfo.latestContent || '(任务已停止，暂无输出)';
@@ -127,9 +134,11 @@ export function createEventDispatcher(config: Config) {
           // 中止任务
           taskInfo.handle.abort();
 
-          // 通过回调返回值更新卡片（飞书要求 card.action.trigger 回调在 3 秒内响应）
-          const cardData = buildCardObject({ content: stoppedContent, status: 'done', note: '⏹️ 已停止' });
-          return { card: { type: 'raw', data: cardData } };
+          // 通过 CardKit API 更新卡片为已停止状态，然后清理 session
+          const stoppedCard = buildCardV2({ content: stoppedContent, status: 'done', note: '⏹️ 已停止' });
+          updateCardFull(cardId, stoppedCard)
+            .catch((e) => log.warn('Stop card update failed:', e?.message ?? e))
+            .finally(() => destroySession(cardId));
         } else {
           log.warn(`No running task found for key: ${taskKey}`);
           log.info(`Current running tasks: ${Array.from(runningTasks.keys()).join(', ')}`);
@@ -335,16 +344,18 @@ async function handleClaudeRequest(
   log.info(`Running Claude for user ${userId}, convId=${convId}, workDir=${workDir}, sessionId=${sessionId ?? 'new'}`);
 
   // Send thinking card
-  let messageId: string;
+  let cardHandle: CardHandle;
   try {
-    messageId = await sendThinkingCard(chatId);
+    cardHandle = await sendThinkingCard(chatId);
   } catch (err) {
     log.error('Failed to send thinking card:', err);
     return;
   }
 
-  if (!messageId) {
-    log.error('No message_id returned for thinking card');
+  const { messageId, cardId } = cardHandle;
+
+  if (!cardId) {
+    log.error('No card_id returned for thinking card');
     return;
   }
 
@@ -354,8 +365,9 @@ async function handleClaudeRequest(
     let latestContent = '';
     let settled = false;
     let firstContentLogged = false;
+    let wasThinking = false;
     const startTime = Date.now();
-    const taskKey = `${userId}:${messageId}`;
+    const taskKey = `${userId}:${cardId}`;
 
     const cleanup = () => {
       if (pendingUpdate) {
@@ -385,19 +397,19 @@ async function handleClaudeRequest(
       const now = Date.now();
       const elapsed = now - lastUpdateTime;
 
-      if (elapsed >= THROTTLE_MS) {
+      if (elapsed >= CARDKIT_THROTTLE_MS) {
         lastUpdateTime = now;
         if (pendingUpdate) {
           clearTimeout(pendingUpdate);
           pendingUpdate = null;
         }
-        updateCard(messageId, latestContent, 'streaming', '输出中...').catch(() => {});
+        streamContentUpdate(cardId, latestContent).catch((e) => log.warn('Stream update failed:', e?.message ?? e));
       } else if (!pendingUpdate) {
         pendingUpdate = setTimeout(() => {
           pendingUpdate = null;
           lastUpdateTime = Date.now();
-          updateCard(messageId, latestContent, 'streaming', '输出中...').catch(() => {});
-        }, THROTTLE_MS - elapsed);
+          streamContentUpdate(cardId, latestContent).catch((e) => log.warn('Stream update failed:', e?.message ?? e));
+        }, CARDKIT_THROTTLE_MS - elapsed);
       }
     };
 
@@ -411,6 +423,7 @@ async function handleClaudeRequest(
           firstContentLogged = true;
           log.debug(`First content (thinking) for user ${userId} after ${Date.now() - startTime}ms`);
         }
+        wasThinking = true;
         // 思考阶段也更新卡片，让用户看到 Claude 在想什么
         const display = `💭 **思考中...**\n\n${thinking}`;
         throttledUpdate(display);
@@ -419,6 +432,23 @@ async function handleClaudeRequest(
         if (!firstContentLogged) {
           firstContentLogged = true;
           log.debug(`First content (text) for user ${userId} after ${Date.now() - startTime}ms`);
+        }
+        if (wasThinking) {
+          wasThinking = false;
+          // 思考→文本切换：内容前缀完全改变，CardKit 无法做增量渲染
+          // 用 updateCardFull 重置卡片基线，后续流式更新才能正常增量
+          if (pendingUpdate) {
+            clearTimeout(pendingUpdate);
+            pendingUpdate = null;
+          }
+          const resetCard = buildCardV2({ content: accumulated || '...', status: 'streaming' }, cardId);
+          updateCardFull(cardId, resetCard)
+            .catch((e) => log.warn('Thinking→text transition update failed:', e?.message ?? e));
+          lastUpdateTime = Date.now();
+          latestContent = accumulated;
+          const taskInfo = runningTasks.get(taskKey);
+          if (taskInfo) taskInfo.latestContent = accumulated;
+          return;
         }
         throttledUpdate(accumulated);
       },
@@ -437,7 +467,7 @@ async function handleClaudeRequest(
         // 优先使用流式累积的原始文本，避免 result.result 中的 HTML 实体编码
         const finalContent = result.accumulated || result.result || '(无输出)';
         try {
-          await sendFinalCards(chatId, messageId, finalContent, note);
+          await sendFinalCards(chatId, messageId, cardId, finalContent, note);
         } catch (err) {
           log.error('Failed to send final cards:', err);
         }
@@ -449,7 +479,7 @@ async function handleClaudeRequest(
         log.error(`Claude error for user ${userId}: ${error}`);
 
         try {
-          await updateCard(messageId, `错误：${error}`, 'error', '执行失败');
+          await sendErrorCard(cardId, error);
         } catch (err) {
           log.error('Failed to send error card:', err);
         }
@@ -458,6 +488,6 @@ async function handleClaudeRequest(
     }, { skipPermissions: config.claudeSkipPermissions, model: config.claudeModel, chatId, hookPort: config.hookPort });
 
     // 将任务 handle 和 settle 函数存储到 Map 中，以便能够在用户点击停止按钮时中止
-    runningTasks.set(taskKey, { handle, latestContent: '', settle });
+    runningTasks.set(taskKey, { handle, cardId, messageId, latestContent: '', settle });
   });
 }

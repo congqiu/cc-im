@@ -50,14 +50,25 @@ export const DEDUP_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * 消息更新节流时间（毫秒）
- * 用于控制流式输出更新频率
+ * Telegram 使用 editMessageText，限频较严
  */
 export const THROTTLE_MS = 200;
 
 /**
- * 飞书卡片最大内容长度
+ * CardKit 流式更新节流时间（毫秒）
+ * cardElement.content 专为流式设计，支持更高频率
+ */
+export const CARDKIT_THROTTLE_MS = 80;
+
+/**
+ * 飞书卡片最大内容长度（JSON 1.0 / im.v1.message.patch）
  */
 export const MAX_CARD_CONTENT_LENGTH = 3800;
+
+/**
+ * CardKit 流式内容最大长度（CardKit 卡片上限 30KB，留余量）
+ */
+export const MAX_STREAMING_CONTENT_LENGTH = 25000;
 
 /**
  * Telegram 消息最大长度

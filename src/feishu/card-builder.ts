@@ -1,3 +1,5 @@
+import { MAX_STREAMING_CONTENT_LENGTH } from '../constants.js';
+
 export type CardStatus = 'processing' | 'thinking' | 'streaming' | 'done' | 'error';
 
 interface CardOptions {
@@ -156,4 +158,69 @@ export function buildPermissionResultCard(toolName: string, decision: 'allow' | 
     ],
   };
   return JSON.stringify(card);
+}
+
+// ─── CardKit JSON 2.0 ───
+
+export function truncateForStreaming(text: string): string {
+  if (text.length <= MAX_STREAMING_CONTENT_LENGTH) return text;
+  const keepLen = MAX_STREAMING_CONTENT_LENGTH - 20;
+  const tail = text.slice(text.length - keepLen);
+  const lineBreak = tail.indexOf('\n');
+  const clean = lineBreak > 0 && lineBreak < 200 ? tail.slice(lineBreak + 1) : tail;
+  return `...(前文已省略)...\n${clean}`;
+}
+
+export function buildCardV2Object(options: CardOptions, cardId?: string): Record<string, unknown> {
+  const { content, status, note } = options;
+
+  const elements: unknown[] = [
+    {
+      tag: 'markdown',
+      content: truncateForStreaming(content) || '...',
+      element_id: 'main_content',
+    },
+  ];
+
+  if (note) {
+    elements.push({
+      tag: 'markdown',
+      content: note,
+      text_size: 'notation',
+      element_id: 'note_area',
+    });
+  }
+
+  // 在处理中、思考中和流式输出状态时添加停止按钮
+  if ((status === 'processing' || status === 'thinking' || status === 'streaming') && cardId) {
+    elements.push({
+      tag: 'button',
+      text: { tag: 'plain_text', content: '⏹️ 停止' },
+      type: 'danger',
+      value: { action: 'stop', card_id: cardId },
+      element_id: 'action_stop',
+    });
+  }
+
+  const isActive = status === 'processing' || status === 'thinking' || status === 'streaming';
+
+  return {
+    schema: '2.0',
+    config: {
+      update_multi: true,
+      ...(isActive ? { streaming_mode: true } : {}),
+    },
+    header: {
+      template: HEADER_TEMPLATES[status],
+      title: { tag: 'plain_text', content: HEADER_TITLES[status] },
+    },
+    body: {
+      direction: 'vertical',
+      elements,
+    },
+  };
+}
+
+export function buildCardV2(options: CardOptions, cardId?: string): string {
+  return JSON.stringify(buildCardV2Object(options, cardId));
 }

@@ -1,64 +1,76 @@
 import { getClient } from './client.js';
-import { buildCard, buildPermissionCard, buildPermissionResultCard, splitLongContent, type CardStatus } from './card-builder.js';
+import {
+  buildCardV2,
+  buildPermissionCard,
+  buildPermissionResultCard,
+  splitLongContent,
+  truncateForStreaming,
+} from './card-builder.js';
+import {
+  createCard,
+  enableStreaming,
+  sendCardMessage,
+  streamContent as cardkitStreamContent,
+  updateCardFull,
+  destroySession,
+} from './cardkit-manager.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('MessageSender');
 
-export async function sendThinkingCard(chatId: string): Promise<string> {
-  const client = getClient();
-  // 初始创建时使用 'processing' 状态，不带停止按钮
-  const res = await client.im.v1.message.create({
-    params: { receive_id_type: 'chat_id' },
-    data: {
-      receive_id: chatId,
-      content: buildCard({ content: '正在启动...', status: 'processing', note: '请稍候' }), // 不传递 messageId
-      msg_type: 'interactive',
-    },
-  });
-  const messageId = res.data?.message_id ?? '';
-
-  // 获取到真实的 message_id 后，立即更新卡片为 processing 状态并添加停止按钮
-  if (messageId) {
-    await updateCard(messageId, '等待 Claude 响应...', 'processing', '请稍候');
-    log.debug(`Processing card created with stop button: ${messageId}`);
-  }
-
-  return messageId;
+export interface CardHandle {
+  messageId: string;
+  cardId: string;
 }
 
-export async function updateCard(messageId: string, content: string, status: CardStatus, note?: string) {
-  const client = getClient();
-  try {
-    // 只在 processing/thinking/streaming 状态时传递 messageId（用于显示停止按钮）
-    const buttonMessageId = (status === 'processing' || status === 'thinking' || status === 'streaming') ? messageId : undefined;
+export async function sendThinkingCard(chatId: string): Promise<CardHandle> {
+  // 1. 创建 CardKit 卡片（初始无停止按钮）
+  const initialCard = buildCardV2({ content: '正在启动...', status: 'processing', note: '请稍候' });
+  const cardId = await createCard(initialCard);
 
-    await client.im.v1.message.patch({
-      path: { message_id: messageId },
-      data: {
-        content: buildCard({ content, status, note }, buttonMessageId),
-      },
-    });
-    log.info(`Card ${messageId} updated to status: ${status}`);
-  } catch (err) {
-    log.error('Failed to update card:', err);
-    throw err; // 重新抛出错误以便调用方知道更新失败
-  }
+  // 2. 并行：启用流式模式 + 发送卡片消息
+  const [, messageId] = await Promise.all([
+    enableStreaming(cardId),
+    sendCardMessage(chatId, cardId),
+  ]);
+
+  // 3. 全量更新补充停止按钮（现在有 cardId 了）
+  const cardWithButton = buildCardV2(
+    { content: '等待 Claude 响应...', status: 'processing', note: '请稍候' },
+    cardId,
+  );
+  await updateCardFull(cardId, cardWithButton);
+  log.debug(`Processing card created: cardId=${cardId}, messageId=${messageId}`);
+
+  return { messageId, cardId };
 }
 
-export async function sendFinalCards(chatId: string, messageId: string, fullContent: string, note: string) {
+export async function streamContentUpdate(cardId: string, content: string): Promise<void> {
+  const truncated = truncateForStreaming(content) || '...';
+  await cardkitStreamContent(cardId, 'main_content', truncated);
+}
+
+export async function sendFinalCards(
+  chatId: string,
+  messageId: string,
+  cardId: string,
+  fullContent: string,
+  note: string,
+): Promise<void> {
   const parts = splitLongContent(fullContent);
 
-  // Update the original card with the first part
-  await updateCard(messageId, parts[0], 'done', note);
+  // 更新原卡片为完成状态
+  const finalCard = buildCardV2({ content: parts[0], status: 'done', note });
+  await updateCardFull(cardId, finalCard);
 
-  // Send continuation cards for remaining parts
+  // 溢出部分用新消息发送
   const client = getClient();
   for (let i = 1; i < parts.length; i++) {
     await client.im.v1.message.create({
       params: { receive_id_type: 'chat_id' },
       data: {
         receive_id: chatId,
-        content: buildCard({
+        content: buildCardV2({
           content: parts[i],
           status: 'done',
           note: `(续 ${i + 1}/${parts.length}) ${note}`,
@@ -67,6 +79,18 @@ export async function sendFinalCards(chatId: string, messageId: string, fullCont
       },
     });
   }
+
+  destroySession(cardId);
+}
+
+export async function sendErrorCard(cardId: string, error: string): Promise<void> {
+  try {
+    const errorCard = buildCardV2({ content: `错误：${error}`, status: 'error', note: '执行失败' });
+    await updateCardFull(cardId, errorCard);
+  } catch (err) {
+    log.error('Failed to send error card:', err);
+  }
+  destroySession(cardId);
 }
 
 export async function sendTextReply(chatId: string, text: string) {
