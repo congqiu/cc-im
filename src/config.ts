@@ -1,8 +1,8 @@
 import 'dotenv/config';
 import { readFileSync, accessSync, constants } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { createLogger } from './logger.js';
+import { APP_HOME } from './constants.js';
 
 const logger = createLogger('Config');
 
@@ -21,6 +21,7 @@ export interface Config {
   claudeTimeoutMs: number;
   claudeModel?: string;
   hookPort: number;
+  logDir: string;
 }
 
 interface FileConfig {
@@ -34,21 +35,22 @@ interface FileConfig {
   allowedBaseDirs?: string[];
   claudeSkipPermissions?: boolean;
   claudeTimeoutMs?: number;
+  logDir?: string;
 }
 
 function loadFileConfig(): FileConfig {
-  const configPath = join(homedir(), '.cc-bot', 'config.json');
+  const configPath = join(APP_HOME, 'config.json');
   try {
     const content = readFileSync(configPath, 'utf-8');
     logger.debug(`Loaded configuration from ${configPath}`);
     return JSON.parse(content);
   } catch (err: unknown) {
-    const error = err as NodeJS.ErrnoException;
-    if (error.code !== 'ENOENT') {
-      if (error instanceof SyntaxError) {
-        logger.warn(`警告: 配置文件 ${configPath} 格式错误，将使用环境变量`);
-        logger.warn(`错误详情: ${error.message}`);
-      } else {
+    if (err instanceof SyntaxError) {
+      logger.warn(`警告: 配置文件 ${configPath} 格式错误，将使用环境变量`);
+      logger.warn(`错误详情: ${err.message}`);
+    } else {
+      const error = err as NodeJS.ErrnoException;
+      if (error.code !== 'ENOENT') {
         logger.warn(`警告: 无法读取配置文件 ${configPath}: ${error.message}`);
       }
     }
@@ -134,7 +136,7 @@ export function loadConfig(): Config {
       `请检查：\n` +
       `  1. 文件是否存在\n` +
       `  2. 是否有执行权限\n` +
-      `  3. CLAUDE_CLI_PATH 环境变量或 ~/.cc-bot 配置是否正确`
+      `  3. CLAUDE_CLI_PATH 环境变量或 ${APP_HOME} 配置是否正确`
     );
   }
 
@@ -142,6 +144,8 @@ export function loadConfig(): Config {
     process.env.HOOK_SERVER_PORT !== undefined
       ? parseInt(process.env.HOOK_SERVER_PORT, 10) || 18900
       : 18900;
+
+  const logDir = process.env.LOG_DIR ?? file.logDir ?? join(APP_HOME, 'logs');
 
   return {
     enabledPlatforms,
@@ -155,5 +159,6 @@ export function loadConfig(): Config {
     claudeSkipPermissions,
     claudeTimeoutMs,
     hookPort,
+    logDir,
   };
 }

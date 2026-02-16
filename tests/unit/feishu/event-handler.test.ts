@@ -28,6 +28,7 @@ vi.mock('../../../src/access/access-control.js', () => ({
 
 vi.mock('../../../src/session/session-manager.js', () => ({
   SessionManager: vi.fn().mockImplementation(function (this: any) {
+    const threadSessions = new Map<string, any>();
     this.getSessionId = vi.fn();
     this.setSessionId = vi.fn();
     this.getConvId = vi.fn(() => 'conv-123');
@@ -39,6 +40,14 @@ vi.mock('../../../src/session/session-manager.js', () => ({
     this.clearSession = vi.fn(() => true);
     this.getSessionIdForConv = vi.fn();
     this.setSessionIdForConv = vi.fn();
+    this.getThreadSession = vi.fn((userId: string, threadId: string) => {
+      return threadSessions.get(`${userId}:${threadId}`);
+    });
+    this.setThreadSession = vi.fn((userId: string, threadId: string, session: any) => {
+      threadSessions.set(`${userId}:${threadId}`, session);
+    });
+    this.getSessionIdForThread = vi.fn();
+    this.setSessionIdForThread = vi.fn();
   }),
 }));
 
@@ -59,10 +68,13 @@ vi.mock('../../../src/feishu/message-sender.js', () => ({
   sendTextReply: vi.fn().mockResolvedValue(undefined),
   sendPermissionCard: vi.fn().mockResolvedValue('perm-msg-123'),
   updatePermissionCard: vi.fn().mockResolvedValue(undefined),
+  fetchThreadDescription: vi.fn().mockResolvedValue('话题描述内容'),
 }));
 
 vi.mock('../../../src/feishu/cardkit-manager.js', () => ({
   destroySession: vi.fn(),
+  updateCardFull: vi.fn().mockResolvedValue(undefined),
+  disableStreaming: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../../../src/claude/cli-runner.js', () => ({
@@ -83,7 +95,7 @@ vi.mock('node:child_process', () => ({
 }));
 
 vi.mock('../../../src/hook/permission-server.js', () => ({
-  setPermissionSender: vi.fn(),
+  registerPermissionSender: vi.fn(),
   resolveLatestPermission: vi.fn(),
   getPendingCount: vi.fn(() => 0),
   listPending: vi.fn(() => []),
@@ -107,6 +119,7 @@ vi.mock('../../../src/commands/handler.js', () => {
   return {
     CommandHandler: vi.fn().mockImplementation(function (this: any, deps: any) {
       this.deps = deps;
+      this.updateRunningTasksSize = vi.fn();
 
       // Mock handlers that actually call sendTextReply so tests can verify them
       this.handleHelp = vi.fn(async (chatId: string, platform: string) => {
@@ -114,8 +127,8 @@ vi.mock('../../../src/commands/handler.js', () => {
         return true;
       });
 
-      this.handleClear = vi.fn(async (chatId: string, userId: string) => {
-        await deps.sender.sendTextReply(chatId, '✅ 会话已清除');
+      this.handleNew = vi.fn(async (chatId: string, userId: string) => {
+        await deps.sender.sendTextReply(chatId, '✅ 已开始新会话');
         return true;
       });
 
@@ -168,6 +181,7 @@ vi.mock('../../../src/commands/handler.js', () => {
       this.handleDeny = vi.fn().mockResolvedValue(true);
       this.handleAllowAll = vi.fn().mockResolvedValue(true);
       this.handlePending = vi.fn().mockResolvedValue(true);
+      this.handleThreads = vi.fn().mockResolvedValue(true);
     }),
   };
 });
@@ -248,18 +262,18 @@ describe('Event Handler', () => {
     );
   });
 
-  it('/clear 命令应该清除会话', async () => {
+  it('/new 命令应该开始新会话', async () => {
     createEventDispatcher(mockConfig);
 
     const messageHandler = getMessageHandler();
 
     const messageData = {
       message: {
-        message_id: 'msg-clear',
+        message_id: 'msg-new',
         chat_id: 'chat-123',
         chat_type: 'p2p',
         message_type: 'text',
-        content: JSON.stringify({ text: '/clear' }),
+        content: JSON.stringify({ text: '/new' }),
       },
       sender: {
         sender_id: { open_id: 'user-123' },
@@ -270,7 +284,7 @@ describe('Event Handler', () => {
 
     expect(messageSender.sendTextReply).toHaveBeenCalledWith(
       'chat-123',
-      expect.stringContaining('会话已清除')
+      expect.stringContaining('已开始新会话')
     );
   });
 
@@ -374,7 +388,8 @@ describe('Event Handler', () => {
 
     expect(messageSender.sendTextReply).toHaveBeenCalledWith(
       'chat-123',
-      expect.stringContaining('仅在终端交互模式下可用')
+      expect.stringContaining('仅在终端交互模式下可用'),
+      undefined,
     );
   });
 
@@ -733,6 +748,87 @@ describe('Event Handler', () => {
     expect(messageSender.sendTextReply).toHaveBeenCalledWith(
       'chat-123',
       expect.stringContaining('可用命令')
+    );
+  });
+
+  it('群聊主聊天区应该使用默认会话（不创建话题）', async () => {
+    createEventDispatcher(mockConfig);
+    const messageHandler = getMessageHandler();
+
+    const messageData = {
+      message: {
+        message_id: 'msg-group-main',
+        chat_id: 'chat-group',
+        chat_type: 'group',
+        message_type: 'text',
+        content: JSON.stringify({ text: '@_user_1 Hello in main chat' }),
+        mentions: [{ key: '@_user_1', id: { open_id: 'bot-id' }, name: 'Bot' }],
+        // 无 thread_id 和 root_id
+      },
+      sender: {
+        sender_id: { open_id: 'user-123' },
+      },
+    };
+
+    await messageHandler(messageData);
+
+    // 应该调用 sendThinkingCard，但不传递 threadCtx
+    expect(messageSender.sendThinkingCard).toHaveBeenCalledWith('chat-group', undefined);
+  });
+
+  it('群聊话题内应该使用话题会话', async () => {
+    createEventDispatcher(mockConfig);
+    const messageHandler = getMessageHandler();
+
+    const messageData = {
+      message: {
+        message_id: 'msg-in-thread',
+        chat_id: 'chat-group',
+        chat_type: 'group',
+        message_type: 'text',
+        content: JSON.stringify({ text: 'Reply in thread' }),
+        thread_id: 'omt_abc123',
+        root_id: 'om_root456',
+      },
+      sender: {
+        sender_id: { open_id: 'user-123' },
+      },
+    };
+
+    await messageHandler(messageData);
+
+    // 应该调用 sendThinkingCard，传递 threadCtx
+    expect(messageSender.sendThinkingCard).toHaveBeenCalledWith(
+      'chat-group',
+      { rootMessageId: 'om_root456', threadId: 'omt_abc123' }
+    );
+  });
+
+  it('话题群（topic）应该使用话题会话', async () => {
+    createEventDispatcher(mockConfig);
+    const messageHandler = getMessageHandler();
+
+    const messageData = {
+      message: {
+        message_id: 'msg-in-topic-group',
+        chat_id: 'chat-topic',
+        chat_type: 'topic',
+        message_type: 'text',
+        content: JSON.stringify({ text: 'Message in topic group' }),
+        thread_id: 'omt_topic123',
+        root_id: 'om_topicroot456',
+      },
+      sender: {
+        sender_id: { open_id: 'user-123' },
+      },
+    };
+
+    await messageHandler(messageData);
+
+    // 话题群消息应该走话题会话路由，传递 threadCtx
+    expect(messageSender.sendThinkingCard).toHaveBeenCalledWith(
+      'chat-topic',
+      { rootMessageId: 'om_topicroot456', threadId: 'omt_topic123' }
     );
   });
 });

@@ -107,7 +107,7 @@ describe('Card Builder', () => {
       );
       const parsed = JSON.parse(card);
       const actionElement = parsed.elements.find((el: any) => el.tag === 'action');
-      const buttonValue = JSON.parse(actionElement.actions[0].value);
+      const buttonValue = actionElement.actions[0].value;
       expect(buttonValue).toEqual({ action: 'stop', message_id: messageId });
     });
   });

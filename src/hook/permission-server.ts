@@ -1,23 +1,27 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createLogger } from '../logger.js';
-import { PERMISSION_REQUEST_TIMEOUT_MS } from '../constants.js';
+import { PERMISSION_REQUEST_TIMEOUT_MS, MAX_BODY_SIZE } from '../constants.js';
+import type { ThreadContext } from '../shared/types.js';
+
+export type { ThreadContext };
 
 const log = createLogger('PermissionServer');
 
 export interface PermissionSender {
-  sendPermissionCard(chatId: string, requestId: string, toolName: string, toolInput: Record<string, unknown>): Promise<string>;
+  sendPermissionCard(chatId: string, requestId: string, toolName: string, toolInput: Record<string, unknown>, threadCtx?: ThreadContext): Promise<string>;
   updatePermissionCard(chatId: string, messageId: string, toolName: string, decision: 'allow' | 'deny'): Promise<void>;
 }
 
-let sender: PermissionSender | null = null;
+const senders = new Map<string, PermissionSender>();
 
-export function setPermissionSender(s: PermissionSender) {
-  sender = s;
+export function registerPermissionSender(platform: string, s: PermissionSender) {
+  senders.set(platform, s);
 }
 
 export interface PendingRequest {
   id: string;
   chatId: string;
+  platform: string;
   toolName: string;
   toolInput: Record<string, unknown>;
   messageId: string;
@@ -40,7 +44,8 @@ export function resolveLatestPermission(chatId: string, decision: 'allow' | 'den
   if (!oldest) return null;
 
   oldest.resolve(decision);
-  sender?.updatePermissionCard(oldest.chatId, oldest.messageId, oldest.toolName, decision).catch(() => {});
+  const platformSender = senders.get(oldest.platform);
+  platformSender?.updatePermissionCard(oldest.chatId, oldest.messageId, oldest.toolName, decision).catch(() => {});
   pendingRequests.delete(oldest.id);
   return oldest.id;
 }
@@ -64,7 +69,16 @@ export function listPending(chatId: string): PendingRequest[] {
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+    let size = 0;
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_BODY_SIZE) {
+        req.destroy();
+        reject(new Error(`Request body too large (>${MAX_BODY_SIZE} bytes)`));
+        return;
+      }
+      body += chunk.toString();
+    });
     req.on('end', () => resolve(body));
     req.on('error', reject);
   });
@@ -81,51 +95,72 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
   if (req.method === 'POST' && url.pathname === '/permission-request') {
     try {
       const body = JSON.parse(await readBody(req));
-      const { chatId, toolName, toolInput } = body;
+      const { chatId, toolName, toolInput, threadRootMsgId, threadId, platform } = body;
 
       if (!chatId || !toolName) {
         sendJson(res, 400, { error: 'chatId and toolName are required' });
         return;
       }
 
+      // 构造话题上下文（两个字段都存在才构造，避免空字符串导致 reply API 调用失败）
+      const threadCtx: ThreadContext | undefined = (threadRootMsgId && threadId)
+        ? { rootMessageId: threadRootMsgId, threadId }
+        : undefined;
+
+      const resolvedPlatform = platform ?? 'feishu';
+      const platformSender = senders.get(resolvedPlatform);
+
       const id = `perm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       let savedMessageId = '';
 
       const decision = await new Promise<'allow' | 'deny'>((resolve) => {
-        if (!sender) {
-          log.error('Permission sender not configured');
+        if (!platformSender) {
+          log.error(`Permission sender not configured for platform: ${resolvedPlatform}`);
           resolve('deny');
           return;
         }
 
-        sender.sendPermissionCard(chatId, id, toolName, toolInput ?? {}).then((messageId) => {
-          savedMessageId = messageId;
-          const pending: PendingRequest = {
-            id,
-            chatId,
-            toolName,
-            toolInput: toolInput ?? {},
-            messageId,
-            createdAt: Date.now(),
-            resolve,
-          };
-          pendingRequests.set(id, pending);
-          log.info(`Permission request created: ${id} tool=${toolName}`);
-        }).catch((err) => {
-          log.error('Failed to send permission card:', err);
-          resolve('deny');
-        });
+        let resolved = false;
+        const safeResolve = (decision: 'allow' | 'deny') => {
+          if (resolved) return;
+          resolved = true;
+          resolve(decision);
+        };
 
-        setTimeout(() => {
+        // 超时定时器在发卡片之前启动，确保总等待时间不超过上限
+        const timeout = setTimeout(() => {
           if (pendingRequests.has(id)) {
             pendingRequests.delete(id);
             log.warn(`Permission request ${id} timed out`);
             if (savedMessageId) {
-              sender?.updatePermissionCard(chatId, savedMessageId, toolName, 'deny').catch(() => {});
+              platformSender.updatePermissionCard(chatId, savedMessageId, toolName, 'deny').catch(() => {});
             }
-            resolve('deny');
           }
+          safeResolve('deny');
         }, PERMISSION_REQUEST_TIMEOUT_MS);
+
+        platformSender.sendPermissionCard(chatId, id, toolName, toolInput ?? {}, threadCtx).then((messageId) => {
+          savedMessageId = messageId;
+          const pending: PendingRequest = {
+            id,
+            chatId,
+            platform: resolvedPlatform,
+            toolName,
+            toolInput: toolInput ?? {},
+            messageId,
+            createdAt: Date.now(),
+            resolve: (decision) => {
+              clearTimeout(timeout);
+              safeResolve(decision);
+            },
+          };
+          pendingRequests.set(id, pending);
+          log.info(`Permission request created: ${id} tool=${toolName} platform=${resolvedPlatform}`);
+        }).catch((err) => {
+          log.error('Failed to send permission card:', err);
+          clearTimeout(timeout);
+          safeResolve('deny');
+        });
       });
 
       sendJson(res, 200, { id, decision });

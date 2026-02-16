@@ -34,6 +34,8 @@ const mockSendCardMessage = vi.fn();
 const mockStreamContent = vi.fn();
 const mockUpdateCardFull = vi.fn();
 const mockDestroySession = vi.fn();
+const mockMarkCompleted = vi.fn();
+const mockDisableStreaming = vi.fn();
 
 vi.mock('../../../src/feishu/cardkit-manager.js', () => ({
   createCard: (...args: any[]) => mockCreateCard(...args),
@@ -42,6 +44,8 @@ vi.mock('../../../src/feishu/cardkit-manager.js', () => ({
   streamContent: (...args: any[]) => mockStreamContent(...args),
   updateCardFull: (...args: any[]) => mockUpdateCardFull(...args),
   destroySession: (...args: any[]) => mockDestroySession(...args),
+  markCompleted: (...args: any[]) => mockMarkCompleted(...args),
+  disableStreaming: (...args: any[]) => mockDisableStreaming(...args),
 }));
 
 // Import after mocks
@@ -55,6 +59,7 @@ describe('MessageSender', () => {
     mockSendCardMessage.mockResolvedValue('msg-123');
     mockStreamContent.mockResolvedValue(undefined);
     mockUpdateCardFull.mockResolvedValue(undefined);
+    mockDisableStreaming.mockResolvedValue(undefined);
     mockCreate.mockResolvedValue({ data: { message_id: 'msg-123' } });
     mockPatch.mockResolvedValue({});
   });

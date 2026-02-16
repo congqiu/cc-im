@@ -40,6 +40,7 @@ pnpm test:watch
   - 流式输出使用 CardKit v1 API，打字机效果（详见下方「飞书 CardKit 流式架构」）
   - 权限卡片仍使用传统 `im.v1.message.patch` 更新
 - Telegram：`src/telegram/` - 使用 `telegraf`，轮询模式
+  - **仅支持私聊**：群组和话题（topic）消息会被拒绝
 
 **飞书应用权限要求**：
 - `im:message:send_as_bot` — 以应用身份发消息
@@ -151,7 +152,7 @@ claude -p \
 2. 并行：`card.settings(streaming_mode: true)` + `im.v1.message.create(card_id)` 发送到聊天
 3. `card.update` 补充停止按钮（此时 cardId 已知）
 4. 流式阶段：`cardElement.content` 增量更新 `main_content` 元素，80ms 节流（`CARDKIT_THROTTLE_MS`）
-5. 完成/错误：`card.update` 全量更新（改 header 颜色、移除按钮、更新 note）
+5. 完成/错误：`card.settings(streaming_mode: false)` 关闭流式模式 → `card.update` 全量更新（改 header 颜色、移除按钮、更新 note）
 6. `destroySession` 清理内存中的 session
 
 **卡片 JSON 格式**：
@@ -159,7 +160,8 @@ claude -p \
 - V2 不支持 `tag: "note"` 和 `tag: "action"`，替代方案：
   - note → `tag: "markdown"` + `text_size: "notation"`
   - action 包装器 → 直接放 `tag: "button"` 到 elements
-- 活跃状态（processing/thinking/streaming）的卡片 config 需包含 `streaming_mode: true`，否则 `card.update` 会重置流式模式
+- 活跃状态（processing/thinking/streaming）的卡片 config 需包含 `streaming_mode: true`，保持流式模式不被 `card.update` 重置
+- 完成/错误时必须显式调用 `card.settings` 将 `streaming_mode` 设为 `false` 关闭流式模式（`card.update` 省略该字段不会关闭）
 - 权限卡片仍使用 JSON 1.0（`config` + `header` + `elements`）
 
 **思考→文本切换**：
@@ -214,11 +216,34 @@ pnpm test -- tests/unit/queue/request-queue.test.ts
 2. `~/.cc-bot/config.json` 配置文件
 3. 默认值
 
+**环境变量列表**：
+- `LOG_DIR`：日志目录路径，默认 `~/.cc-bot/logs`
+- `FEISHU_APP_ID`、`FEISHU_APP_SECRET`：飞书应用凭证
+- `TELEGRAM_BOT_TOKEN`：Telegram 机器人 Token
+- `ALLOWED_USER_IDS`：允许的用户 ID 列表（逗号分隔）
+- `CLAUDE_CLI_PATH`：Claude CLI 可执行文件路径，默认 `claude`
+- `CLAUDE_WORK_DIR`：默认工作目录，默认当前目录
+- `ALLOWED_BASE_DIRS`：允许的基础目录列表（逗号分隔）
+- `CLAUDE_SKIP_PERMISSIONS`：是否跳过权限确认，默认 `false`
+- `CLAUDE_TIMEOUT_MS`：Claude CLI 超时时间（毫秒），默认 300000（5分钟）
+- `HOOK_SERVER_PORT`：权限服务器端口，默认 18900
+
+**应用数据目录**：
+- 根目录：`~/.cc-bot`（常量 `APP_HOME`，定义在 `src/constants.ts`）
+- 配置文件：`~/.cc-bot/config.json`
+- 会话数据：`~/.cc-bot/data/sessions.json`
+- 日志文件：`~/.cc-bot/logs/` 或 `$LOG_DIR`
+
 ## 日志系统
 
 位置：`src/logger.ts` + `src/sanitize.ts`
 
-带标签的日志记录器，输出到 stdout/stderr 和 `logs/` 目录下的日期文件（自动轮转，最多保留 10 个）。
+带标签的日志记录器，输出到 stdout/stderr 和日志目录下的日期文件（自动轮转，最多保留 10 个）。
+
+**日志目录配置**：
+- 通过 `LOG_DIR` 环境变量或配置文件 `logDir` 字段指定
+- 默认 `~/.cc-bot/logs`
+- 在 `main()` 中调用 `initLogger(config.logDir)` 初始化
 
 所有日志经过 `sanitize()` 自动脱敏：飞书 open_id 截断、UUID/session ID 只保留末 4 位、绝对路径只保留最后两段。业务代码无需手动处理。
 

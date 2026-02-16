@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { join } from 'path';
 import { existsSync, writeFileSync, unlinkSync, mkdirSync, readFileSync, openSync, closeSync } from 'fs';
-import { execSync } from 'child_process';
-import { createLogger } from './logger.js';
 
-const DATA_DIR = join(process.env.HOME || process.env.USERPROFILE || '/tmp', '.cc-bot');
-const PID_FILE = join(DATA_DIR, 'pid');
+import { createLogger } from './logger.js';
+import { APP_HOME } from './constants.js';
+
+const PID_FILE = join(APP_HOME, 'pid');
 const logger = createLogger('CLI');
 
 function getPidFromFile() {
@@ -63,8 +63,8 @@ async function start() {
     unlinkSync(PID_FILE);
   }
 
-  if (!existsSync(DATA_DIR)) {
-    mkdirSync(DATA_DIR, { recursive: true });
+  if (!existsSync(APP_HOME)) {
+    mkdirSync(APP_HOME, { recursive: true });
   }
 
   // 使用 exclusive 模式写入 PID 文件，防止竞态条件

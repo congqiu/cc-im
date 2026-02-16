@@ -1,13 +1,13 @@
 import { createWriteStream, mkdirSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import type { WriteStream } from 'node:fs';
 import { sanitize } from './sanitize.js';
+import { APP_HOME } from './constants.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = join(__dirname, '..');
-const LOG_DIR = join(PROJECT_ROOT, 'logs');
+const DEFAULT_LOG_DIR = join(APP_HOME, 'logs');
 const MAX_LOG_FILES = 10;
+
+let logDir = DEFAULT_LOG_DIR;
 
 let logStream: WriteStream;
 
@@ -27,27 +27,31 @@ function getLogFileName(): string {
 
 function rotateOldLogs() {
   try {
-    const files = readdirSync(LOG_DIR)
+    const files = readdirSync(logDir)
       .filter((f) => f.endsWith('.log'))
-      .map((f) => ({ name: f, time: statSync(join(LOG_DIR, f)).mtimeMs }))
+      .map((f) => ({ name: f, time: statSync(join(logDir, f)).mtimeMs }))
       .sort((a, b) => b.time - a.time);
 
     for (let i = MAX_LOG_FILES; i < files.length; i++) {
-      unlinkSync(join(LOG_DIR, files[i].name));
+      unlinkSync(join(logDir, files[i].name));
     }
   } catch {
     // ignore
   }
 }
 
-export function initLogger() {
-  if (!existsSync(LOG_DIR)) {
-    mkdirSync(LOG_DIR, { recursive: true });
+export function initLogger(dir?: string) {
+  if (dir) {
+    logDir = dir;
+  }
+
+  if (!existsSync(logDir)) {
+    mkdirSync(logDir, { recursive: true });
   }
 
   rotateOldLogs();
 
-  logStream = createWriteStream(join(LOG_DIR, getLogFileName()), { flags: 'a' });
+  logStream = createWriteStream(join(logDir, getLogFileName()), { flags: 'a' });
 
   // Reopen log file at midnight
   const scheduleReopen = () => {
@@ -57,7 +61,7 @@ export function initLogger() {
     setTimeout(() => {
       logStream.end();
       rotateOldLogs();
-      logStream = createWriteStream(join(LOG_DIR, getLogFileName()), { flags: 'a' });
+      logStream = createWriteStream(join(logDir, getLogFileName()), { flags: 'a' });
       scheduleReopen();
     }, ms).unref();
   };

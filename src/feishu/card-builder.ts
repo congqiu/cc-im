@@ -1,4 +1,6 @@
 import { MAX_STREAMING_CONTENT_LENGTH } from '../constants.js';
+import { splitLongContent as sharedSplitLongContent } from '../shared/utils.js';
+import { buildInputSummary } from '../shared/utils.js';
 
 export type CardStatus = 'processing' | 'thinking' | 'streaming' | 'done' | 'error';
 
@@ -89,47 +91,11 @@ export function buildCard(options: CardOptions, messageId?: string): string {
 }
 
 export function splitLongContent(text: string, maxLen = MAX_CARD_CONTENT_LENGTH): string[] {
-  if (text.length <= maxLen) return [text];
-  const parts: string[] = [];
-  let start = 0;
-  while (start < text.length) {
-    if (start + maxLen >= text.length) {
-      parts.push(text.slice(start));
-      break;
-    }
-    // Try to find a newline near the split point to avoid breaking mid-line
-    let end = start + maxLen;
-    const searchStart = Math.max(start, end - 200);
-    const lastNewline = text.lastIndexOf('\n', end);
-    if (lastNewline > searchStart) {
-      end = lastNewline + 1;
-    }
-    parts.push(text.slice(start, end));
-    start = end;
-  }
-  return parts;
+  return sharedSplitLongContent(text, maxLen);
 }
 
 export function buildPermissionCard(requestId: string, toolName: string, toolInput: Record<string, unknown>): string {
-  let inputSummary: string;
-  if (toolName === 'Bash' && toolInput.command) {
-    inputSummary = String(toolInput.command);
-  } else if (toolName === 'Write' && toolInput.file_path) {
-    inputSummary = `文件: ${toolInput.file_path}\n内容长度: ${String(toolInput.content ?? '').length} 字符`;
-  } else if (toolName === 'Edit' && toolInput.file_path) {
-    inputSummary = `文件: ${toolInput.file_path}`;
-  } else {
-    const keys = Object.keys(toolInput);
-    if (keys.length === 0) {
-      inputSummary = '(无参数)';
-    } else {
-      const lines = keys.slice(0, 5).map((k) => {
-        const v = String(toolInput[k] ?? '');
-        return `${k}: ${v.length > 200 ? v.slice(0, 200) + '...' : v}`;
-      });
-      inputSummary = lines.join('\n');
-    }
-  }
+  const inputSummary = buildInputSummary(toolName, toolInput);
 
   const card = {
     config: { wide_screen_mode: true, update_multi: true },

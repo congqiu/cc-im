@@ -7,6 +7,7 @@ interface CardSession {
   cardId: string;
   sequence: number;
   streamingEnabled: boolean;
+  completed: boolean;
 }
 
 const sessions = new Map<string, CardSession>();
@@ -33,7 +34,7 @@ export async function createCard(cardJson: string): Promise<string> {
     throw new Error(`card.create returned no card_id (code=${res.code}, msg=${res.msg})`);
   }
 
-  sessions.set(cardId, { cardId, sequence: 0, streamingEnabled: false });
+  sessions.set(cardId, { cardId, sequence: 0, streamingEnabled: false, completed: false });
   log.debug(`Card created: ${cardId}`);
   return cardId;
 }
@@ -85,6 +86,8 @@ export async function streamContent(
 
   // 200850 / 300309: 流式超时或已关闭 → 重新启用后重试一次
   if (code === 200850 || code === 300309) {
+    const s = sessions.get(cardId);
+    if (!s || s.completed) return; // 卡片已完成，不再重试
     log.warn(`Streaming closed/timeout (${code}) for card ${cardId}, re-enabling...`);
     try {
       await enableStreaming(cardId);
@@ -140,6 +143,63 @@ export async function sendCardMessage(chatId: string, cardId: string): Promise<s
   const messageId = res.data?.message_id ?? '';
   log.debug(`Card message sent: messageId=${messageId}, cardId=${cardId}`);
   return messageId;
+}
+
+/**
+ * 通过 reply API 将卡片发送到话题（自动创建或追加到已有话题）
+ */
+export async function replyCardMessage(
+  rootMessageId: string,
+  cardId: string,
+): Promise<{ messageId: string; threadId?: string }> {
+  const client = getClient();
+  const res = await client.im.v1.message.reply({
+    path: { message_id: rootMessageId },
+    data: {
+      content: JSON.stringify({ type: 'card', data: { card_id: cardId } }),
+      msg_type: 'interactive',
+      reply_in_thread: true,
+    },
+  });
+  const messageId = res.data?.message_id ?? '';
+  // Lark SDK reply 返回类型未声明 thread_id 字段，但 reply_in_thread 时 API 实际会返回
+  const threadId = (res.data as Record<string, unknown>)?.thread_id as string | undefined;
+  log.debug(`Card replied to thread: messageId=${messageId}, rootMessageId=${rootMessageId}, threadId=${threadId}`);
+  return { messageId, threadId };
+}
+
+/**
+ * 关闭流式模式（必须显式调用 card.settings，card.update 不会自动关闭）
+ */
+export async function disableStreaming(cardId: string): Promise<void> {
+  const s = sessions.get(cardId);
+  if (!s || !s.streamingEnabled) return;
+  const client = getClient();
+  try {
+    const res = await client.cardkit.v1.card.settings({
+      path: { card_id: cardId },
+      data: {
+        settings: JSON.stringify({ config: { streaming_mode: false } }),
+        sequence: nextSeq(cardId),
+      },
+    });
+    if (res?.code && res.code !== 0) {
+      log.warn(`disableStreaming failed: code=${res.code}, msg=${res.msg}`);
+    } else {
+      s.streamingEnabled = false;
+      log.debug(`Streaming disabled for card ${cardId}`);
+    }
+  } catch (err) {
+    log.warn(`disableStreaming error for card ${cardId}:`, err);
+  }
+}
+
+/**
+ * 标记卡片为已完成，阻止后续 streamContent 重试
+ */
+export function markCompleted(cardId: string): void {
+  const s = sessions.get(cardId);
+  if (s) s.completed = true;
 }
 
 /**

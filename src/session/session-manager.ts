@@ -2,19 +2,27 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { dirname, resolve, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createLogger } from '../logger.js';
+import { APP_HOME } from '../constants.js';
 
 const log = createLogger('Session');
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = join(__dirname, '..', '..');
-const SESSIONS_FILE = join(PROJECT_ROOT, 'data', 'sessions.json');
+const SESSIONS_FILE = join(APP_HOME, 'data', 'sessions.json');
+
+export interface ThreadSession {
+  sessionId?: string;       // Claude Code 会话 ID
+  workDir: string;          // 该话题的工作目录
+  rootMessageId: string;    // 话题根消息 ID（用于 reply API）
+  threadId: string;         // 飞书话题 ID（omt_ 前缀）
+  displayName?: string;     // 话题显示名（短标题，用于列表展示）
+  description?: string;     // 话题描述（完整的首条消息内容）
+}
 
 interface UserSession {
   sessionId?: string;
   workDir: string;
   activeConvId?: string;
+  threads?: Record<string, ThreadSession>;  // threadId → ThreadSession
 }
 
 function isUserSession(val: unknown): val is UserSession {
@@ -142,6 +150,99 @@ export class SessionManager {
     return false;
   }
 
+  // ─── Thread Session Methods ───
+
+  getThreadSession(userId: string, threadId: string): ThreadSession | undefined {
+    return this.sessions.get(userId)?.threads?.[threadId];
+  }
+
+  setThreadSession(userId: string, threadId: string, session: ThreadSession): void {
+    const userSession = this.sessions.get(userId);
+    if (userSession) {
+      if (!userSession.threads) userSession.threads = {};
+      userSession.threads[threadId] = session;
+    } else {
+      this.sessions.set(userId, {
+        workDir: this.defaultWorkDir,
+        activeConvId: this.generateConvId(),
+        threads: { [threadId]: session },
+      });
+    }
+    this.save();
+  }
+
+  removeThreadSession(userId: string, threadId: string): void {
+    const threads = this.sessions.get(userId)?.threads;
+    if (threads) {
+      delete threads[threadId];
+      this.flushSync();
+    }
+  }
+
+  getSessionIdForThread(userId: string, threadId: string): string | undefined {
+    return this.sessions.get(userId)?.threads?.[threadId]?.sessionId;
+  }
+
+  setSessionIdForThread(userId: string, threadId: string, sessionId: string): void {
+    const thread = this.sessions.get(userId)?.threads?.[threadId];
+    if (thread) {
+      thread.sessionId = sessionId;
+      this.save();
+    }
+  }
+
+  getWorkDirForThread(userId: string, threadId: string): string {
+    return this.sessions.get(userId)?.threads?.[threadId]?.workDir ?? this.getWorkDir(userId);
+  }
+
+  setWorkDirForThread(userId: string, threadId: string, workDir: string, rootMessageId?: string): string {
+    let thread = this.sessions.get(userId)?.threads?.[threadId];
+    if (!thread) {
+      // 话题会话尚未创建（如首条消息就是 /cd），自动初始化
+      this.setThreadSession(userId, threadId, {
+        workDir: this.getWorkDir(userId),
+        rootMessageId: rootMessageId ?? '',
+        threadId,
+      });
+      thread = this.sessions.get(userId)?.threads?.[threadId];
+      if (!thread) {
+        throw new Error(`Failed to initialize thread session: user=${userId}, thread=${threadId}`);
+      }
+    }
+    const resolved = resolve(thread.workDir, workDir);
+    if (!existsSync(resolved)) {
+      throw new Error(`目录不存在: ${resolved}`);
+    }
+    const allowed = this.allowedBaseDirs.some(
+      (base) => resolved === base || resolved.startsWith(base + '/')
+    );
+    if (!allowed) {
+      throw new Error(`目录不在允许范围内: ${resolved}\n允许的目录: ${this.allowedBaseDirs.join(', ')}`);
+    }
+    thread.workDir = resolved;
+    thread.sessionId = undefined; // 切换目录重置会话
+    this.flushSync();
+    log.info(`Thread ${threadId} workDir changed for user ${userId}: ${resolved}`);
+    return resolved;
+  }
+
+  newThreadSession(userId: string, threadId: string): boolean {
+    const thread = this.sessions.get(userId)?.threads?.[threadId];
+    if (thread) {
+      thread.sessionId = undefined;
+      this.flushSync();
+      log.info(`Thread session reset: user=${userId}, thread=${threadId}`);
+      return true;
+    }
+    return false;
+  }
+
+  listThreads(userId: string): ThreadSession[] {
+    const threads = this.sessions.get(userId)?.threads;
+    if (!threads) return [];
+    return Object.values(threads);
+  }
+
   private load() {
     try {
       if (existsSync(SESSIONS_FILE)) {
@@ -190,6 +291,11 @@ export class SessionManager {
   }
 
   private flushSync() {
+    // 取消挂起的防抖保存，防止旧数据覆写刚同步写入的内容
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
     try {
       const dir = dirname(SESSIONS_FILE);
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });

@@ -22,7 +22,7 @@ export function runClaude(
   sessionId: string | undefined,
   workDir: string,
   callbacks: ClaudeRunCallbacks,
-  options?: { skipPermissions?: boolean; timeoutMs?: number; model?: string; chatId?: string; hookPort?: number },
+  options?: { skipPermissions?: boolean; timeoutMs?: number; model?: string; chatId?: string; hookPort?: number; threadRootMsgId?: string; threadId?: string; platform?: string },
 ): ClaudeRunHandle {
   const args = [
     '-p',
@@ -51,6 +51,15 @@ export function runClaude(
   }
   if (options?.hookPort) {
     env.CC_BOT_HOOK_PORT = String(options.hookPort);
+  }
+  if (options?.threadRootMsgId) {
+    env.CC_BOT_THREAD_ROOT_MSG_ID = options.threadRootMsgId;
+  }
+  if (options?.threadId) {
+    env.CC_BOT_THREAD_ID = options.threadId;
+  }
+  if (options?.platform) {
+    env.CC_BOT_PLATFORM = options.platform;
   }
 
   const child = spawn(cliPath, args, {
@@ -144,12 +153,11 @@ export function runClaude(
   });
 
   let exitCode: number | null = null;
-  child.on('close', (code) => {
-    exitCode = code;
-  });
+  let rlClosed = false;
+  let childClosed = false;
 
-  // 使用 rl 的 close 事件而非 child 的 close，确保所有行都处理完毕
-  rl.on('close', () => {
+  const finalize = () => {
+    if (!rlClosed || !childClosed) return;
     if (timeoutHandle) {
       clearTimeout(timeoutHandle);
     }
@@ -177,6 +185,18 @@ export function runClaude(
         });
       }
     }
+  };
+
+  child.on('close', (code) => {
+    exitCode = code;
+    childClosed = true;
+    finalize();
+  });
+
+  // 使用 rl 的 close 事件而非 child 的 close，确保所有行都处理完毕
+  rl.on('close', () => {
+    rlClosed = true;
+    finalize();
   });
 
   child.on('error', (err) => {
@@ -186,6 +206,9 @@ export function runClaude(
     if (!completed) {
       callbacks.onError(`Failed to start Claude CLI: ${err.message}`);
     }
+    // spawn 失败时可能不触发 close 事件，手动标记以确保 finalize 执行
+    childClosed = true;
+    finalize();
   });
 
   return {

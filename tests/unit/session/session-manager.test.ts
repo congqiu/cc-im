@@ -76,25 +76,25 @@ describe('SessionManager', () => {
     expect(convId1).toBe(convId2);
   });
 
-  it('clearSession 应该生成新 convId', () => {
+  it('newSession 应该生成新 convId', () => {
     const sm = new SessionManager('/work', ['/work']);
     sm.setSessionId('user1', 'old-session');
     const oldConvId = sm.getConvId('user1');
 
-    const cleared = sm.clearSession('user1');
+    const created = sm.newSession('user1');
 
-    expect(cleared).toBe(true);
+    expect(created).toBe(true);
     expect(sm.getSessionId('user1')).toBeUndefined();
 
     const newConvId = sm.getConvId('user1');
     expect(newConvId).not.toBe(oldConvId);
   });
 
-  it('clearSession 对不存在的用户应该返回 false', () => {
+  it('newSession 对不存在的用户应该返回 false', () => {
     const sm = new SessionManager('/work', ['/work']);
 
-    const cleared = sm.clearSession('nonexistent');
-    expect(cleared).toBe(false);
+    const created = sm.newSession('nonexistent');
+    expect(created).toBe(false);
   });
 
   it('setWorkDir 应该成功切换目录', () => {
@@ -229,5 +229,205 @@ describe('SessionManager', () => {
     expect(mockWriteFile).toHaveBeenCalled();
 
     vi.useRealTimers();
+  });
+
+  // ─── Thread Session Tests ───
+
+  describe('Thread Sessions', () => {
+    it('getThreadSession 不存在应该返回 undefined', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      expect(sm.getThreadSession('user1', 'thread-123')).toBeUndefined();
+    });
+
+    it('setThreadSession 应该创建话题会话', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      const threadSession = {
+        workDir: '/work',
+        rootMessageId: 'msg-root',
+        threadId: 'thread-123',
+      };
+
+      sm.setThreadSession('user1', 'thread-123', threadSession);
+
+      const retrieved = sm.getThreadSession('user1', 'thread-123');
+      expect(retrieved).toEqual(threadSession);
+    });
+
+    it('setThreadSession 为新用户应该自动创建 UserSession', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      const threadSession = {
+        workDir: '/work',
+        rootMessageId: 'msg-root',
+        threadId: 'thread-123',
+      };
+
+      sm.setThreadSession('newuser', 'thread-123', threadSession);
+
+      expect(sm.getThreadSession('newuser', 'thread-123')).toEqual(threadSession);
+      expect(sm.getWorkDir('newuser')).toBe('/work');
+    });
+
+    it('removeThreadSession 应该删除话题会话', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      sm.setThreadSession('user1', 'thread-123', {
+        workDir: '/work',
+        rootMessageId: 'msg-root',
+        threadId: 'thread-123',
+      });
+
+      sm.removeThreadSession('user1', 'thread-123');
+
+      expect(sm.getThreadSession('user1', 'thread-123')).toBeUndefined();
+    });
+
+    it('getSessionIdForThread 应该返回话题的 sessionId', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      sm.setThreadSession('user1', 'thread-123', {
+        sessionId: 'session-abc',
+        workDir: '/work',
+        rootMessageId: 'msg-root',
+        threadId: 'thread-123',
+      });
+
+      expect(sm.getSessionIdForThread('user1', 'thread-123')).toBe('session-abc');
+    });
+
+    it('setSessionIdForThread 应该更新话题的 sessionId', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      sm.setThreadSession('user1', 'thread-123', {
+        workDir: '/work',
+        rootMessageId: 'msg-root',
+        threadId: 'thread-123',
+      });
+
+      sm.setSessionIdForThread('user1', 'thread-123', 'new-session');
+
+      expect(sm.getSessionIdForThread('user1', 'thread-123')).toBe('new-session');
+    });
+
+    it('getWorkDirForThread 应该返回话题的工作目录', () => {
+      const sm = new SessionManager('/work', ['/work', '/other']);
+      sm.setThreadSession('user1', 'thread-123', {
+        workDir: '/other',
+        rootMessageId: 'msg-root',
+        threadId: 'thread-123',
+      });
+
+      expect(sm.getWorkDirForThread('user1', 'thread-123')).toBe('/other');
+    });
+
+    it('getWorkDirForThread 话题不存在应该返回用户默认目录', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      expect(sm.getWorkDirForThread('user1', 'nonexistent')).toBe('/work');
+    });
+
+    it('setWorkDirForThread 应该切换话题的工作目录', () => {
+      mockExistsSync.mockReturnValue(true);
+      const sm = new SessionManager('/work', ['/work', '/other']);
+      sm.setThreadSession('user1', 'thread-123', {
+        sessionId: 'old-session',
+        workDir: '/work',
+        rootMessageId: 'msg-root',
+        threadId: 'thread-123',
+      });
+
+      const resolved = sm.setWorkDirForThread('user1', 'thread-123', '/other');
+
+      expect(resolved).toBe('/other');
+      expect(sm.getWorkDirForThread('user1', 'thread-123')).toBe('/other');
+      // 切换目录应该重置 sessionId
+      expect(sm.getSessionIdForThread('user1', 'thread-123')).toBeUndefined();
+    });
+
+    it('setWorkDirForThread 话题不存在应该自动创建', () => {
+      mockExistsSync.mockReturnValue(true);
+      const sm = new SessionManager('/work', ['/work', '/other']);
+
+      const resolved = sm.setWorkDirForThread('user1', 'new-thread', '/other', 'msg-root');
+
+      expect(resolved).toBe('/other');
+      expect(sm.getWorkDirForThread('user1', 'new-thread')).toBe('/other');
+      const thread = sm.getThreadSession('user1', 'new-thread');
+      expect(thread).toBeDefined();
+      expect(thread?.rootMessageId).toBe('msg-root');
+      expect(thread?.threadId).toBe('new-thread');
+    });
+
+    it('newThreadSession 应该重置话题的 sessionId', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      sm.setThreadSession('user1', 'thread-123', {
+        sessionId: 'old-session',
+        workDir: '/work',
+        rootMessageId: 'msg-root',
+        threadId: 'thread-123',
+      });
+
+      const success = sm.newThreadSession('user1', 'thread-123');
+
+      expect(success).toBe(true);
+      expect(sm.getSessionIdForThread('user1', 'thread-123')).toBeUndefined();
+    });
+
+    it('newThreadSession 话题不存在应该返回 false', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      const success = sm.newThreadSession('user1', 'nonexistent');
+      expect(success).toBe(false);
+    });
+
+    it('listThreads 应该返回所有话题会话', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      sm.setThreadSession('user1', 'thread-1', {
+        workDir: '/work',
+        rootMessageId: 'msg-1',
+        threadId: 'thread-1',
+      });
+      sm.setThreadSession('user1', 'thread-2', {
+        sessionId: 'session-2',
+        workDir: '/work',
+        rootMessageId: 'msg-2',
+        threadId: 'thread-2',
+        displayName: 'My Thread',
+      });
+
+      const threads = sm.listThreads('user1');
+
+      expect(threads).toHaveLength(2);
+      expect(threads[0].threadId).toBe('thread-1');
+      expect(threads[1].threadId).toBe('thread-2');
+      expect(threads[1].displayName).toBe('My Thread');
+    });
+
+    it('listThreads 无话题应该返回空数组', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      expect(sm.listThreads('user1')).toEqual([]);
+    });
+
+    it('话题会话应该持久化', () => {
+      vi.useFakeTimers();
+      const sm = new SessionManager('/work', ['/work']);
+
+      sm.setThreadSession('user1', 'thread-123', {
+        sessionId: 'session-abc',
+        workDir: '/work',
+        rootMessageId: 'msg-root',
+        threadId: 'thread-123',
+        displayName: 'Test Thread',
+      });
+
+      vi.advanceTimersByTime(1000);
+
+      expect(mockWriteFile).toHaveBeenCalled();
+      const savedData = JSON.parse(mockWriteFile.mock.calls[0][1] as string);
+      expect(savedData.user1.threads).toBeDefined();
+      expect(savedData.user1.threads['thread-123']).toEqual({
+        sessionId: 'session-abc',
+        workDir: '/work',
+        rootMessageId: 'msg-root',
+        threadId: 'thread-123',
+        displayName: 'Test Thread',
+      });
+
+      vi.useRealTimers();
+    });
   });
 });

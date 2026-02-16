@@ -1,29 +1,51 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
 import type { Config } from '../config.js';
 import { AccessControl } from '../access/access-control.js';
-import { SessionManager } from '../session/session-manager.js';
+import { SessionManager, type ThreadSession } from '../session/session-manager.js';
 import { RequestQueue } from '../queue/request-queue.js';
 import { runClaude, type ClaudeRunHandle } from '../claude/cli-runner.js';
-import { sendThinkingCard, streamContentUpdate, sendFinalCards, sendErrorCard, sendTextReply, sendPermissionCard, updatePermissionCard, type CardHandle } from './message-sender.js';
+import { sendThinkingCard, streamContentUpdate, sendFinalCards, sendErrorCard, sendTextReply, sendPermissionCard, updatePermissionCard, fetchThreadDescription, type CardHandle, type ThreadContext } from './message-sender.js';
 import { buildCardV2 } from './card-builder.js';
-import { destroySession, updateCardFull } from './cardkit-manager.js';
-import { setPermissionSender } from '../hook/permission-server.js';
+import { destroySession, updateCardFull, disableStreaming } from './cardkit-manager.js';
+import { registerPermissionSender } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord, type CommandHandlerDeps } from '../commands/handler.js';
+import { trackCost } from '../shared/utils.js';
 import { TERMINAL_ONLY_COMMANDS, DEDUP_TTL_MS, CARDKIT_THROTTLE_MS } from '../constants.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('EventHandler');
 
+// ─── Lark SDK 事件类型 ───
+
+interface LarkEventData {
+  header?: { event_type?: string };
+  type?: string;
+}
+
+interface LarkCardActionData {
+  action: { value: unknown };
+  operator?: { open_id?: string };
+  sender?: { sender_id?: { open_id?: string } };
+}
+
+interface LarkMessageData {
+  message: {
+    message_id: string;
+    chat_id: string;
+    chat_type: string;
+    message_type: string;
+    content: string;
+    mentions?: Array<{ key: string; id: { open_id?: string }; name: string }>;
+    thread_id?: string;
+    root_id?: string;
+  };
+  sender?: {
+    sender_id?: { open_id?: string };
+  };
+}
+
 // 费用跟踪（按用户累积）
 const userCosts = new Map<string, CostRecord>();
-
-function trackCost(userId: string, cost: number, durationMs: number) {
-  const record = userCosts.get(userId) ?? { totalCost: 0, totalDurationMs: 0, requestCount: 0 };
-  record.totalCost += cost;
-  record.totalDurationMs += durationMs;
-  record.requestCount += 1;
-  userCosts.set(userId, record);
-}
 
 // 跟踪正在执行的任务
 interface TaskInfo {
@@ -51,7 +73,7 @@ export function createEventDispatcher(config: Config) {
   });
 
   // Register feishu permission sender
-  setPermissionSender({
+  registerPermissionSender('feishu', {
     sendPermissionCard,
     updatePermissionCard: (_chatId: string, messageId: string, toolName: string, decision: 'allow' | 'deny') =>
       updatePermissionCard(messageId, toolName, decision),
@@ -63,7 +85,7 @@ export function createEventDispatcher(config: Config) {
   const dispatcher = new Lark.EventDispatcher({
     // @ts-ignore - defaultCallback 是自定义选项
     // 添加通用事件监听器，捕获所有事件
-    defaultCallback: async (data: any) => {
+    defaultCallback: async (data: LarkEventData) => {
       const eventType = data?.header?.event_type || data?.type || 'unknown';
       log.info(`Received event: ${eventType}`);
 
@@ -76,7 +98,7 @@ export function createEventDispatcher(config: Config) {
 
   // 注册卡片交互事件处理器
   dispatcher.register({
-    'card.action.trigger': async (data: any) => {
+    'card.action.trigger': async (data: LarkCardActionData) => {
       log.debug('Received card action trigger event:', JSON.stringify(data, null, 2));
 
       const action = data.action;
@@ -100,7 +122,11 @@ export function createEventDispatcher(config: Config) {
             parsed = JSON.parse(parsed);
           }
         }
-        actionData = parsed;
+        actionData = parsed as typeof actionData;
+        if (typeof actionData?.action !== 'string') {
+          log.warn('Invalid action data: missing or non-string "action" field:', JSON.stringify(parsed));
+          return;
+        }
         log.info(`Parsed action data:`, JSON.stringify(actionData));
       } catch (err) {
         log.error('Failed to parse action value:', err);
@@ -134,9 +160,10 @@ export function createEventDispatcher(config: Config) {
           // 中止任务
           taskInfo.handle.abort();
 
-          // 通过 CardKit API 更新卡片为已停止状态，然后清理 session
+          // 通过 CardKit API 关闭流式模式并更新卡片为已停止状态，然后清理 session
           const stoppedCard = buildCardV2({ content: stoppedContent, status: 'done', note: '⏹️ 已停止' });
-          updateCardFull(cardId, stoppedCard)
+          disableStreaming(cardId)
+            .then(() => updateCardFull(cardId, stoppedCard))
             .catch((e) => log.warn('Stop card update failed:', e?.message ?? e))
             .finally(() => destroySession(cardId));
         } else {
@@ -149,7 +176,7 @@ export function createEventDispatcher(config: Config) {
   });
 
   dispatcher.register({
-    'im.message.receive_v1': async (data: any) => {
+    'im.message.receive_v1': async (data: LarkMessageData) => {
       const message = data.message;
       const messageId = message.message_id;
 
@@ -168,14 +195,19 @@ export function createEventDispatcher(config: Config) {
 
       const chatId = message.chat_id;
       const senderId = data.sender?.sender_id?.open_id;
-      const chatType = message.chat_type; // 'p2p' or 'group'
+      const chatType = message.chat_type; // 'p2p' | 'group' | 'topic'
+      const isGroup = chatType === 'group' || chatType === 'topic';
+      const threadId = message.thread_id as string | undefined;
+      const rootId = message.root_id as string | undefined;
 
       if (!senderId) return;
 
-      // 群聊中只处理 @机器人 的消息
-      if (chatType === 'group') {
+      // 群聊非话题消息：要求 @机器人 才响应
+      if (isGroup && !threadId) {
         const mentions: Array<{ key: string; id: { open_id?: string }; name: string }> | undefined = message.mentions;
-        if (!mentions || mentions.length === 0) return;
+        if (!mentions || mentions.length === 0) {
+          return;
+        }
       }
 
       // Access control
@@ -188,6 +220,10 @@ export function createEventDispatcher(config: Config) {
       // Parse message content
       const msgType = message.message_type;
       if (msgType !== 'text') {
+        // 话题内的非文本消息（如创建话题的系统消息）直接忽略，不回复
+        if (threadId) {
+          return;
+        }
         await sendTextReply(chatId, '目前仅支持文本消息。');
         return;
       }
@@ -209,125 +245,204 @@ export function createEventDispatcher(config: Config) {
       // Update runningTasksSize for CommandHandler
       commandHandler.updateRunningTasksSize(runningTasks.size);
 
+      // 构造 threadCtx（如果在话题中）
+      let threadCtx: ThreadContext | undefined;
+      if (isGroup && threadId && rootId) {
+        threadCtx = { rootMessageId: rootId, threadId };
+      }
+
       // Handle /help command
       if (text.trim() === '/help') {
-        await commandHandler.handleHelp(chatId, 'feishu');
+        await commandHandler.handleHelp(chatId, 'feishu', threadCtx);
         return;
       }
 
       // Handle /new command
       if (text.trim() === '/new') {
-        await commandHandler.handleNew(chatId, senderId);
+        await commandHandler.handleNew(chatId, senderId, threadCtx);
         return;
       }
 
       // Handle /cd command
       if (text.trim().startsWith('/cd ') || text.trim() === '/cd') {
         const args = text.trim().slice(3);
-        await commandHandler.handleCd(chatId, senderId, args);
+        await commandHandler.handleCd(chatId, senderId, args, threadCtx);
         return;
       }
 
       // Handle /pwd command
       if (text.trim() === '/pwd') {
-        await commandHandler.handlePwd(chatId, senderId);
+        await commandHandler.handlePwd(chatId, senderId, threadCtx);
         return;
       }
 
       // Handle /list command
       if (text.trim() === '/list') {
-        await commandHandler.handleList(chatId, senderId);
+        await commandHandler.handleList(chatId, senderId, threadCtx);
         return;
       }
 
       // Handle /cost command
       if (text.trim() === '/cost') {
-        await commandHandler.handleCost(chatId, senderId);
+        await commandHandler.handleCost(chatId, senderId, threadCtx);
         return;
       }
 
       // Handle /status command
       if (text.trim() === '/status') {
-        await commandHandler.handleStatus(chatId, senderId);
+        await commandHandler.handleStatus(chatId, senderId, threadCtx);
         return;
       }
 
       // Handle /model command
       if (text.trim() === '/model' || text.trim().startsWith('/model ')) {
         const args = text.trim().slice(6);
-        await commandHandler.handleModel(chatId, args);
+        await commandHandler.handleModel(chatId, args, threadCtx);
         return;
       }
 
       // Handle /doctor command
       if (text.trim() === '/doctor') {
-        await commandHandler.handleDoctor(chatId, senderId);
+        await commandHandler.handleDoctor(chatId, senderId, threadCtx);
         return;
       }
 
       // Handle /compact command
       if (text.trim() === '/compact' || text.trim().startsWith('/compact ')) {
         const args = text.trim().slice(8);
-        await commandHandler.handleCompact(chatId, senderId, args, handleClaudeRequest);
+        await commandHandler.handleCompact(chatId, senderId, args, handleClaudeRequest, threadCtx);
         return;
       }
 
       // Handle /todos command
       if (text.trim() === '/todos') {
-        await commandHandler.handleTodos(chatId, senderId, handleClaudeRequest);
+        await commandHandler.handleTodos(chatId, senderId, handleClaudeRequest, threadCtx);
         return;
       }
 
       // Handle /allow, /y
       if (text.trim() === '/allow' || text.trim() === '/y') {
-        await commandHandler.handleAllow(chatId);
+        await commandHandler.handleAllow(chatId, threadCtx);
         return;
       }
 
       // Handle /deny, /n
       if (text.trim() === '/deny' || text.trim() === '/n') {
-        await commandHandler.handleDeny(chatId);
+        await commandHandler.handleDeny(chatId, threadCtx);
         return;
       }
 
       // Handle /allowall
       if (text.trim() === '/allowall') {
-        await commandHandler.handleAllowAll(chatId);
+        await commandHandler.handleAllowAll(chatId, threadCtx);
         return;
       }
 
       // Handle /pending
       if (text.trim() === '/pending') {
-        await commandHandler.handlePending(chatId);
+        await commandHandler.handlePending(chatId, threadCtx);
+        return;
+      }
+
+      // Handle /threads command (new)
+      if (text.trim() === '/threads') {
+        await commandHandler.handleThreads(chatId, senderId, threadCtx);
         return;
       }
 
       // Handle terminal-only commands
       const cmdName = text.trim().split(/\s+/)[0];
       if (TERMINAL_ONLY_COMMANDS.has(cmdName)) {
-        await sendTextReply(chatId, `${cmdName} 命令仅在终端交互模式下可用，飞书端暂不支持。\n\n输入 /help 查看可用命令。`);
+        await sendTextReply(chatId, `${cmdName} 命令仅在终端交互模式下可用，飞书端暂不支持。\n\n输入 /help 查看可用命令。`, threadCtx);
         return;
       }
 
-      // Snapshot workDir and convId at enqueue time so /cd or /new during queue wait doesn't affect this task
-      const workDirSnapshot = sessionManager.getWorkDir(senderId);
-      const convIdSnapshot = sessionManager.getConvId(senderId);
-
-      // Enqueue the task
-      const enqueueResult = requestQueue.enqueue(senderId, convIdSnapshot, text, async (prompt) => {
-        await handleClaudeRequest(config, sessionManager, senderId, chatId, prompt, workDirSnapshot, convIdSnapshot);
-      });
-
-      if (enqueueResult === 'rejected') {
-        log.warn(`Queue full for user: ${senderId}`);
-        await sendTextReply(chatId, '您的请求队列已满，请等待当前任务完成后再试。');
-      } else if (enqueueResult === 'queued') {
-        await sendTextReply(chatId, '前面还有任务在处理中，您的请求已排队等待。');
+      // 路由逻辑：话题 vs 非话题
+      if (isGroup && threadId && rootId) {
+        // 群聊话题内：使用话题会话
+        await routeToThread(config, sessionManager, requestQueue, senderId, chatId, threadId, rootId, text);
+      } else {
+        // 群聊主聊天区 + P2P：使用默认会话
+        await routeToDefault(config, sessionManager, requestQueue, senderId, chatId, text);
       }
     },
   });
 
   return dispatcher;
+}
+
+// ─── 路由函数 ───
+
+async function routeToThread(
+  config: Config,
+  sessionManager: SessionManager,
+  requestQueue: RequestQueue,
+  userId: string,
+  chatId: string,
+  threadId: string,
+  rootMessageId: string,
+  text: string,
+) {
+  let threadSession = sessionManager.getThreadSession(userId, threadId);
+  if (!threadSession) {
+    // 首次遇到该话题：从 API 获取话题描述（根消息内容），获取不到时降级用首条用户消息
+    const description = await fetchThreadDescription(rootMessageId) ?? text;
+    const displayName = description.slice(0, 20) + (description.length > 20 ? '...' : '');
+
+    sessionManager.setThreadSession(userId, threadId, {
+      workDir: sessionManager.getWorkDir(userId),
+      rootMessageId,
+      threadId,
+      displayName,
+      description,
+    });
+    threadSession = sessionManager.getThreadSession(userId, threadId)!;
+  } else if (!threadSession.description) {
+    // 回填：已有话题缺少描述
+    const description = await fetchThreadDescription(rootMessageId);
+    if (description) {
+      threadSession.description = description;
+      threadSession.displayName = description.slice(0, 20) + (description.length > 20 ? '...' : '');
+      sessionManager.setThreadSession(userId, threadId, threadSession);
+    }
+  }
+
+  const workDir = threadSession.workDir;
+  const threadCtx: ThreadContext = { rootMessageId, threadId };
+
+  const enqueueResult = requestQueue.enqueue(userId, threadId, text, async (prompt) => {
+    await handleClaudeRequest(config, sessionManager, userId, chatId, prompt, workDir, undefined, threadCtx);
+  });
+
+  if (enqueueResult === 'rejected') {
+    log.warn(`Queue full for user: ${userId}, thread: ${threadId}`);
+    await sendTextReply(chatId, '您的请求队列已满，请等待当前任务完成后再试。', threadCtx);
+  } else if (enqueueResult === 'queued') {
+    await sendTextReply(chatId, '前面还有任务在处理中，您的请求已排队等待。', threadCtx);
+  }
+}
+
+async function routeToDefault(
+  config: Config,
+  sessionManager: SessionManager,
+  requestQueue: RequestQueue,
+  userId: string,
+  chatId: string,
+  text: string,
+) {
+  const workDirSnapshot = sessionManager.getWorkDir(userId);
+  const convIdSnapshot = sessionManager.getConvId(userId);
+
+  const enqueueResult = requestQueue.enqueue(userId, convIdSnapshot, text, async (prompt) => {
+    await handleClaudeRequest(config, sessionManager, userId, chatId, prompt, workDirSnapshot, convIdSnapshot);
+  });
+
+  if (enqueueResult === 'rejected') {
+    log.warn(`Queue full for user: ${userId}`);
+    await sendTextReply(chatId, '您的请求队列已满，请等待当前任务完成后再试。');
+  } else if (enqueueResult === 'queued') {
+    await sendTextReply(chatId, '前面还有任务在处理中，您的请求已排队等待。');
+  }
 }
 
 async function handleClaudeRequest(
@@ -337,16 +452,22 @@ async function handleClaudeRequest(
   chatId: string,
   prompt: string,
   workDir: string,
-  convId: string,
+  convId?: string,
+  threadCtx?: ThreadContext,
 ) {
-  const sessionId = sessionManager.getSessionIdForConv(userId, convId);
+  // sessionId 获取：话题模式用 threadId，非话题用 convId
+  const sessionId = threadCtx && threadCtx.threadId
+    ? sessionManager.getSessionIdForThread(userId, threadCtx.threadId)
+    : convId
+      ? sessionManager.getSessionIdForConv(userId, convId)
+      : undefined;
 
-  log.info(`Running Claude for user ${userId}, convId=${convId}, workDir=${workDir}, sessionId=${sessionId ?? 'new'}`);
+  log.info(`Running Claude for user ${userId}, ${threadCtx ? `thread=${threadCtx.threadId}` : `convId=${convId}`}, workDir=${workDir}, sessionId=${sessionId ?? 'new'}`);
 
   // Send thinking card
   let cardHandle: CardHandle;
   try {
-    cardHandle = await sendThinkingCard(chatId);
+    cardHandle = await sendThinkingCard(chatId, threadCtx);
   } catch (err) {
     log.error('Failed to send thinking card:', err);
     return;
@@ -358,6 +479,9 @@ async function handleClaudeRequest(
     log.error('No card_id returned for thinking card');
     return;
   }
+
+  // 捕获最终的 threadCtx 用于闭包
+  const finalThreadCtx = threadCtx;
 
   return new Promise<void>((resolve) => {
     let lastUpdateTime = 0;
@@ -415,8 +539,13 @@ async function handleClaudeRequest(
 
     const handle = runClaude(config.claudeCliPath, prompt, sessionId, workDir, {
       onSessionId: (id) => {
-        sessionManager.setSessionIdForConv(userId, convId, id);
-        log.info(`Session created for user ${userId}, convId=${convId}: ${id}`);
+        if (finalThreadCtx?.threadId) {
+          sessionManager.setSessionIdForThread(userId, finalThreadCtx.threadId, id);
+          log.info(`Session created for user ${userId}, thread=${finalThreadCtx.threadId}: ${id}`);
+        } else if (convId) {
+          sessionManager.setSessionIdForConv(userId, convId, id);
+          log.info(`Session created for user ${userId}, convId=${convId}: ${id}`);
+        }
       },
       onThinking: (thinking) => {
         if (!firstContentLogged) {
@@ -462,12 +591,12 @@ async function handleClaudeRequest(
         log.info(`Claude completed for user ${userId}: success=${result.success}, cost=$${result.cost.toFixed(4)}`);
 
         // 累积费用统计
-        trackCost(userId, result.cost, result.durationMs);
+        trackCost(userCosts, userId, result.cost, result.durationMs);
 
         // 优先使用流式累积的原始文本，避免 result.result 中的 HTML 实体编码
         const finalContent = result.accumulated || result.result || '(无输出)';
         try {
-          await sendFinalCards(chatId, messageId, cardId, finalContent, note);
+          await sendFinalCards(chatId, messageId, cardId, finalContent, note, finalThreadCtx);
         } catch (err) {
           log.error('Failed to send final cards:', err);
         }
@@ -485,7 +614,15 @@ async function handleClaudeRequest(
         }
         settle(); // 在卡片更新后再清理任务
       },
-    }, { skipPermissions: config.claudeSkipPermissions, model: config.claudeModel, chatId, hookPort: config.hookPort });
+    }, {
+      skipPermissions: config.claudeSkipPermissions,
+      model: config.claudeModel,
+      chatId,
+      hookPort: config.hookPort,
+      threadRootMsgId: finalThreadCtx?.rootMessageId,
+      threadId: finalThreadCtx?.threadId,
+      platform: 'feishu',
+    });
 
     // 将任务 handle 和 settle 函数存储到 Map 中，以便能够在用户点击停止按钮时中止
     runningTasks.set(taskKey, { handle, cardId, messageId, latestContent: '', settle });

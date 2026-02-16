@@ -123,6 +123,7 @@ pnpm start    # 生产模式
 | `CLAUDE_SKIP_PERMISSIONS` | 跳过权限检查（生产环境建议 `false`） | `false` |
 | `CLAUDE_TIMEOUT_MS` | 执行超时（毫秒） | `300000`（5分钟） |
 | `HOOK_SERVER_PORT` | 权限确认 Hook 服务端口 | `18900` |
+| `LOG_DIR` | 日志文件存储目录 | `~/.cc-bot/logs` |
 
 ### 白名单用户 ID 格式
 
@@ -142,11 +143,26 @@ pnpm start    # 生产模式
   "claudeWorkDir": "/home/user/projects",
   "allowedBaseDirs": ["/home/user/projects", "/tmp"],
   "claudeSkipPermissions": false,
-  "claudeTimeoutMs": 300000
+  "claudeTimeoutMs": 300000,
+  "logDir": "/var/log/cc-bot"
 }
 ```
 
 环境变量优先级高于配置文件。
+
+## 应用数据目录
+
+默认数据目录：`~/.cc-bot`（常量 `APP_HOME`）
+
+```
+~/.cc-bot/
+├── config.json          # 配置文件
+├── data/
+│   └── sessions.json    # 会话持久化数据
+└── logs/                # 日志文件（可通过 LOG_DIR 自定义）
+    ├── 2026-02-14.log
+    └── 2026-02-15.log
+```
 
 ## 权限确认机制
 

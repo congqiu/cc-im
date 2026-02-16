@@ -6,22 +6,15 @@ import { SessionManager } from '../session/session-manager.js';
 import { RequestQueue } from '../queue/request-queue.js';
 import { runClaude, type ClaudeRunHandle } from '../claude/cli-runner.js';
 import { sendThinkingMessage, updateMessage, sendFinalMessages, sendTextReply, sendPermissionMessage, updatePermissionMessage } from './message-sender.js';
-import { setPermissionSender } from '../hook/permission-server.js';
+import { registerPermissionSender } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord, type CommandHandlerDeps } from '../commands/handler.js';
+import { trackCost } from '../shared/utils.js';
 import { TERMINAL_ONLY_COMMANDS, DEDUP_TTL_MS, THROTTLE_MS } from '../constants.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('TgHandler');
 
 const userCosts = new Map<string, CostRecord>();
-
-function trackCost(userId: string, cost: number, durationMs: number) {
-  const record = userCosts.get(userId) ?? { totalCost: 0, totalDurationMs: 0, requestCount: 0 };
-  record.totalCost += cost;
-  record.totalDurationMs += durationMs;
-  record.requestCount += 1;
-  userCosts.set(userId, record);
-}
 
 interface TaskInfo {
   handle: ClaudeRunHandle;
@@ -46,7 +39,7 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
   });
 
   // Register telegram permission sender
-  setPermissionSender({
+  registerPermissionSender('telegram', {
     sendPermissionCard: sendPermissionMessage,
     updatePermissionCard: updatePermissionMessage,
   });
@@ -90,6 +83,13 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
     const text = ctx.message.text.trim();
 
     log.debug(`Received message from user ${userId}, chat ${chatId}: ${text.slice(0, 50)}${text.length > 50 ? '...' : ''}`);
+
+    // Only allow private chats
+    if (ctx.chat.type !== 'private') {
+      log.warn(`Rejected message from non-private chat: ${ctx.chat.type}, chatId=${chatId}`);
+      await sendTextReply(chatId, '抱歉，本机器人仅支持私聊模式。\n\n请在私聊窗口中与我对话。');
+      return;
+    }
 
     // Dedup
     const now = Date.now();
@@ -220,7 +220,7 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
       return;
     }
 
-    // Normal message - send to Claude
+    // Route to Claude
     const workDirSnapshot = sessionManager.getWorkDir(userId);
     const convIdSnapshot = sessionManager.getConvId(userId);
 
@@ -229,6 +229,7 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
     });
 
     if (enqueueResult === 'rejected') {
+      log.warn(`Queue full for user: ${userId}`);
       await sendTextReply(chatId, '您的请求队列已满，请等待当前任务完成后再试。');
     } else if (enqueueResult === 'queued') {
       await sendTextReply(chatId, '前面还有任务在处理中，您的请求已排队等待。');
@@ -242,9 +243,9 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
     chatId: string,
     prompt: string,
     workDir: string,
-    convId: string,
+    convId?: string,
   ) {
-    const sessionId = sessionManager.getSessionIdForConv(userId, convId);
+    const sessionId = convId ? sessionManager.getSessionIdForConv(userId, convId) : undefined;
 
     log.info(`Running Claude for user ${userId}, convId=${convId}, workDir=${workDir}, sessionId=${sessionId ?? 'new'}`);
 
@@ -312,8 +313,10 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
 
       const handle = runClaude(config.claudeCliPath, prompt, sessionId, workDir, {
         onSessionId: (id) => {
-          sessionManager.setSessionIdForConv(userId, convId, id);
-          log.info(`Session created for user ${userId}, convId=${convId}: ${id}`);
+          if (convId) {
+            sessionManager.setSessionIdForConv(userId, convId, id);
+            log.info(`Session created for user ${userId}, convId=${convId}: ${id}`);
+          }
         },
         onThinking: (thinking) => {
           if (!firstContentLogged) {
@@ -332,13 +335,12 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
         },
         onComplete: async (result) => {
           if (settled) return;
-          cleanup();
 
           const note = result.cost > 0
             ? `耗时 ${(result.durationMs / 1000).toFixed(1)}s | 费用 $${result.cost.toFixed(4)}${result.model ? ` | ${result.model}` : ''}`
             : `完成${result.model ? ` | ${result.model}` : ''}`;
 
-          trackCost(userId, result.cost, result.durationMs);
+          trackCost(userCosts, userId, result.cost, result.durationMs);
 
           const finalContent = result.accumulated || result.result || '(无输出)';
           try {
@@ -350,7 +352,6 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
         },
         onError: async (error) => {
           if (settled) return;
-          cleanup();
           try {
             await updateMessage(chatId, msgId, `错误：${error}`, 'error', '执行失败');
           } catch (err) {
@@ -363,6 +364,7 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
         model: config.claudeModel,
         chatId,
         hookPort: config.hookPort,
+        platform: 'telegram',
       });
 
       runningTasks.set(taskKey, { handle, latestContent: '', settle });

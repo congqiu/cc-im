@@ -9,10 +9,9 @@ import { initLogger, createLogger, closeLogger } from './logger.js';
 const log = createLogger('Main');
 
 export async function main() {
-  initLogger();
-  log.info('Starting cc-bot bridge service...');
-
   const config = loadConfig();
+  initLogger(config.logDir);
+  log.info('Starting cc-bot bridge service...');
   log.info(`Enabled platforms: ${config.enabledPlatforms.join(', ')}`);
   log.info(`Allowed users: ${config.allowedUserIds.length === 0 ? 'ALL (dev mode)' : config.allowedUserIds.length + ' users configured'}`);
   log.info(`Claude CLI: ${config.claudeCliPath}`);

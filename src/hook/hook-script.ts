@@ -99,11 +99,18 @@ async function main() {
     process.exit(HOOK_EXIT_CODES.SUCCESS);
   }
 
+  const threadRootMsgId = process.env.CC_BOT_THREAD_ROOT_MSG_ID;
+  const threadId = process.env.CC_BOT_THREAD_ID;
+  const platform = process.env.CC_BOT_PLATFORM;
+
   try {
     const result = await httpPost(port, '/permission-request', {
       chatId,
       toolName,
       toolInput,
+      threadRootMsgId,
+      threadId,
+      platform,
     });
 
     const data = result.data as { decision?: string };
