@@ -42,7 +42,20 @@ export interface StreamResult {
   num_turns: number;
 }
 
-export type StreamEvent = StreamInit | StreamContentBlockDelta | StreamAssistantMessage | StreamResult | { type: string; [key: string]: unknown };
+export interface StreamContentBlockStart {
+  type: 'stream_event';
+  event: {
+    type: 'content_block_start';
+    index: number;
+    content_block: {
+      type: string;
+      id?: string;
+      name?: string;
+    };
+  };
+}
+
+export type StreamEvent = StreamInit | StreamContentBlockDelta | StreamContentBlockStart | StreamAssistantMessage | StreamResult | { type: string; [key: string]: unknown };
 
 export function isStreamInit(event: StreamEvent): event is StreamInit {
   return event.type === 'system' && 'subtype' in event && event.subtype === 'init';
@@ -61,4 +74,15 @@ export function isContentBlockDelta(event: StreamEvent): event is StreamContentB
 
 export function isStreamResult(event: StreamEvent): event is StreamResult {
   return event.type === 'result' && 'subtype' in event;
+}
+
+export function isContentBlockStart(event: StreamEvent): event is StreamContentBlockStart {
+  return (
+    event.type === 'stream_event' &&
+    'event' in event &&
+    typeof event.event === 'object' &&
+    event.event !== null &&
+    'type' in event.event &&
+    event.event.type === 'content_block_start'
+  );
 }

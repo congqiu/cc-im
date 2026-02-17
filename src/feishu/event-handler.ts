@@ -9,7 +9,7 @@ import { buildCardV2 } from './card-builder.js';
 import { destroySession, updateCardFull, disableStreaming } from './cardkit-manager.js';
 import { registerPermissionSender } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord, type CommandHandlerDeps } from '../commands/handler.js';
-import { trackCost } from '../shared/utils.js';
+import { trackCost, formatToolStats } from '../shared/utils.js';
 import { TERMINAL_ONLY_COMMANDS, DEDUP_TTL_MS, CARDKIT_THROTTLE_MS } from '../constants.js';
 import { createLogger } from '../logger.js';
 
@@ -584,9 +584,17 @@ async function handleClaudeRequest(
       onComplete: async (result) => {
         if (settled) return;
 
-        const note = result.cost > 0
-          ? `耗时 ${(result.durationMs / 1000).toFixed(1)}s | 费用 $${result.cost.toFixed(4)}${result.model ? ` | ${result.model}` : ''}`
-          : `完成${result.model ? ` | ${result.model}` : ''}`;
+        const toolInfo = formatToolStats(result.toolStats, result.numTurns);
+        const noteParts: string[] = [];
+        if (result.cost > 0) {
+          noteParts.push(`耗时 ${(result.durationMs / 1000).toFixed(1)}s`);
+          noteParts.push(`费用 $${result.cost.toFixed(4)}`);
+        } else {
+          noteParts.push('完成');
+        }
+        if (toolInfo) noteParts.push(toolInfo);
+        if (result.model) noteParts.push(result.model);
+        const note = noteParts.join(' | ');
 
         log.info(`Claude completed for user ${userId}: success=${result.success}, cost=$${result.cost.toFixed(4)}`);
 

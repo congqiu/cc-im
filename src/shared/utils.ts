@@ -54,6 +54,21 @@ export function buildInputSummary(toolName: string, toolInput: Record<string, un
 }
 
 /**
+ * 格式化工具使用统计（用于完成 note）
+ */
+export function formatToolStats(toolStats: Record<string, number>, numTurns: number): string {
+  const totalTools = Object.values(toolStats).reduce((sum, count) => sum + count, 0);
+  if (totalTools === 0) return '';
+
+  const parts = Object.entries(toolStats)
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, count]) => `${name}×${count}`)
+    .join(' ');
+
+  return `${numTurns} 轮 ${totalTools} 次工具（${parts}）`;
+}
+
+/**
  * 累积用户费用统计
  */
 export function trackCost(userCosts: Map<string, CostRecord>, userId: string, cost: number, durationMs: number): void {

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { parseStreamLine, extractTextDelta, extractThinkingDelta, extractResult, type ParsedResult } from './stream-parser.js';
+import { parseStreamLine, extractTextDelta, extractThinkingDelta, extractToolUse, extractResult, type ParsedResult } from './stream-parser.js';
 import { isStreamInit } from './types.js';
 
 export interface ClaudeRunCallbacks {
@@ -72,6 +72,7 @@ export function runClaude(
   let accumulatedThinking = '';
   let completed = false;
   let model = '';
+  let toolStats: Record<string, number> = {};
   let timeoutHandle: NodeJS.Timeout | null = null;
 
   // 设置超时
@@ -109,6 +110,12 @@ export function runClaude(
       return;
     }
 
+    const toolName = extractToolUse(event);
+    if (toolName) {
+      toolStats[toolName] = (toolStats[toolName] || 0) + 1;
+      return;
+    }
+
     const result = extractResult(event);
     if (result) {
       completed = true;
@@ -117,6 +124,7 @@ export function runClaude(
       }
       result.accumulated = accumulated;
       result.model = model;
+      result.toolStats = toolStats;
       if (!accumulated && result.result) {
         accumulated = result.result;
       }
@@ -182,6 +190,8 @@ export function runClaude(
           cost: 0,
           durationMs: 0,
           model,
+          numTurns: 0,
+          toolStats,
         });
       }
     }

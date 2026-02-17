@@ -3,6 +3,7 @@ import {
   parseStreamLine,
   extractTextDelta,
   extractThinkingDelta,
+  extractToolUse,
   extractResult,
 } from '../../../src/claude/stream-parser.js';
 import type { StreamEvent } from '../../../src/claude/types.js';
@@ -155,6 +156,53 @@ describe('Stream Parser', () => {
     });
   });
 
+  describe('extractToolUse', () => {
+    it('应该提取 tool_use 的工具名', () => {
+      const event: StreamEvent = {
+        type: 'stream_event',
+        event: {
+          type: 'content_block_start',
+          index: 1,
+          content_block: {
+            type: 'tool_use',
+            id: 'toolu_123',
+            name: 'Read',
+          },
+        },
+      };
+      expect(extractToolUse(event)).toBe('Read');
+    });
+
+    it('应该忽略非 tool_use 的 content_block_start', () => {
+      const event: StreamEvent = {
+        type: 'stream_event',
+        event: {
+          type: 'content_block_start',
+          index: 0,
+          content_block: {
+            type: 'text',
+          },
+        },
+      };
+      expect(extractToolUse(event)).toBeNull();
+    });
+
+    it('应该忽略非 content_block_start 事件', () => {
+      const event: StreamEvent = {
+        type: 'stream_event',
+        event: {
+          type: 'content_block_delta',
+          index: 0,
+          delta: {
+            type: 'text_delta',
+            text: 'Hello',
+          },
+        },
+      };
+      expect(extractToolUse(event)).toBeNull();
+    });
+  });
+
   describe('extractResult', () => {
     it('应该提取成功结果', () => {
       const event: StreamEvent = {
@@ -174,6 +222,8 @@ describe('Stream Parser', () => {
         accumulated: '',
         cost: 0.05,
         durationMs: 2500,
+        numTurns: 3,
+        toolStats: {},
       });
     });
 
@@ -195,6 +245,8 @@ describe('Stream Parser', () => {
         accumulated: '',
         cost: 0.01,
         durationMs: 500,
+        numTurns: 1,
+        toolStats: {},
       });
     });
 

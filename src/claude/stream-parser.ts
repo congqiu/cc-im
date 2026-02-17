@@ -1,4 +1,4 @@
-import { isContentBlockDelta, isStreamResult, type StreamEvent } from './types.js';
+import { isContentBlockDelta, isContentBlockStart, isStreamResult, type StreamEvent } from './types.js';
 
 export interface ParsedDelta {
   text: string;
@@ -11,6 +11,8 @@ export interface ParsedResult {
   cost: number;
   durationMs: number;
   model?: string;
+  numTurns: number;
+  toolStats: Record<string, number>;
 }
 
 export function parseStreamLine(line: string): StreamEvent | null {
@@ -41,6 +43,13 @@ export function extractThinkingDelta(event: StreamEvent): ParsedDelta | null {
   return null;
 }
 
+export function extractToolUse(event: StreamEvent): string | null {
+  if (isContentBlockStart(event) && event.event.content_block.type === 'tool_use' && event.event.content_block.name) {
+    return event.event.content_block.name;
+  }
+  return null;
+}
+
 export function extractResult(event: StreamEvent): ParsedResult | null {
   if (isStreamResult(event)) {
     return {
@@ -49,6 +58,8 @@ export function extractResult(event: StreamEvent): ParsedResult | null {
       accumulated: '',
       cost: event.total_cost_usd,
       durationMs: event.duration_ms,
+      numTurns: event.num_turns,
+      toolStats: {},
     };
   }
   return null;
