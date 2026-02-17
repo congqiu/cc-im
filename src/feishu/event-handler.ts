@@ -9,8 +9,8 @@ import { buildCardV2 } from './card-builder.js';
 import { destroySession, updateCardFull, disableStreaming } from './cardkit-manager.js';
 import { registerPermissionSender } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord, type CommandHandlerDeps } from '../commands/handler.js';
-import { trackCost, formatToolStats } from '../shared/utils.js';
-import { TERMINAL_ONLY_COMMANDS, DEDUP_TTL_MS, CARDKIT_THROTTLE_MS } from '../constants.js';
+import { trackCost, formatToolStats, safeStringify } from '../shared/utils.js';
+import { DEDUP_TTL_MS, CARDKIT_THROTTLE_MS } from '../constants.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('EventHandler');
@@ -54,8 +54,30 @@ interface TaskInfo {
   messageId: string;
   latestContent: string;
   settle: () => void;  // 添加 settle 函数，用于在停止时标记任务已完成
+  startedAt: number;   // 任务启动时间，用于超时清理
 }
 const runningTasks = new Map<string, TaskInfo>();
+
+// 定期清理超时任务（30分钟超时，每10分钟检查一次）
+const TASK_TIMEOUT_MS = 30 * 60 * 1000;
+const TASK_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+
+const taskCleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [key, task] of runningTasks) {
+    if (now - task.startedAt > TASK_TIMEOUT_MS) {
+      log.warn(`Auto-cleaning timeout task: ${key}`);
+      task.handle.abort();
+      task.settle();
+      runningTasks.delete(key);
+    }
+  }
+}, TASK_CLEANUP_INTERVAL_MS);
+taskCleanupTimer.unref();
+
+export function getRunningTaskCount(): number {
+  return runningTasks.size;
+}
 
 export function createEventDispatcher(config: Config) {
   const accessControl = new AccessControl(config.allowedUserIds);
@@ -79,8 +101,9 @@ export function createEventDispatcher(config: Config) {
       updatePermissionCard(messageId, toolName, decision),
   });
 
-  // Dedup: track processed message IDs with timestamps
+  // Dedup: track processed message IDs with timestamps (max 1000 entries)
   const processedMessages = new Map<string, number>();
+  const MAX_DEDUP_SIZE = 1000;
 
   const dispatcher = new Lark.EventDispatcher({
     // @ts-ignore - defaultCallback 是自定义选项
@@ -91,7 +114,7 @@ export function createEventDispatcher(config: Config) {
 
       // 如果是卡片交互事件，记录详细信息
       if (eventType.includes('card') || eventType.includes('action')) {
-        log.info('Card/Action event data:', JSON.stringify(data, null, 2));
+        log.info('Card/Action event data:', safeStringify(data, 2));
       }
     },
   });
@@ -99,7 +122,7 @@ export function createEventDispatcher(config: Config) {
   // 注册卡片交互事件处理器
   dispatcher.register({
     'card.action.trigger': async (data: LarkCardActionData) => {
-      log.debug('Received card action trigger event:', JSON.stringify(data, null, 2));
+      log.debug('Received card action trigger event:', safeStringify(data, 2));
 
       const action = data.action;
       const userId = data.operator?.open_id || data.sender?.sender_id?.open_id;
@@ -124,10 +147,10 @@ export function createEventDispatcher(config: Config) {
         }
         actionData = parsed as typeof actionData;
         if (typeof actionData?.action !== 'string') {
-          log.warn('Invalid action data: missing or non-string "action" field:', JSON.stringify(parsed));
+          log.warn('Invalid action data: missing or non-string "action" field:', safeStringify(parsed));
           return;
         }
-        log.info(`Parsed action data:`, JSON.stringify(actionData));
+        log.info(`Parsed action data:`, safeStringify(actionData));
       } catch (err) {
         log.error('Failed to parse action value:', err);
         return;
@@ -192,6 +215,12 @@ export function createEventDispatcher(config: Config) {
           break; // Map preserves insertion order, so we can stop early
         }
       }
+      // Enforce max size: remove oldest entries
+      while (processedMessages.size > MAX_DEDUP_SIZE) {
+        const oldest = processedMessages.keys().next().value;
+        if (oldest !== undefined) processedMessages.delete(oldest);
+        else break;
+      }
 
       const chatId = message.chat_id;
       const senderId = data.sender?.sender_id?.open_id;
@@ -251,109 +280,8 @@ export function createEventDispatcher(config: Config) {
         threadCtx = { rootMessageId: rootId, threadId };
       }
 
-      // Handle /help command
-      if (text.trim() === '/help') {
-        await commandHandler.handleHelp(chatId, 'feishu', threadCtx);
-        return;
-      }
-
-      // Handle /new command
-      if (text.trim() === '/new') {
-        await commandHandler.handleNew(chatId, senderId, threadCtx);
-        return;
-      }
-
-      // Handle /cd command
-      if (text.trim().startsWith('/cd ') || text.trim() === '/cd') {
-        const args = text.trim().slice(3);
-        await commandHandler.handleCd(chatId, senderId, args, threadCtx);
-        return;
-      }
-
-      // Handle /pwd command
-      if (text.trim() === '/pwd') {
-        await commandHandler.handlePwd(chatId, senderId, threadCtx);
-        return;
-      }
-
-      // Handle /list command
-      if (text.trim() === '/list') {
-        await commandHandler.handleList(chatId, senderId, threadCtx);
-        return;
-      }
-
-      // Handle /cost command
-      if (text.trim() === '/cost') {
-        await commandHandler.handleCost(chatId, senderId, threadCtx);
-        return;
-      }
-
-      // Handle /status command
-      if (text.trim() === '/status') {
-        await commandHandler.handleStatus(chatId, senderId, threadCtx);
-        return;
-      }
-
-      // Handle /model command
-      if (text.trim() === '/model' || text.trim().startsWith('/model ')) {
-        const args = text.trim().slice(6);
-        await commandHandler.handleModel(chatId, args, threadCtx);
-        return;
-      }
-
-      // Handle /doctor command
-      if (text.trim() === '/doctor') {
-        await commandHandler.handleDoctor(chatId, senderId, threadCtx);
-        return;
-      }
-
-      // Handle /compact command
-      if (text.trim() === '/compact' || text.trim().startsWith('/compact ')) {
-        const args = text.trim().slice(8);
-        await commandHandler.handleCompact(chatId, senderId, args, handleClaudeRequest, threadCtx);
-        return;
-      }
-
-      // Handle /todos command
-      if (text.trim() === '/todos') {
-        await commandHandler.handleTodos(chatId, senderId, handleClaudeRequest, threadCtx);
-        return;
-      }
-
-      // Handle /allow, /y
-      if (text.trim() === '/allow' || text.trim() === '/y') {
-        await commandHandler.handleAllow(chatId, threadCtx);
-        return;
-      }
-
-      // Handle /deny, /n
-      if (text.trim() === '/deny' || text.trim() === '/n') {
-        await commandHandler.handleDeny(chatId, threadCtx);
-        return;
-      }
-
-      // Handle /allowall
-      if (text.trim() === '/allowall') {
-        await commandHandler.handleAllowAll(chatId, threadCtx);
-        return;
-      }
-
-      // Handle /pending
-      if (text.trim() === '/pending') {
-        await commandHandler.handlePending(chatId, threadCtx);
-        return;
-      }
-
-      // Handle /threads command (new)
-      if (text.trim() === '/threads') {
-        await commandHandler.handleThreads(chatId, senderId, threadCtx);
-        return;
-      }
-
-      // Handle terminal-only commands
-      const cmdName = text.trim().split(/\s+/)[0];
-      if (TERMINAL_ONLY_COMMANDS.has(cmdName)) {
-        await sendTextReply(chatId, `${cmdName} 命令仅在终端交互模式下可用，飞书端暂不支持。\n\n输入 /help 查看可用命令。`, threadCtx);
+      // 统一命令分发
+      if (await commandHandler.dispatch(text, chatId, senderId, 'feishu', handleClaudeRequest, threadCtx)) {
         return;
       }
 
@@ -633,6 +561,6 @@ async function handleClaudeRequest(
     });
 
     // 将任务 handle 和 settle 函数存储到 Map 中，以便能够在用户点击停止按钮时中止
-    runningTasks.set(taskKey, { handle, cardId, messageId, latestContent: '', settle });
+    runningTasks.set(taskKey, { handle, cardId, messageId, latestContent: '', settle, startedAt: Date.now() });
   });
 }

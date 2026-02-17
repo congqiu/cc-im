@@ -21,6 +21,7 @@ vi.mock('node:fs', () => ({
 // Mock node:fs/promises
 vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
+  realpath: vi.fn().mockImplementation((path: string) => Promise.resolve(path)),
 }));
 
 // Import after mocks
@@ -33,6 +34,7 @@ const mockWriteFileSync = vi.mocked(fs.writeFileSync);
 const mockExistsSync = vi.mocked(fs.existsSync);
 const mockMkdirSync = vi.mocked(fs.mkdirSync);
 const mockWriteFile = vi.mocked(fsPromises.writeFile);
+const mockRealpath = vi.mocked(fsPromises.realpath);
 
 describe('SessionManager', () => {
   beforeEach(() => {
@@ -97,37 +99,40 @@ describe('SessionManager', () => {
     expect(created).toBe(false);
   });
 
-  it('setWorkDir 应该成功切换目录', () => {
+  it('setWorkDir 应该成功切换目录', async () => {
     mockExistsSync.mockReturnValue(true);
+    mockRealpath.mockResolvedValue('/other');
     const sm = new SessionManager('/work', ['/work', '/other']);
 
-    const resolved = sm.setWorkDir('user1', '/other');
+    const resolved = await sm.setWorkDir('user1', '/other');
 
     expect(resolved).toBe('/other');
     expect(sm.getWorkDir('user1')).toBe('/other');
   });
 
-  it('setWorkDir 目录不存在应该抛异常', () => {
+  it('setWorkDir 目录不存在应该抛异常', async () => {
     mockExistsSync.mockReturnValue(false);
     const sm = new SessionManager('/work', ['/work']);
 
-    expect(() => sm.setWorkDir('user1', '/nonexistent')).toThrow(/目录不存在/);
+    await expect(sm.setWorkDir('user1', '/nonexistent')).rejects.toThrow(/目录不存在/);
   });
 
-  it('setWorkDir 不在允许范围应该抛异常', () => {
+  it('setWorkDir 不在允许范围应该抛异常', async () => {
     mockExistsSync.mockReturnValue(true);
+    mockRealpath.mockResolvedValue('/forbidden');
     const sm = new SessionManager('/work', ['/work']);
 
-    expect(() => sm.setWorkDir('user1', '/forbidden')).toThrow('目录不在允许范围内');
+    await expect(sm.setWorkDir('user1', '/forbidden')).rejects.toThrow('目录不在允许范围内');
   });
 
-  it('setWorkDir 应该重置 sessionId 和 convId', () => {
+  it('setWorkDir 应该重置 sessionId 和 convId', async () => {
     mockExistsSync.mockReturnValue(true);
+    mockRealpath.mockResolvedValue('/other');
     const sm = new SessionManager('/work', ['/work', '/other']);
     sm.setSessionId('user1', 'old-session');
     const oldConvId = sm.getConvId('user1');
 
-    sm.setWorkDir('user1', '/other');
+    await sm.setWorkDir('user1', '/other');
 
     expect(sm.getSessionId('user1')).toBeUndefined();
     const newConvId = sm.getConvId('user1');
@@ -143,14 +148,15 @@ describe('SessionManager', () => {
     expect(sessionId).toBe('session-123');
   });
 
-  it('getSessionIdForConv 应该从缓存读取旧 convId', () => {
+  it('getSessionIdForConv 应该从缓存读取旧 convId', async () => {
     const sm = new SessionManager('/work', ['/work']);
     sm.setSessionId('user1', 'old-session');
     const oldConvId = sm.getConvId('user1');
 
     // 切换目录会保存旧 convId 的 sessionId
     mockExistsSync.mockReturnValue(true);
-    sm.setWorkDir('user1', '/work');
+    mockRealpath.mockResolvedValue('/work');
+    await sm.setWorkDir('user1', '/work');
 
     // 新 convId 没有 sessionId
     const newConvId = sm.getConvId('user1');
@@ -321,8 +327,9 @@ describe('SessionManager', () => {
       expect(sm.getWorkDirForThread('user1', 'nonexistent')).toBe('/work');
     });
 
-    it('setWorkDirForThread 应该切换话题的工作目录', () => {
+    it('setWorkDirForThread 应该切换话题的工作目录', async () => {
       mockExistsSync.mockReturnValue(true);
+      mockRealpath.mockResolvedValue('/other');
       const sm = new SessionManager('/work', ['/work', '/other']);
       sm.setThreadSession('user1', 'thread-123', {
         sessionId: 'old-session',
@@ -331,7 +338,7 @@ describe('SessionManager', () => {
         threadId: 'thread-123',
       });
 
-      const resolved = sm.setWorkDirForThread('user1', 'thread-123', '/other');
+      const resolved = await sm.setWorkDirForThread('user1', 'thread-123', '/other');
 
       expect(resolved).toBe('/other');
       expect(sm.getWorkDirForThread('user1', 'thread-123')).toBe('/other');
@@ -339,11 +346,12 @@ describe('SessionManager', () => {
       expect(sm.getSessionIdForThread('user1', 'thread-123')).toBeUndefined();
     });
 
-    it('setWorkDirForThread 话题不存在应该自动创建', () => {
+    it('setWorkDirForThread 话题不存在应该自动创建', async () => {
       mockExistsSync.mockReturnValue(true);
+      mockRealpath.mockResolvedValue('/other');
       const sm = new SessionManager('/work', ['/work', '/other']);
 
-      const resolved = sm.setWorkDirForThread('user1', 'new-thread', '/other', 'msg-root');
+      const resolved = await sm.setWorkDirForThread('user1', 'new-thread', '/other', 'msg-root');
 
       expect(resolved).toBe('/other');
       expect(sm.getWorkDirForThread('user1', 'new-thread')).toBe('/other');
@@ -428,6 +436,39 @@ describe('SessionManager', () => {
       });
 
       vi.useRealTimers();
+    });
+  });
+
+  describe('路径遍历安全', () => {
+    it('setWorkDir 应该使用 realpath 解析符号链接', async () => {
+      mockExistsSync.mockReturnValue(true);
+      // 符号链接 /work/evil 实际指向 /etc
+      mockRealpath.mockResolvedValue('/etc');
+      const sm = new SessionManager('/work', ['/work']);
+
+      await expect(sm.setWorkDir('user1', '/work/evil')).rejects.toThrow('目录不在允许范围内');
+    });
+
+    it('setWorkDirForThread 应该使用 realpath 解析符号链接', async () => {
+      mockExistsSync.mockReturnValue(true);
+      mockRealpath.mockResolvedValue('/etc');
+      const sm = new SessionManager('/work', ['/work']);
+      sm.setThreadSession('user1', 'thread-1', {
+        workDir: '/work',
+        rootMessageId: 'msg',
+        threadId: 'thread-1',
+      });
+
+      await expect(sm.setWorkDirForThread('user1', 'thread-1', '/work/evil')).rejects.toThrow('目录不在允许范围内');
+    });
+
+    it('setWorkDir 符号链接指向允许目录应该通过', async () => {
+      mockExistsSync.mockReturnValue(true);
+      mockRealpath.mockResolvedValue('/allowed/real');
+      const sm = new SessionManager('/work', ['/work', '/allowed/real']);
+
+      const resolved = await sm.setWorkDir('user1', '/work/link');
+      expect(resolved).toBe('/allowed/real');
     });
   });
 });

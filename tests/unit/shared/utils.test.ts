@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { splitLongContent, buildInputSummary, trackCost, formatToolStats } from '../../../src/shared/utils.js';
+import { splitLongContent, buildInputSummary, trackCost, formatToolStats, safeStringify } from '../../../src/shared/utils.js';
 import type { CostRecord } from '../../../src/shared/types.js';
 
 describe('splitLongContent', () => {
@@ -100,5 +100,21 @@ describe('trackCost', () => {
     expect(record.totalCost).toBeCloseTo(0.8);
     expect(record.totalDurationMs).toBe(3000);
     expect(record.requestCount).toBe(2);
+  });
+});
+
+describe('safeStringify', () => {
+  it('正常对象序列化', () => {
+    expect(safeStringify({ a: 1 })).toBe('{"a":1}');
+  });
+
+  it('支持 indent 参数', () => {
+    expect(safeStringify({ a: 1 }, 2)).toBe('{\n  "a": 1\n}');
+  });
+
+  it('循环引用返回 fallback', () => {
+    const obj: Record<string, unknown> = { a: 1 };
+    obj.self = obj;
+    expect(safeStringify(obj)).toBe('[unserializable]');
   });
 });

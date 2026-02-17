@@ -30,15 +30,33 @@ export interface PendingRequest {
 }
 
 const pendingRequests = new Map<string, PendingRequest>();
+// 反向索引：chatId → Set<requestId>，O(1) 查询
+const chatIdIndex = new Map<string, Set<string>>();
+
+function addToIndex(chatId: string, id: string) {
+  let set = chatIdIndex.get(chatId);
+  if (!set) { set = new Set(); chatIdIndex.set(chatId, set); }
+  set.add(id);
+}
+
+function removeFromIndex(chatId: string, id: string) {
+  const set = chatIdIndex.get(chatId);
+  if (set) {
+    set.delete(id);
+    if (set.size === 0) chatIdIndex.delete(chatId);
+  }
+}
 
 // Resolve the latest pending request for a given chatId
 export function resolveLatestPermission(chatId: string, decision: 'allow' | 'deny'): string | null {
+  const ids = chatIdIndex.get(chatId);
+  if (!ids || ids.size === 0) return null;
+
   let oldest: PendingRequest | null = null;
-  for (const req of pendingRequests.values()) {
-    if (req.chatId === chatId) {
-      if (!oldest || req.createdAt < oldest.createdAt) {
-        oldest = req;
-      }
+  for (const id of ids) {
+    const req = pendingRequests.get(id);
+    if (req && (!oldest || req.createdAt < oldest.createdAt)) {
+      oldest = req;
     }
   }
   if (!oldest) return null;
@@ -47,21 +65,21 @@ export function resolveLatestPermission(chatId: string, decision: 'allow' | 'den
   const platformSender = senders.get(oldest.platform);
   platformSender?.updatePermissionCard(oldest.chatId, oldest.messageId, oldest.toolName, decision).catch(() => {});
   pendingRequests.delete(oldest.id);
+  removeFromIndex(chatId, oldest.id);
   return oldest.id;
 }
 
 export function getPendingCount(chatId: string): number {
-  let count = 0;
-  for (const req of pendingRequests.values()) {
-    if (req.chatId === chatId) count++;
-  }
-  return count;
+  return chatIdIndex.get(chatId)?.size ?? 0;
 }
 
 export function listPending(chatId: string): PendingRequest[] {
+  const ids = chatIdIndex.get(chatId);
+  if (!ids) return [];
   const result: PendingRequest[] = [];
-  for (const req of pendingRequests.values()) {
-    if (req.chatId === chatId) result.push(req);
+  for (const id of ids) {
+    const req = pendingRequests.get(id);
+    if (req) result.push(req);
   }
   return result.sort((a, b) => a.createdAt - b.createdAt);
 }
@@ -131,6 +149,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
         const timeout = setTimeout(() => {
           if (pendingRequests.has(id)) {
             pendingRequests.delete(id);
+            removeFromIndex(chatId, id);
             log.warn(`Permission request ${id} timed out`);
             if (savedMessageId) {
               platformSender.updatePermissionCard(chatId, savedMessageId, toolName, 'deny').catch(() => {});
@@ -155,6 +174,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
             },
           };
           pendingRequests.set(id, pending);
+          addToIndex(chatId, id);
           log.info(`Permission request created: ${id} tool=${toolName} platform=${resolvedPlatform}`);
         }).catch((err) => {
           log.error('Failed to send permission card:', err);

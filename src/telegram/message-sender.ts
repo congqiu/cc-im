@@ -13,7 +13,7 @@ const COOLDOWN_CLEANUP_INTERVAL_MS = 3600000; // Clean up cooldown map every hou
 const chatCooldownUntil = new Map<string, number>();
 
 // Periodic cleanup of expired cooldown entries to prevent memory leak
-setInterval(() => {
+const cooldownCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [chatId, until] of chatCooldownUntil.entries()) {
     if (now >= until) {
@@ -21,6 +21,7 @@ setInterval(() => {
     }
   }
 }, COOLDOWN_CLEANUP_INTERVAL_MS);
+cooldownCleanupTimer.unref();
 
 function parseRetryAfter(err: unknown): number | null {
   if (err && typeof err === 'object' && 'message' in err && typeof err.message === 'string') {

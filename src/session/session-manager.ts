@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { writeFile, realpath } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { dirname, resolve, join } from 'node:path';
 import { createLogger } from '../logger.js';
@@ -103,18 +103,20 @@ export class SessionManager {
     return this.sessions.get(userId)?.workDir ?? this.defaultWorkDir;
   }
 
-  setWorkDir(userId: string, workDir: string): string {
+  async setWorkDir(userId: string, workDir: string): Promise<string> {
     const currentDir = this.getWorkDir(userId);
     const resolved = resolve(currentDir, workDir);
     if (!existsSync(resolved)) {
       throw new Error(`目录不存在: ${resolved}`);
     }
+    // 解析符号链接获取真实路径，防止路径遍历攻击
+    const realPath = await realpath(resolved);
     // Check path is under an allowed base directory
     const allowed = this.allowedBaseDirs.some(
-      (base) => resolved === base || resolved.startsWith(base + '/')
+      (base) => realPath === base || realPath.startsWith(base + '/')
     );
     if (!allowed) {
-      throw new Error(`目录不在允许范围内: ${resolved}\n允许的目录: ${this.allowedBaseDirs.join(', ')}`);
+      throw new Error(`目录不在允许范围内: ${realPath}\n允许的目录: ${this.allowedBaseDirs.join(', ')}`);
     }
     const session = this.sessions.get(userId);
     if (session) {
@@ -122,16 +124,16 @@ export class SessionManager {
       if (session.activeConvId && session.sessionId) {
         this.convSessionMap.set(`${userId}:${session.activeConvId}`, session.sessionId);
       }
-      session.workDir = resolved;
+      session.workDir = realPath;
       session.sessionId = undefined;
       session.activeConvId = this.generateConvId();
     } else {
-      this.sessions.set(userId, { workDir: resolved, activeConvId: this.generateConvId() });
+      this.sessions.set(userId, { workDir: realPath, activeConvId: this.generateConvId() });
     }
     // 切换目录也立即同步保存，确保会话重置生效
     this.flushSync();
-    log.info(`WorkDir changed for user ${userId}: ${resolved}, session cleared`);
-    return resolved;
+    log.info(`WorkDir changed for user ${userId}: ${realPath}, session cleared`);
+    return realPath;
   }
 
   newSession(userId: string): boolean {
@@ -195,7 +197,7 @@ export class SessionManager {
     return this.sessions.get(userId)?.threads?.[threadId]?.workDir ?? this.getWorkDir(userId);
   }
 
-  setWorkDirForThread(userId: string, threadId: string, workDir: string, rootMessageId?: string): string {
+  async setWorkDirForThread(userId: string, threadId: string, workDir: string, rootMessageId?: string): Promise<string> {
     let thread = this.sessions.get(userId)?.threads?.[threadId];
     if (!thread) {
       // 话题会话尚未创建（如首条消息就是 /cd），自动初始化
@@ -213,17 +215,19 @@ export class SessionManager {
     if (!existsSync(resolved)) {
       throw new Error(`目录不存在: ${resolved}`);
     }
+    // 解析符号链接获取真实路径，防止路径遍历攻击
+    const realPath = await realpath(resolved);
     const allowed = this.allowedBaseDirs.some(
-      (base) => resolved === base || resolved.startsWith(base + '/')
+      (base) => realPath === base || realPath.startsWith(base + '/')
     );
     if (!allowed) {
-      throw new Error(`目录不在允许范围内: ${resolved}\n允许的目录: ${this.allowedBaseDirs.join(', ')}`);
+      throw new Error(`目录不在允许范围内: ${realPath}\n允许的目录: ${this.allowedBaseDirs.join(', ')}`);
     }
-    thread.workDir = resolved;
+    thread.workDir = realPath;
     thread.sessionId = undefined; // 切换目录重置会话
     this.flushSync();
-    log.info(`Thread ${threadId} workDir changed for user ${userId}: ${resolved}`);
-    return resolved;
+    log.info(`Thread ${threadId} workDir changed for user ${userId}: ${realPath}`);
+    return realPath;
   }
 
   newThreadSession(userId: string, threadId: string): boolean {

@@ -182,6 +182,32 @@ vi.mock('../../../src/commands/handler.js', () => {
       this.handleAllowAll = vi.fn().mockResolvedValue(true);
       this.handlePending = vi.fn().mockResolvedValue(true);
       this.handleThreads = vi.fn().mockResolvedValue(true);
+
+      // dispatch 委托给各个 handler mock
+      this.dispatch = vi.fn(async (text: string, chatId: string, userId: string, platform: string, _handleClaudeRequest: any, threadCtx?: any) => {
+        const t = text.trim();
+        if (platform === 'telegram' && t === '/start') { await deps.sender.sendTextReply(chatId, '欢迎使用 Claude Code Bot!'); return true; }
+        if (t === '/help') return this.handleHelp(chatId, platform, threadCtx);
+        if (t === '/new') return this.handleNew(chatId, userId, threadCtx);
+        if (t === '/pwd') return this.handlePwd(chatId, userId, threadCtx);
+        if (t === '/list') return this.handleList(chatId, userId, threadCtx);
+        if (t === '/cost') return this.handleCost(chatId, userId, threadCtx);
+        if (t === '/status') return this.handleStatus(chatId, userId, threadCtx);
+        if (t === '/doctor') return this.handleDoctor(chatId, userId, threadCtx);
+        if (t === '/todos') return this.handleTodos(chatId, userId, _handleClaudeRequest, threadCtx);
+        if (t === '/allow' || t === '/y') return this.handleAllow(chatId, threadCtx);
+        if (t === '/deny' || t === '/n') return this.handleDeny(chatId, threadCtx);
+        if (t === '/allowall') return this.handleAllowAll(chatId, threadCtx);
+        if (t === '/pending') return this.handlePending(chatId, threadCtx);
+        if (t === '/threads' && platform === 'feishu') return this.handleThreads(chatId, userId, threadCtx);
+        if (t === '/cd' || t.startsWith('/cd ')) return this.handleCd(chatId, userId, t.slice(3), threadCtx);
+        if (t === '/model' || t.startsWith('/model ')) return this.handleModel(chatId, t.slice(6), threadCtx);
+        if (t === '/compact' || t.startsWith('/compact ')) return this.handleCompact(chatId, userId, t.slice(8), _handleClaudeRequest, threadCtx);
+        const cmd = t.split(/\s+/)[0];
+        const { TERMINAL_ONLY_COMMANDS } = await import('../../../src/constants.js');
+        if (TERMINAL_ONLY_COMMANDS.has(cmd)) { await deps.sender.sendTextReply(chatId, `${cmd} 命令仅在终端交互模式下可用。\n\n输入 /help 查看可用命令。`, threadCtx); return true; }
+        return false;
+      });
     }),
   };
 });

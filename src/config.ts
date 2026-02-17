@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { readFileSync, accessSync, constants } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, accessSync, constants } from 'node:fs';
 import { join } from 'node:path';
 import { createLogger } from './logger.js';
 import { APP_HOME } from './constants.js';
@@ -35,6 +35,7 @@ interface FileConfig {
   allowedBaseDirs?: string[];
   claudeSkipPermissions?: boolean;
   claudeTimeoutMs?: number;
+  claudeModel?: string;
   logDir?: string;
 }
 
@@ -158,7 +159,33 @@ export function loadConfig(): Config {
     allowedBaseDirs,
     claudeSkipPermissions,
     claudeTimeoutMs,
+    claudeModel: file.claudeModel,
     hookPort,
     logDir,
   };
+}
+
+/**
+ * 将运行时可变配置（如 claudeModel）持久化到配置文件
+ */
+export function saveRuntimeConfig(config: Config): void {
+  const configPath = join(APP_HOME, 'config.json');
+  try {
+    let existing: Record<string, unknown> = {};
+    try {
+      existing = JSON.parse(readFileSync(configPath, 'utf-8'));
+    } catch {
+      // 文件不存在或格式错误，从空对象开始
+    }
+    if (config.claudeModel) {
+      existing.claudeModel = config.claudeModel;
+    } else {
+      delete existing.claudeModel;
+    }
+    mkdirSync(APP_HOME, { recursive: true });
+    writeFileSync(configPath, JSON.stringify(existing, null, 2) + '\n', 'utf-8');
+    logger.debug('Runtime config saved');
+  } catch (err) {
+    logger.warn('Failed to save runtime config:', err);
+  }
 }

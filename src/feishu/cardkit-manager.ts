@@ -1,5 +1,6 @@
 import { getClient } from './client.js';
 import { createLogger } from '../logger.js';
+import { safeStringify } from '../shared/utils.js';
 
 const log = createLogger('CardKit');
 
@@ -8,9 +9,25 @@ interface CardSession {
   sequence: number;
   streamingEnabled: boolean;
   completed: boolean;
+  createdAt: number;
 }
 
 const sessions = new Map<string, CardSession>();
+
+// 自动清理过期会话（1小时）
+const SESSION_TTL_MS = 60 * 60 * 1000;
+const CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+
+const cleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [id, s] of sessions) {
+    if (now - s.createdAt > SESSION_TTL_MS) {
+      sessions.delete(id);
+      log.info(`Auto-cleaned expired card session: ${id}`);
+    }
+  }
+}, CLEANUP_INTERVAL_MS);
+cleanupTimer.unref();
 
 function nextSeq(cardId: string): number {
   const s = sessions.get(cardId);
@@ -30,11 +47,11 @@ export async function createCard(cardJson: string): Promise<string> {
 
   const cardId = res.data?.card_id;
   if (!cardId) {
-    log.error('card.create response:', JSON.stringify(res, null, 2));
+    log.error('card.create response:', safeStringify(res, 2));
     throw new Error(`card.create returned no card_id (code=${res.code}, msg=${res.msg})`);
   }
 
-  sessions.set(cardId, { cardId, sequence: 0, streamingEnabled: false, completed: false });
+  sessions.set(cardId, { cardId, sequence: 0, streamingEnabled: false, completed: false, createdAt: Date.now() });
   log.debug(`Card created: ${cardId}`);
   return cardId;
 }

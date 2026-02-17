@@ -1,8 +1,8 @@
 import { loadConfig } from './config.js';
 import { initFeishu, stopFeishu } from './feishu/client.js';
 import { initTelegram, stopTelegram } from './telegram/client.js';
-import { createEventDispatcher } from './feishu/event-handler.js';
-import { setupTelegramHandlers } from './telegram/event-handler.js';
+import { createEventDispatcher, getRunningTaskCount as getFeishuTaskCount } from './feishu/event-handler.js';
+import { setupTelegramHandlers, getRunningTaskCount as getTelegramTaskCount } from './telegram/event-handler.js';
 import { startPermissionServer } from './hook/permission-server.js';
 import { initLogger, createLogger, closeLogger } from './logger.js';
 
@@ -105,23 +105,43 @@ export async function main() {
   log.info(`Service is running with ${activeBots.join(' + ')}. Press Ctrl+C to stop.`);
 
   // Graceful shutdown
-  const shutdown = () => {
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     log.info('Shutting down...');
 
+    // 停止接受新消息
     if (config.enabledPlatforms.includes('telegram')) {
       stopTelegram();
     }
-
     if (config.enabledPlatforms.includes('feishu')) {
       stopFeishu();
+    }
+
+    // 等待运行中的任务完成（最多 30 秒）
+    const maxWait = 30_000;
+    const start = Date.now();
+    const getTotalTasks = () => getFeishuTaskCount() + getTelegramTaskCount();
+    let remaining = getTotalTasks();
+    if (remaining > 0) {
+      log.info(`Waiting for ${remaining} running task(s) to complete...`);
+      while (remaining > 0 && Date.now() - start < maxWait) {
+        await new Promise((r) => setTimeout(r, 500));
+        remaining = getTotalTasks();
+      }
+      if (remaining > 0) {
+        log.warn(`${remaining} task(s) still running after ${maxWait / 1000}s, forcing shutdown`);
+      }
     }
 
     closeLogger();
     process.exit(0);
   };
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  const onSignal = () => { shutdown().catch(() => process.exit(1)); };
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
 }
 
 // Run directly when executed as main module

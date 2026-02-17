@@ -78,3 +78,14 @@ export function trackCost(userCosts: Map<string, CostRecord>, userId: string, co
   record.requestCount += 1;
   userCosts.set(userId, record);
 }
+
+/**
+ * 安全的 JSON 序列化，防止循环引用导致异常
+ */
+export function safeStringify(obj: unknown, indent?: number): string {
+  try {
+    return JSON.stringify(obj, null, indent);
+  } catch {
+    return '[unserializable]';
+  }
+}

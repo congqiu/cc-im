@@ -1,7 +1,9 @@
 import type { Config } from '../config.js';
+import { saveRuntimeConfig } from '../config.js';
 import type { SessionManager } from '../session/session-manager.js';
 import type { RequestQueue } from '../queue/request-queue.js';
 import { resolveLatestPermission, getPendingCount, listPending } from '../hook/permission-server.js';
+import { TERMINAL_ONLY_COMMANDS } from '../constants.js';
 import { readFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
@@ -54,6 +56,67 @@ export class CommandHandler {
    */
   updateRunningTasksSize(size: number): void {
     this.deps.runningTasksSize = size;
+  }
+
+  /**
+   * 统一命令分发：识别并处理所有命令，返回 true 表示已处理
+   */
+  async dispatch(
+    text: string,
+    chatId: string,
+    userId: string,
+    platform: 'feishu' | 'telegram',
+    handleClaudeRequest: ClaudeRequestHandler,
+    threadCtx?: ThreadContext,
+  ): Promise<boolean> {
+    const trimmed = text.trim();
+
+    // 平台特有命令
+    if (platform === 'telegram' && trimmed === '/start') {
+      await this.deps.sender.sendTextReply(chatId, '欢迎使用 Claude Code Bot!\n\n发送消息与 Claude Code 交互，输入 /help 查看帮助。');
+      return true;
+    }
+    if (platform === 'feishu' && trimmed === '/threads') {
+      return this.handleThreads(chatId, userId, threadCtx);
+    }
+
+    // 无参数命令
+    if (trimmed === '/help') return this.handleHelp(chatId, platform, threadCtx);
+    if (trimmed === '/new') return this.handleNew(chatId, userId, threadCtx);
+    if (trimmed === '/pwd') return this.handlePwd(chatId, userId, threadCtx);
+    if (trimmed === '/list') return this.handleList(chatId, userId, threadCtx);
+    if (trimmed === '/cost') return this.handleCost(chatId, userId, threadCtx);
+    if (trimmed === '/status') return this.handleStatus(chatId, userId, threadCtx);
+    if (trimmed === '/doctor') return this.handleDoctor(chatId, userId, threadCtx);
+    if (trimmed === '/todos') return this.handleTodos(chatId, userId, handleClaudeRequest, threadCtx);
+    if (trimmed === '/allow' || trimmed === '/y') return this.handleAllow(chatId, threadCtx);
+    if (trimmed === '/deny' || trimmed === '/n') return this.handleDeny(chatId, threadCtx);
+    if (trimmed === '/allowall') return this.handleAllowAll(chatId, threadCtx);
+    if (trimmed === '/pending') return this.handlePending(chatId, threadCtx);
+
+    // 带可选参数的命令
+    if (trimmed === '/cd' || trimmed.startsWith('/cd ')) {
+      return this.handleCd(chatId, userId, trimmed.slice(3).trim(), threadCtx);
+    }
+    if (trimmed === '/model' || trimmed.startsWith('/model ')) {
+      return this.handleModel(chatId, trimmed.slice(6).trim(), threadCtx);
+    }
+    if (trimmed === '/compact' || trimmed.startsWith('/compact ')) {
+      return this.handleCompact(chatId, userId, trimmed.slice(8).trim(), handleClaudeRequest, threadCtx);
+    }
+
+    // 仅终端可用的命令
+    const cmdName = trimmed.split(/\s+/)[0];
+    if (TERMINAL_ONLY_COMMANDS.has(cmdName)) {
+      await this.deps.sender.sendTextReply(
+        chatId,
+        `${cmdName} 命令仅在终端交互模式下可用。\n\n输入 /help 查看可用命令。`,
+        threadCtx,
+      );
+      return true;
+    }
+
+    return false;
   }
 
   /**
@@ -124,8 +187,8 @@ export class CommandHandler {
     }
     try {
       const resolved = threadCtx
-        ? this.deps.sessionManager.setWorkDirForThread(userId, threadCtx.threadId, dir, threadCtx.rootMessageId)
-        : this.deps.sessionManager.setWorkDir(userId, dir);
+        ? await this.deps.sessionManager.setWorkDirForThread(userId, threadCtx.threadId, dir, threadCtx.rootMessageId)
+        : await this.deps.sessionManager.setWorkDir(userId, dir);
       await this.deps.sender.sendTextReply(chatId, `工作目录已切换到: ${resolved}\n会话已重置。`, threadCtx);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -242,6 +305,7 @@ export class CommandHandler {
         return true;
       }
       this.deps.config.claudeModel = modelArg;
+      saveRuntimeConfig(this.deps.config);
       await this.deps.sender.sendTextReply(chatId, `模型已切换为: ${modelArg}\n后续对话将使用此模型。`, threadCtx);
     }
     return true;

@@ -9,7 +9,7 @@ import { sendThinkingMessage, updateMessage, sendFinalMessages, sendTextReply, s
 import { registerPermissionSender } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord, type CommandHandlerDeps } from '../commands/handler.js';
 import { trackCost, formatToolStats } from '../shared/utils.js';
-import { TERMINAL_ONLY_COMMANDS, DEDUP_TTL_MS, THROTTLE_MS } from '../constants.js';
+import { DEDUP_TTL_MS, THROTTLE_MS } from '../constants.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('TgHandler');
@@ -20,8 +20,30 @@ interface TaskInfo {
   handle: ClaudeRunHandle;
   latestContent: string;
   settle: () => void;
+  startedAt: number;
 }
 const runningTasks = new Map<string, TaskInfo>();
+
+// 定期清理超时任务（30分钟超时，每10分钟检查一次）
+const TASK_TIMEOUT_MS = 30 * 60 * 1000;
+const TASK_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+
+const taskCleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [key, task] of runningTasks) {
+    if (now - task.startedAt > TASK_TIMEOUT_MS) {
+      log.warn(`Auto-cleaning timeout task: ${key}`);
+      task.handle.abort();
+      task.settle();
+      runningTasks.delete(key);
+    }
+  }
+}, TASK_CLEANUP_INTERVAL_MS);
+taskCleanupTimer.unref();
+
+export function getRunningTaskCount(): number {
+  return runningTasks.size;
+}
 
 export function setupTelegramHandlers(bot: Telegraf, config: Config) {
   const accessControl = new AccessControl(config.allowedUserIds);
@@ -114,109 +136,8 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
     // Update runningTasksSize for CommandHandler
     commandHandler.updateRunningTasksSize(runningTasks.size);
 
-    // Handle /start
-    if (text === '/start') {
-      await sendTextReply(chatId, '欢迎使用 Claude Code Bot!\n\n发送消息与 Claude Code 交互，输入 /help 查看帮助。');
-      return;
-    }
-
-    // Handle /help
-    if (text === '/help') {
-      await commandHandler.handleHelp(chatId, 'telegram');
-      return;
-    }
-
-    // Handle /new
-    if (text === '/new') {
-      await commandHandler.handleNew(chatId, userId);
-      return;
-    }
-
-    // Handle /cd
-    if (text.startsWith('/cd ') || text === '/cd') {
-      const args = text.slice(3);
-      await commandHandler.handleCd(chatId, userId, args);
-      return;
-    }
-
-    // Handle /pwd
-    if (text === '/pwd') {
-      await commandHandler.handlePwd(chatId, userId);
-      return;
-    }
-
-    // Handle /list
-    if (text === '/list') {
-      await commandHandler.handleList(chatId, userId);
-      return;
-    }
-
-    // Handle /cost
-    if (text === '/cost') {
-      await commandHandler.handleCost(chatId, userId);
-      return;
-    }
-
-    // Handle /status
-    if (text === '/status') {
-      await commandHandler.handleStatus(chatId, userId);
-      return;
-    }
-
-    // Handle /model
-    if (text === '/model' || text.startsWith('/model ')) {
-      const args = text.slice(6);
-      await commandHandler.handleModel(chatId, args);
-      return;
-    }
-
-    // Handle /doctor
-    if (text === '/doctor') {
-      await commandHandler.handleDoctor(chatId, userId);
-      return;
-    }
-
-    // Handle /compact
-    if (text === '/compact' || text.startsWith('/compact ')) {
-      const args = text.slice(8);
-      await commandHandler.handleCompact(chatId, userId, args, handleClaudeRequest);
-      return;
-    }
-
-    // Handle /todos
-    if (text === '/todos') {
-      await commandHandler.handleTodos(chatId, userId, handleClaudeRequest);
-      return;
-    }
-
-    // Handle /allow, /y
-    if (text === '/allow' || text === '/y') {
-      await commandHandler.handleAllow(chatId);
-      return;
-    }
-
-    // Handle /deny, /n
-    if (text === '/deny' || text === '/n') {
-      await commandHandler.handleDeny(chatId);
-      return;
-    }
-
-    // Handle /allowall
-    if (text === '/allowall') {
-      await commandHandler.handleAllowAll(chatId);
-      return;
-    }
-
-    // Handle /pending
-    if (text === '/pending') {
-      await commandHandler.handlePending(chatId);
-      return;
-    }
-
-    // Handle terminal-only commands
-    const cmdName = text.split(/\s+/)[0];
-    if (TERMINAL_ONLY_COMMANDS.has(cmdName)) {
-      await sendTextReply(chatId, `${cmdName} 命令仅在终端交互模式下可用。\n\n输入 /help 查看可用命令。`);
+    // 统一命令分发
+    if (await commandHandler.dispatch(text, chatId, userId, 'telegram', handleClaudeRequest)) {
       return;
     }
 
@@ -375,7 +296,7 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
         platform: 'telegram',
       });
 
-      runningTasks.set(taskKey, { handle, latestContent: '', settle });
+      runningTasks.set(taskKey, { handle, latestContent: '', settle, startedAt: Date.now() });
     });
   }
 }
