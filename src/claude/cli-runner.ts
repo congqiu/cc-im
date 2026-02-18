@@ -1,11 +1,12 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { parseStreamLine, extractTextDelta, extractThinkingDelta, extractToolUse, extractResult, type ParsedResult } from './stream-parser.js';
-import { isStreamInit } from './types.js';
+import { parseStreamLine, extractTextDelta, extractThinkingDelta, extractResult, type ParsedResult } from './stream-parser.js';
+import { isStreamInit, isContentBlockStart, isContentBlockDelta, isContentBlockStop } from './types.js';
 
 export interface ClaudeRunCallbacks {
   onText: (accumulated: string) => void;
   onThinking?: (accumulated: string) => void;
+  onToolUse?: (toolName: string, toolInput?: Record<string, unknown>) => void;
   onComplete: (result: ParsedResult) => void;
   onError: (error: string) => void;
   onSessionId?: (sessionId: string) => void;
@@ -74,6 +75,7 @@ export function runClaude(
   let model = '';
   let toolStats: Record<string, number> = {};
   let timeoutHandle: NodeJS.Timeout | null = null;
+  const pendingToolInputs = new Map<number, { name: string; json: string }>();
 
   // 设置超时
   if (options?.timeoutMs && options.timeoutMs > 0) {
@@ -110,9 +112,27 @@ export function runClaude(
       return;
     }
 
-    const toolName = extractToolUse(event);
-    if (toolName) {
-      toolStats[toolName] = (toolStats[toolName] || 0) + 1;
+    if (isContentBlockStart(event) && event.event.content_block.type === 'tool_use') {
+      const { name } = event.event.content_block;
+      if (name) pendingToolInputs.set(event.event.index, { name, json: '' });
+      return;
+    }
+
+    if (isContentBlockDelta(event) && event.event.delta.type === 'input_json_delta') {
+      const pending = pendingToolInputs.get(event.event.index);
+      if (pending) pending.json += event.event.delta.partial_json ?? '';
+      return;
+    }
+
+    if (isContentBlockStop(event)) {
+      const pending = pendingToolInputs.get(event.event.index);
+      if (pending) {
+        toolStats[pending.name] = (toolStats[pending.name] || 0) + 1;
+        let input: Record<string, unknown> | undefined;
+        try { input = JSON.parse(pending.json); } catch { /* empty input */ }
+        callbacks.onToolUse?.(pending.name, input);
+        pendingToolInputs.delete(event.event.index);
+      }
       return;
     }
 

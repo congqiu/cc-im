@@ -109,9 +109,11 @@ export async function sendThinkingCard(chatId: string, threadCtx?: ThreadContext
   return { messageId, cardId };
 }
 
-export async function streamContentUpdate(cardId: string, content: string): Promise<void> {
+export async function streamContentUpdate(cardId: string, content: string, note?: string): Promise<void> {
   const truncated = truncateForStreaming(content) || '...';
-  await cardkitStreamContent(cardId, 'main_content', truncated);
+  const updates: Promise<void>[] = [cardkitStreamContent(cardId, 'main_content', truncated)];
+  if (note) updates.push(cardkitStreamContent(cardId, 'note_area', note));
+  await Promise.all(updates);
 }
 
 export async function sendFinalCards(

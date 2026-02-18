@@ -101,7 +101,12 @@ vi.mock('../../../src/hook/permission-server.js', () => ({
   listPending: vi.fn(() => []),
 }));
 
+vi.mock('../../../src/shared/active-chats.js', () => ({
+  setActiveChatId: vi.fn(),
+}));
+
 vi.mock('../../../src/constants.js', () => ({
+  APP_HOME: '/tmp/cc-bot-test',
   TERMINAL_ONLY_COMMANDS: new Set([
     '/context', '/rewind', '/resume', '/copy', '/export',
     '/config', '/init', '/memory', '/permissions', '/theme',
@@ -426,10 +431,10 @@ describe('Event Handler', () => {
 
     const messageData = {
       message: {
-        message_id: 'msg-image',
+        message_id: 'msg-sticker',
         chat_id: 'chat-123',
         chat_type: 'p2p',
-        message_type: 'image',
+        message_type: 'sticker',
         content: '{}',
       },
       sender: {
@@ -441,7 +446,7 @@ describe('Event Handler', () => {
 
     expect(messageSender.sendTextReply).toHaveBeenCalledWith(
       'chat-123',
-      '目前仅支持文本消息。'
+      '目前仅支持文本和图片消息。'
     );
   });
 

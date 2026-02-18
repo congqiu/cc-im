@@ -1,4 +1,4 @@
-import { isContentBlockDelta, isContentBlockStart, isStreamResult, type StreamEvent } from './types.js';
+import { isContentBlockDelta, isStreamResult, type StreamEvent } from './types.js';
 
 export interface ParsedDelta {
   text: string;
@@ -39,13 +39,6 @@ export function extractTextDelta(event: StreamEvent): ParsedDelta | null {
 export function extractThinkingDelta(event: StreamEvent): ParsedDelta | null {
   if (isContentBlockDelta(event) && event.event.delta?.type === 'thinking_delta' && event.event.delta.thinking) {
     return { text: event.event.delta.thinking };
-  }
-  return null;
-}
-
-export function extractToolUse(event: StreamEvent): string | null {
-  if (isContentBlockStart(event) && event.event.content_block.type === 'tool_use' && event.event.content_block.name) {
-    return event.event.content_block.name;
   }
   return null;
 }

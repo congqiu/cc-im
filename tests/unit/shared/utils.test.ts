@@ -73,12 +73,12 @@ describe('formatToolStats', () => {
   });
 
   it('单个工具', () => {
-    expect(formatToolStats({ Read: 3 }, 2)).toBe('2 轮 3 次工具（Read×3）');
+    expect(formatToolStats({ Read: 3 }, 2)).toBe('2 轮 3 次工具（📖Read×3）');
   });
 
   it('多个工具按次数降序', () => {
     const result = formatToolStats({ Read: 2, Bash: 5, Edit: 1 }, 4);
-    expect(result).toBe('4 轮 8 次工具（Bash×5 Read×2 Edit×1）');
+    expect(result).toBe('4 轮 8 次工具（💻Bash×5 📖Read×2 📝Edit×1）');
   });
 });
 

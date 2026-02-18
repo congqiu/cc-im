@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 
 /**
  * 系统级常量定义
@@ -9,6 +9,8 @@ import { homedir } from 'node:os';
  * 应用数据根目录 ~/.cc-bot
  */
 export const APP_HOME = join(homedir(), '.cc-bot');
+
+export const IMAGE_DIR = join(tmpdir(), 'cc-bot-images');
 
 /**
  * 只读工具列表 - 这些工具不需要权限确认

@@ -1,16 +1,20 @@
+import { join } from 'node:path';
+import { mkdir } from 'node:fs/promises';
 import * as Lark from '@larksuiteoapi/node-sdk';
 import type { Config } from '../config.js';
 import { AccessControl } from '../access/access-control.js';
-import { SessionManager, type ThreadSession } from '../session/session-manager.js';
+import { SessionManager } from '../session/session-manager.js';
 import { RequestQueue } from '../queue/request-queue.js';
 import { runClaude, type ClaudeRunHandle } from '../claude/cli-runner.js';
 import { sendThinkingCard, streamContentUpdate, sendFinalCards, sendErrorCard, sendTextReply, sendPermissionCard, updatePermissionCard, fetchThreadDescription, type CardHandle, type ThreadContext } from './message-sender.js';
+import { getClient } from './client.js';
 import { buildCardV2 } from './card-builder.js';
 import { destroySession, updateCardFull, disableStreaming } from './cardkit-manager.js';
 import { registerPermissionSender } from '../hook/permission-server.js';
-import { CommandHandler, type CostRecord, type CommandHandlerDeps } from '../commands/handler.js';
-import { trackCost, formatToolStats, safeStringify } from '../shared/utils.js';
-import { DEDUP_TTL_MS, CARDKIT_THROTTLE_MS } from '../constants.js';
+import { CommandHandler, type CostRecord } from '../commands/handler.js';
+import { trackCost, formatToolStats, formatToolCallNotification, safeStringify } from '../shared/utils.js';
+import { DEDUP_TTL_MS, CARDKIT_THROTTLE_MS, IMAGE_DIR } from '../constants.js';
+import { setActiveChatId } from '../shared/active-chats.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('EventHandler');
@@ -75,8 +79,25 @@ const taskCleanupTimer = setInterval(() => {
 }, TASK_CLEANUP_INTERVAL_MS);
 taskCleanupTimer.unref();
 
+export function stopEventHandler(): void {
+  clearInterval(taskCleanupTimer);
+}
+
 export function getRunningTaskCount(): number {
   return runningTasks.size;
+}
+
+async function downloadFeishuImage(messageId: string, imageKey: string): Promise<string> {
+  await mkdir(IMAGE_DIR, { recursive: true });
+  const safeKey = imageKey.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const imagePath = join(IMAGE_DIR, `${Date.now()}-${safeKey}.png`);
+  const client = getClient();
+  const res = await client.im.v1.messageResource.get({
+    params: { type: 'image' },
+    path: { message_id: messageId, file_key: imageKey },
+  });
+  await res.writeFile(imagePath);
+  return imagePath;
 }
 
 export function createEventDispatcher(config: Config) {
@@ -231,6 +252,9 @@ export function createEventDispatcher(config: Config) {
 
       if (!senderId) return;
 
+      // 仅私聊时追踪活跃聊天（启动通知只发私聊）
+      if (!isGroup) setActiveChatId('feishu', chatId);
+
       // 群聊非话题消息：要求 @机器人 才响应
       if (isGroup && !threadId) {
         const mentions: Array<{ key: string; id: { open_id?: string }; name: string }> | undefined = message.mentions;
@@ -246,42 +270,64 @@ export function createEventDispatcher(config: Config) {
         return;
       }
 
-      // Parse message content
-      const msgType = message.message_type;
-      if (msgType !== 'text') {
-        // 话题内的非文本消息（如创建话题的系统消息）直接忽略，不回复
-        if (threadId) {
-          return;
-        }
-        await sendTextReply(chatId, '目前仅支持文本消息。');
-        return;
-      }
-
-      let text: string;
-      try {
-        text = JSON.parse(message.content).text;
-      } catch {
-        return;
-      }
-
-      // 去掉飞书 @ 占位符（如 @_user_1）
-      text = text.replace(/@_user_\d+/g, '').trim();
-
-      if (!text?.trim()) return;
-
-      log.info(`User ${senderId}: ${text.slice(0, 100)}${text.length > 100 ? '...' : ''}`);
-
-      // Update runningTasksSize for CommandHandler
-      commandHandler.updateRunningTasksSize(runningTasks.size);
-
       // 构造 threadCtx（如果在话题中）
       let threadCtx: ThreadContext | undefined;
       if (isGroup && threadId && rootId) {
         threadCtx = { rootMessageId: rootId, threadId };
       }
 
-      // 统一命令分发
-      if (await commandHandler.dispatch(text, chatId, senderId, 'feishu', handleClaudeRequest, threadCtx)) {
+      // Parse message content
+      const msgType = message.message_type;
+      if (msgType !== 'text' && msgType !== 'image') {
+        // 话题内的非文本消息（如创建话题的系统消息）直接忽略，不回复
+        if (threadId) {
+          return;
+        }
+        await sendTextReply(chatId, '目前仅支持文本和图片消息。');
+        return;
+      }
+
+      let text: string;
+      let isImageMessage = false;
+      if (msgType === 'image') {
+        // 下载图片并构造 prompt
+        let imageKey: string;
+        try {
+          imageKey = JSON.parse(message.content).image_key;
+        } catch {
+          return;
+        }
+        if (!imageKey) return;
+
+        try {
+          const imagePath = await downloadFeishuImage(message.message_id, imageKey);
+          text = `用户发送了一张图片，已保存到 ${imagePath}。请用 Read 工具查看并分析图片内容。`;
+          isImageMessage = true;
+        } catch (err) {
+          log.error('Failed to download image:', err);
+          await sendTextReply(chatId, '图片下载失败，请重试。', threadCtx);
+          return;
+        }
+      } else {
+        try {
+          text = JSON.parse(message.content).text;
+        } catch {
+          return;
+        }
+
+        // 去掉飞书 @ 占位符（如 @_user_1）
+        text = text.replace(/@_user_\d+/g, '').trim();
+
+        if (!text?.trim()) return;
+      }
+
+      log.info(`User ${senderId}${isImageMessage ? ' [image]' : ''}: ${text.slice(0, 100)}${text.length > 100 ? '...' : ''}`);
+
+      // Update runningTasksSize for CommandHandler
+      commandHandler.updateRunningTasksSize(runningTasks.size);
+
+      // 统一命令分发（图片消息不走命令分发）
+      if (!isImageMessage && await commandHandler.dispatch(text, chatId, senderId, 'feishu', handleClaudeRequest, threadCtx)) {
         return;
       }
 
@@ -418,6 +464,7 @@ async function handleClaudeRequest(
     let settled = false;
     let firstContentLogged = false;
     let wasThinking = false;
+    let toolLines: string[] = [];
     const startTime = Date.now();
     const taskKey = `${userId}:${cardId}`;
 
@@ -455,12 +502,12 @@ async function handleClaudeRequest(
           clearTimeout(pendingUpdate);
           pendingUpdate = null;
         }
-        streamContentUpdate(cardId, latestContent).catch((e) => log.warn('Stream update failed:', e?.message ?? e));
+        streamContentUpdate(cardId, latestContent, toolLines.slice(-3).join('\n') || undefined).catch((e) => log.warn('Stream update failed:', e?.message ?? e));
       } else if (!pendingUpdate) {
         pendingUpdate = setTimeout(() => {
           pendingUpdate = null;
           lastUpdateTime = Date.now();
-          streamContentUpdate(cardId, latestContent).catch((e) => log.warn('Stream update failed:', e?.message ?? e));
+          streamContentUpdate(cardId, latestContent, toolLines.slice(-3).join('\n') || undefined).catch((e) => log.warn('Stream update failed:', e?.message ?? e));
         }, CARDKIT_THROTTLE_MS - elapsed);
       }
     };
@@ -508,6 +555,12 @@ async function handleClaudeRequest(
           return;
         }
         throttledUpdate(accumulated);
+      },
+      onToolUse: (toolName, toolInput) => {
+        const notification = formatToolCallNotification(toolName, toolInput);
+        toolLines.push(notification);
+        // 保留最近 5 条工具调用通知
+        if (toolLines.length > 5) toolLines = toolLines.slice(-5);
       },
       onComplete: async (result) => {
         if (settled) return;

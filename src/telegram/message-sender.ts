@@ -8,6 +8,7 @@ const MAX_MESSAGE_LENGTH = 4000; // Telegram limit is 4096, leave room for forma
 const MAX_RETRIES = 3;
 const RATE_LIMIT_MAX_WAIT_SEC = 60; // Cap retry wait time to avoid excessive blocking
 const COOLDOWN_CLEANUP_INTERVAL_MS = 3600000; // Clean up cooldown map every hour
+const TYPING_INTERVAL_MS = 4000; // Telegram typing status expires after ~5s
 
 // Per-chat rate limit cooldown tracking
 const chatCooldownUntil = new Map<string, number>();
@@ -216,6 +217,29 @@ export async function sendTextReply(chatId: string, text: string) {
   } catch (err) {
     log.error('Failed to send text reply:', err);
   }
+}
+
+/**
+ * 开始持续发送 typing 状态，返回停止函数
+ */
+export function startTypingLoop(chatId: string): () => void {
+  const bot = getBot();
+  const numericChatId = Number(chatId);
+  let stopped = false;
+
+  const sendTyping = () => {
+    if (stopped) return;
+    bot.telegram.sendChatAction(numericChatId, 'typing').catch(() => {});
+  };
+
+  // 立即发送一次
+  sendTyping();
+  const timer = setInterval(sendTyping, TYPING_INTERVAL_MS);
+
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
 }
 
 export async function sendPermissionMessage(

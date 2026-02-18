@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { readFileSync, writeFileSync, mkdirSync, accessSync, constants } from 'node:fs';
-import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { join, isAbsolute } from 'node:path';
 import { createLogger } from './logger.js';
 import { APP_HOME } from './constants.js';
 
@@ -129,16 +130,32 @@ export function loadConfig(): Config {
       : file.claudeTimeoutMs ?? 300000;
 
   // 验证 Claude CLI 路径
-  try {
-    accessSync(claudeCliPath, constants.F_OK | constants.X_OK);
-  } catch (err) {
-    throw new Error(
-      `Claude CLI 不可访问或不可执行: ${claudeCliPath}\n` +
-      `请检查：\n` +
-      `  1. 文件是否存在\n` +
-      `  2. 是否有执行权限\n` +
-      `  3. CLAUDE_CLI_PATH 环境变量或 ${APP_HOME} 配置是否正确`
-    );
+  if (isAbsolute(claudeCliPath) || claudeCliPath.includes('/')) {
+    // 绝对路径或包含目录分隔符：直接用 accessSync 验证
+    try {
+      accessSync(claudeCliPath, constants.F_OK | constants.X_OK);
+    } catch (err) {
+      throw new Error(
+        `Claude CLI 不可访问或不可执行: ${claudeCliPath}\n` +
+        `请检查：\n` +
+        `  1. 文件是否存在\n` +
+        `  2. 是否有执行权限\n` +
+        `  3. CLAUDE_CLI_PATH 环境变量或 ${APP_HOME} 配置是否正确`
+      );
+    }
+  } else {
+    // 裸命令名（如 "claude"）：在 PATH 中查找
+    try {
+      execFileSync('which', [claudeCliPath], { stdio: 'pipe' });
+    } catch (err) {
+      throw new Error(
+        `Claude CLI 在 PATH 中未找到: ${claudeCliPath}\n` +
+        `请检查：\n` +
+        `  1. 是否已安装 Claude CLI\n` +
+        `  2. 命令是否在 PATH 环境变量中\n` +
+        `  3. 或通过 CLAUDE_CLI_PATH 指定完整路径`
+      );
+    }
   }
 
   const hookPort =

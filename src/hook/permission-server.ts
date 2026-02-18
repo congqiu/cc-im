@@ -113,10 +113,37 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
   if (req.method === 'POST' && url.pathname === '/permission-request') {
     try {
       const body = JSON.parse(await readBody(req));
+
+      // 运行时类型验证
+      if (typeof body !== 'object' || body === null) {
+        sendJson(res, 400, { error: 'Request body must be a JSON object' });
+        return;
+      }
+
       const { chatId, toolName, toolInput, threadRootMsgId, threadId, platform } = body;
 
-      if (!chatId || !toolName) {
-        sendJson(res, 400, { error: 'chatId and toolName are required' });
+      if (typeof chatId !== 'string' || !chatId) {
+        sendJson(res, 400, { error: 'chatId must be a non-empty string' });
+        return;
+      }
+      if (typeof toolName !== 'string' || !toolName) {
+        sendJson(res, 400, { error: 'toolName must be a non-empty string' });
+        return;
+      }
+      if (toolInput !== undefined && (typeof toolInput !== 'object' || toolInput === null)) {
+        sendJson(res, 400, { error: 'toolInput must be an object if provided' });
+        return;
+      }
+      if (platform !== undefined && typeof platform !== 'string') {
+        sendJson(res, 400, { error: 'platform must be a string if provided' });
+        return;
+      }
+      if (threadRootMsgId !== undefined && typeof threadRootMsgId !== 'string') {
+        sendJson(res, 400, { error: 'threadRootMsgId must be a string if provided' });
+        return;
+      }
+      if (threadId !== undefined && typeof threadId !== 'string') {
+        sendJson(res, 400, { error: 'threadId must be a string if provided' });
         return;
       }
 

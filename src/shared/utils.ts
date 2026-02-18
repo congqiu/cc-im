@@ -2,7 +2,33 @@
  * 共享工具函数
  */
 
+import { readdir, stat, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { CostRecord } from './types.js';
+import { IMAGE_DIR } from '../constants.js';
+
+/**
+ * 工具 emoji 映射
+ */
+const TOOL_EMOJIS: Record<string, string> = {
+  Read: '📖',
+  Write: '✏️',
+  Edit: '📝',
+  Bash: '💻',
+  Glob: '🔍',
+  Grep: '🔎',
+  WebFetch: '🌐',
+  WebSearch: '🔎',
+  Task: '📋',
+  TodoRead: '📌',
+  TodoWrite: '✅',
+  AskUserQuestion: '❓',
+  NotebookEdit: '📓',
+};
+
+function getToolEmoji(toolName: string): string {
+  return TOOL_EMOJIS[toolName] ?? '🔧';
+}
 
 /**
  * 分割长内容为多个片段
@@ -62,10 +88,39 @@ export function formatToolStats(toolStats: Record<string, number>, numTurns: num
 
   const parts = Object.entries(toolStats)
     .sort((a, b) => b[1] - a[1])
-    .map(([name, count]) => `${name}×${count}`)
+    .map(([name, count]) => `${getToolEmoji(name)}${name}×${count}`)
     .join(' ');
 
   return `${numTurns} 轮 ${totalTools} 次工具（${parts}）`;
+}
+
+/**
+ * 格式化工具调用通知（用于流式显示）
+ */
+export function formatToolCallNotification(toolName: string, toolInput?: Record<string, unknown>): string {
+  const emoji = getToolEmoji(toolName);
+  let detail = '';
+
+  if (toolInput) {
+    if ((toolName === 'Read' || toolName === 'Write' || toolName === 'Edit') && toolInput.file_path) {
+      detail = ` → ${toolInput.file_path}`;
+    } else if (toolName === 'Bash' && toolInput.command) {
+      const cmd = String(toolInput.command);
+      detail = ` → ${cmd.length > 60 ? cmd.slice(0, 57) + '...' : cmd}`;
+    } else if ((toolName === 'Grep' || toolName === 'Glob') && toolInput.pattern) {
+      detail = ` → ${toolInput.pattern}`;
+    } else if (toolName === 'WebFetch' && toolInput.url) {
+      const url = String(toolInput.url);
+      detail = ` → ${url.length > 60 ? url.slice(0, 57) + '...' : url}`;
+    } else if (toolName === 'WebSearch' && toolInput.query) {
+      detail = ` → ${toolInput.query}`;
+    } else if (toolName === 'Task' && toolInput.description) {
+      const desc = String(toolInput.description);
+      detail = ` → ${desc.length > 40 ? desc.slice(0, 37) + '...' : desc}`;
+    }
+  }
+
+  return `${emoji} ${toolName}${detail}`;
 }
 
 /**
@@ -88,4 +143,28 @@ export function safeStringify(obj: unknown, indent?: number): string {
   } catch {
     return '[unserializable]';
   }
+}
+
+const IMAGE_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+
+/**
+ * 清理超过 1 小时的图片临时文件
+ */
+export async function cleanOldImages(): Promise<number> {
+  let cleaned = 0;
+  try {
+    const files = await readdir(IMAGE_DIR);
+    const now = Date.now();
+    await Promise.all(files.map(async (f) => {
+      const fp = join(IMAGE_DIR, f);
+      try {
+        const s = await stat(fp);
+        if (now - s.mtimeMs > IMAGE_MAX_AGE_MS) {
+          await unlink(fp);
+          cleaned++;
+        }
+      } catch { /* ignore per-file errors */ }
+    }));
+  } catch { /* dir may not exist */ }
+  return cleaned;
 }

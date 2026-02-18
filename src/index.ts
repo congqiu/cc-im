@@ -1,16 +1,35 @@
 import { loadConfig } from './config.js';
 import { initFeishu, stopFeishu } from './feishu/client.js';
 import { initTelegram, stopTelegram } from './telegram/client.js';
-import { createEventDispatcher, getRunningTaskCount as getFeishuTaskCount } from './feishu/event-handler.js';
-import { setupTelegramHandlers, getRunningTaskCount as getTelegramTaskCount } from './telegram/event-handler.js';
+import { createEventDispatcher, getRunningTaskCount as getFeishuTaskCount, stopEventHandler as stopFeishuEventHandler } from './feishu/event-handler.js';
+import { sendTextReply as feishuSendText } from './feishu/message-sender.js';
+import { setupTelegramHandlers, getRunningTaskCount as getTelegramTaskCount, stopTelegramEventHandler } from './telegram/event-handler.js';
+import { sendTextReply as telegramSendText } from './telegram/message-sender.js';
 import { startPermissionServer } from './hook/permission-server.js';
+import { loadActiveChats, getActiveChatId } from './shared/active-chats.js';
+import { cleanOldImages } from './shared/utils.js';
 import { initLogger, createLogger, closeLogger } from './logger.js';
 
 const log = createLogger('Main');
 
+async function sendLifecycleNotification(activeBots: string[], message: string) {
+  const tasks: Promise<void>[] = [];
+  for (const bot of activeBots) {
+    const platform = bot.toLowerCase() as 'feishu' | 'telegram';
+    const chatId = getActiveChatId(platform);
+    if (!chatId) continue;
+    const sender = platform === 'feishu' ? feishuSendText : telegramSendText;
+    tasks.push(sender(chatId, message).catch((err) => {
+      log.debug(`Failed to send ${bot} lifecycle notification:`, err);
+    }));
+  }
+  await Promise.allSettled(tasks);
+}
+
 export async function main() {
   const config = loadConfig();
   initLogger(config.logDir);
+  loadActiveChats();
   log.info('Starting cc-bot bridge service...');
   log.info(`Enabled platforms: ${config.enabledPlatforms.join(', ')}`);
   log.info(`Allowed users: ${config.allowedUserIds.length === 0 ? 'ALL (dev mode)' : config.allowedUserIds.length + ' users configured'}`);
@@ -104,6 +123,22 @@ export async function main() {
 
   log.info(`Service is running with ${activeBots.join(' + ')}. Press Ctrl+C to stop.`);
 
+  // 发送启动通知
+  const startupMsg = [
+    '🟢 cc-bot 服务已启动',
+    '',
+    `平台: ${activeBots.join(' + ')}`,
+    `工作目录: ${config.claudeWorkDir}`,
+    `权限确认: ${config.claudeSkipPermissions ? '已跳过' : '已启用'}`,
+    config.claudeModel ? `模型: ${config.claudeModel}` : '',
+  ].filter(Boolean).join('\n');
+  sendLifecycleNotification(activeBots, startupMsg).catch(() => {});
+
+  const imageCleanupTimer = setInterval(() => {
+    cleanOldImages().then((n) => { if (n > 0) log.info(`Cleaned ${n} old image(s)`); }).catch(() => {});
+  }, 10 * 60 * 1000);
+  imageCleanupTimer.unref();
+
   // Graceful shutdown
   let shuttingDown = false;
   const shutdown = async () => {
@@ -111,11 +146,16 @@ export async function main() {
     shuttingDown = true;
     log.info('Shutting down...');
 
+    // 发送关闭通知
+    await sendLifecycleNotification(activeBots, '🔴 cc-bot 服务正在关闭...').catch(() => {});
+
     // 停止接受新消息
     if (config.enabledPlatforms.includes('telegram')) {
+      stopTelegramEventHandler();
       stopTelegram();
     }
     if (config.enabledPlatforms.includes('feishu')) {
+      stopFeishuEventHandler();
       stopFeishu();
     }
 

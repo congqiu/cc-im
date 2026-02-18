@@ -16,8 +16,14 @@ export interface StreamContentBlockDelta {
       type: string;
       text?: string;
       thinking?: string;
+      partial_json?: string;
     };
   };
+}
+
+export interface StreamContentBlockStop {
+  type: 'stream_event';
+  event: { type: 'content_block_stop'; index: number; };
 }
 
 export interface StreamAssistantMessage {
@@ -51,11 +57,12 @@ export interface StreamContentBlockStart {
       type: string;
       id?: string;
       name?: string;
+      input?: Record<string, unknown>;
     };
   };
 }
 
-export type StreamEvent = StreamInit | StreamContentBlockDelta | StreamContentBlockStart | StreamAssistantMessage | StreamResult | { type: string; [key: string]: unknown };
+export type StreamEvent = StreamInit | StreamContentBlockDelta | StreamContentBlockStart | StreamContentBlockStop | StreamAssistantMessage | StreamResult | { type: string; [key: string]: unknown };
 
 export function isStreamInit(event: StreamEvent): event is StreamInit {
   return event.type === 'system' && 'subtype' in event && event.subtype === 'init';
@@ -84,5 +91,16 @@ export function isContentBlockStart(event: StreamEvent): event is StreamContentB
     event.event !== null &&
     'type' in event.event &&
     event.event.type === 'content_block_start'
+  );
+}
+
+export function isContentBlockStop(event: StreamEvent): event is StreamContentBlockStop {
+  return (
+    event.type === 'stream_event' &&
+    'event' in event &&
+    typeof event.event === 'object' &&
+    event.event !== null &&
+    'type' in event.event &&
+    event.event.type === 'content_block_stop'
   );
 }
