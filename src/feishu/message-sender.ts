@@ -123,6 +123,7 @@ export async function sendFinalCards(
   fullContent: string,
   note: string,
   threadCtx?: ThreadContext,
+  thinking?: string,
 ): Promise<void> {
   const parts = splitLongContent(fullContent);
 
@@ -133,7 +134,7 @@ export async function sendFinalCards(
   await disableStreaming(cardId);
 
   // 更新原卡片为完成状态
-  const finalCard = buildCardV2({ content: parts[0], status: 'done', note });
+  const finalCard = buildCardV2({ content: parts[0], status: 'done', note, thinking });
   await updateCardFull(cardId, finalCard);
 
   // 溢出部分用新消息发送

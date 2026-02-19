@@ -8,6 +8,7 @@ interface CardOptions {
   content: string;
   status: CardStatus;
   note?: string;
+  thinking?: string;
 }
 
 const HEADER_TEMPLATES: Record<CardStatus, string> = {
@@ -138,24 +139,35 @@ export function truncateForStreaming(text: string): string {
 }
 
 export function buildCardV2Object(options: CardOptions, cardId?: string): Record<string, unknown> {
-  const { content, status, note } = options;
+  const { content, status, note, thinking } = options;
 
-  const elements: unknown[] = [
-    {
-      tag: 'markdown',
-      content: truncateForStreaming(content) || '...',
-      element_id: 'main_content',
-    },
-  ];
+  const elements: unknown[] = [];
 
-  if (note) {
+  // 完成状态下，如果有思考过程，添加折叠面板
+  if (status === 'done' && thinking) {
     elements.push({
-      tag: 'markdown',
-      content: note,
-      text_size: 'notation',
-      element_id: 'note_area',
+      tag: 'collapsible_panel',
+      expanded: false,
+      header: {
+        title: { tag: 'markdown', content: '💭 **思考过程**' },
+      },
+      border: { color: 'grey' },
+      elements: [{ tag: 'markdown', content: thinking }],
     });
   }
+
+  elements.push({
+    tag: 'markdown',
+    content: truncateForStreaming(content) || '...',
+    element_id: 'main_content',
+  });
+
+  elements.push({
+    tag: 'markdown',
+    content: note || '',
+    text_size: 'notation',
+    element_id: 'note_area',
+  });
 
   // 在处理中、思考中和流式输出状态时添加停止按钮
   if ((status === 'processing' || status === 'thinking' || status === 'streaming') && cardId) {

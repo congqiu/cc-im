@@ -464,6 +464,7 @@ async function handleClaudeRequest(
     let settled = false;
     let firstContentLogged = false;
     let wasThinking = false;
+    let thinkingText = '';
     let toolLines: string[] = [];
     const startTime = Date.now();
     const taskKey = `${userId}:${cardId}`;
@@ -528,6 +529,7 @@ async function handleClaudeRequest(
           log.debug(`First content (thinking) for user ${userId} after ${Date.now() - startTime}ms`);
         }
         wasThinking = true;
+        thinkingText = thinking;
         // 思考阶段也更新卡片，让用户看到 Claude 在想什么
         const display = `💭 **思考中...**\n\n${thinking}`;
         throttledUpdate(display);
@@ -585,7 +587,7 @@ async function handleClaudeRequest(
         // 优先使用流式累积的原始文本，避免 result.result 中的 HTML 实体编码
         const finalContent = result.accumulated || result.result || '(无输出)';
         try {
-          await sendFinalCards(chatId, messageId, cardId, finalContent, note, finalThreadCtx);
+          await sendFinalCards(chatId, messageId, cardId, finalContent, note, finalThreadCtx, thinkingText || undefined);
         } catch (err) {
           log.error('Failed to send final cards:', err);
         }

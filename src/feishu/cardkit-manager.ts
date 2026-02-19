@@ -136,8 +136,8 @@ export async function updateCardFull(cardId: string, cardJson: string): Promise<
   });
   const code = res?.code;
   if (code && code !== 0) {
-    // 200810: 用户正在交互，静默忽略
-    if (code === 200810) return;
+    // 200810: 用户正在交互；300317: sequence 冲突（并发更新）→ 静默忽略
+    if (code === 200810 || code === 300317) return;
     log.error(`updateCardFull failed: code=${code}, msg=${res.msg}`);
     throw new Error(`updateCardFull error: code=${code}, msg=${res.msg}`);
   }
