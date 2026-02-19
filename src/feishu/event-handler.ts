@@ -460,6 +460,7 @@ async function handleClaudeRequest(
   return new Promise<void>((resolve) => {
     let lastUpdateTime = 0;
     let pendingUpdate: ReturnType<typeof setTimeout> | null = null;
+    let waitingTimer: ReturnType<typeof setInterval> | null = null;
     let latestContent = '';
     let settled = false;
     let firstContentLogged = false;
@@ -470,11 +471,8 @@ async function handleClaudeRequest(
     const taskKey = `${userId}:${cardId}`;
 
     const cleanup = () => {
-      if (pendingUpdate) {
-        clearTimeout(pendingUpdate);
-        pendingUpdate = null;
-      }
-      // 从运行任务列表中移除
+      if (waitingTimer) { clearInterval(waitingTimer); waitingTimer = null; }
+      if (pendingUpdate) { clearTimeout(pendingUpdate); pendingUpdate = null; }
       runningTasks.delete(taskKey);
     };
 
@@ -561,8 +559,9 @@ async function handleClaudeRequest(
       onToolUse: (toolName, toolInput) => {
         const notification = formatToolCallNotification(toolName, toolInput);
         toolLines.push(notification);
-        // 保留最近 5 条工具调用通知
         if (toolLines.length > 5) toolLines = toolLines.slice(-5);
+        // 工具调用时立即更新卡片 note，避免工具执行期间卡片长时间静止
+        throttledUpdate(latestContent);
       },
       onComplete: async (result) => {
         if (settled) return;
@@ -617,5 +616,16 @@ async function handleClaudeRequest(
 
     // 将任务 handle 和 settle 函数存储到 Map 中，以便能够在用户点击停止按钮时中止
     runningTasks.set(taskKey, { handle, cardId, messageId, latestContent: '', settle, startedAt: Date.now() });
+
+    // 等待首次内容期间，每3秒更新卡片显示已等待时间
+    waitingTimer = setInterval(() => {
+      if (firstContentLogged || settled) {
+        clearInterval(waitingTimer!);
+        waitingTimer = null;
+        return;
+      }
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      streamContentUpdate(cardId, `等待 Claude 响应... (${elapsed}s)`).catch(() => {});
+    }, 3000);
   });
 }

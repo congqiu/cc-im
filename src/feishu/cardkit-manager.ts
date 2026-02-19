@@ -100,6 +100,7 @@ export async function streamContent(
   if (code === 200810) return;     // 用户正在交互
   if (code === 300317) return;     // sequence 冲突，下次会修正
   if (code === 200400) return;     // 限频，等下次节流重试
+  if (code === 200937) return;     // 更新过于频繁，等下次节流重试
 
   // 200850 / 300309: 流式超时或已关闭 → 重新启用后重试一次
   if (code === 200850 || code === 300309) {
