@@ -30,7 +30,7 @@ export async function main() {
   const config = loadConfig();
   initLogger(config.logDir);
   loadActiveChats();
-  log.info('Starting cc-bot bridge service...');
+  log.info('Starting cc-im bridge service...');
   log.info(`Enabled platforms: ${config.enabledPlatforms.join(', ')}`);
   log.info(`Allowed users: ${config.allowedUserIds.length === 0 ? 'ALL (dev mode)' : config.allowedUserIds.length + ' users configured'}`);
   log.info(`Claude CLI: ${config.claudeCliPath}`);
@@ -125,7 +125,7 @@ export async function main() {
 
   // 发送启动通知
   const startupMsg = [
-    '🟢 cc-bot 服务已启动',
+    '🟢 cc-im 服务已启动',
     '',
     `平台: ${activeBots.join(' + ')}`,
     `工作目录: ${config.claudeWorkDir}`,
@@ -147,7 +147,7 @@ export async function main() {
     log.info('Shutting down...');
 
     // 发送关闭通知
-    await sendLifecycleNotification(activeBots, '🔴 cc-bot 服务正在关闭...').catch(() => {});
+    await sendLifecycleNotification(activeBots, '🔴 cc-im 服务正在关闭...').catch(() => {});
 
     // 停止接受新消息
     if (config.enabledPlatforms.includes('telegram')) {

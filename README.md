@@ -1,4 +1,4 @@
-# cc-bot
+# cc-im
 
 多平台（飞书 & Telegram）机器人 ↔ Claude Code CLI 桥接服务。
 
@@ -25,7 +25,7 @@
 export FEISHU_APP_ID=your_app_id
 export FEISHU_APP_SECRET=your_app_secret
 export TELEGRAM_BOT_TOKEN=your_bot_token
-npx cc-bot
+npx cc-im
 ```
 
 服务会自动检测已配置的平台并启动对应的 bot。
@@ -38,7 +38,7 @@ npx cc-bot
 ```bash
 # 方式一：环境变量
 export TELEGRAM_BOT_TOKEN=your_bot_token
-npx cc-bot
+npx cc-im
 
 # 方式二：从源码运行
 pnpm install
@@ -63,14 +63,14 @@ pnpm dev
 ```bash
 export FEISHU_APP_ID=your_app_id
 export FEISHU_APP_SECRET=your_app_secret
-npx cc-bot
+npx cc-im
 ```
 
 ### 从源码构建
 
 ```bash
 git clone <repo-url>
-cd cc-bot
+cd cc-im
 pnpm install
 cp .env.example .env
 # 编辑 .env 填入对应平台凭证
@@ -123,7 +123,7 @@ pnpm start    # 生产模式
 | `CLAUDE_SKIP_PERMISSIONS` | 跳过权限检查（生产环境建议 `false`） | `false` |
 | `CLAUDE_TIMEOUT_MS` | 执行超时（毫秒） | `300000`（5分钟） |
 | `HOOK_SERVER_PORT` | 权限确认 Hook 服务端口 | `18900` |
-| `LOG_DIR` | 日志文件存储目录 | `~/.cc-bot/logs` |
+| `LOG_DIR` | 日志文件存储目录 | `~/.cc-im/logs` |
 
 ### 白名单用户 ID 格式
 
@@ -132,7 +132,7 @@ pnpm start    # 生产模式
 
 ## 配置文件
 
-除环境变量外，也支持通过 `~/.cc-bot/config.json` 文件配置：
+除环境变量外，也支持通过 `~/.cc-im/config.json` 文件配置：
 
 ```json
 {
@@ -144,7 +144,7 @@ pnpm start    # 生产模式
   "allowedBaseDirs": ["/home/user/projects", "/tmp"],
   "claudeSkipPermissions": false,
   "claudeTimeoutMs": 300000,
-  "logDir": "/var/log/cc-bot"
+  "logDir": "/var/log/cc-im"
 }
 ```
 
@@ -152,10 +152,10 @@ pnpm start    # 生产模式
 
 ## 应用数据目录
 
-默认数据目录：`~/.cc-bot`（常量 `APP_HOME`）
+默认数据目录：`~/.cc-im`（常量 `APP_HOME`）
 
 ```
-~/.cc-bot/
+~/.cc-im/
 ├── config.json          # 配置文件
 ├── data/
 │   └── sessions.json    # 会话持久化数据
@@ -182,7 +182,7 @@ pnpm start    # 生产模式
 ```
 src/
 ├── index.ts                  # 入口，多平台并行初始化
-├── config.ts                 # 配置加载（环境变量 + ~/.cc-bot/config.json）
+├── config.ts                 # 配置加载（环境变量 + ~/.cc-im/config.json）
 ├── constants.ts              # 系统常量（节流、长度限制、错误码等）
 ├── logger.ts                 # 带标签的日志系统（自动脱敏）
 ├── sanitize.ts               # 日志脱敏规则

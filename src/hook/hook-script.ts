@@ -4,7 +4,7 @@
  * Claude Code PreToolUse hook script.
  *
  * This script is invoked by Claude Code before each tool execution.
- * It sends a permission request to the cc-bot permission server,
+ * It sends a permission request to the cc-im permission server,
  * which notifies the user via the messaging platform and waits for their decision.
  *
  * Environment variables:
@@ -125,7 +125,7 @@ async function main() {
     // Output deny decision to stdout so Claude Code can proceed (rather than hanging)
     const errorMessage = err instanceof Error ? err.message : String(err);
     process.stderr.write(`Error: Permission server unreachable (port ${port}): ${errorMessage}\n`);
-    process.stderr.write('Denying operation by default for security. Please check if cc-bot is running.\n');
+    process.stderr.write('Denying operation by default for security. Please check if cc-im is running.\n');
 
     // Write deny decision to stdout
     process.stdout.write(JSON.stringify({ permissionDecision: 'deny' }));

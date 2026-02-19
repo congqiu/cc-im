@@ -54,7 +54,7 @@ async function start() {
   const oldPid = getPidFromFile();
   if (oldPid && isRunning(oldPid)) {
     logger.info(`服务已在运行中 (PID: ${oldPid})`);
-    logger.info(`请先运行: cc-bot stop`);
+    logger.info(`请先运行: cc-im stop`);
     process.exit(1);
   }
 

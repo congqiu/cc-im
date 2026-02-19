@@ -96,7 +96,7 @@ git push --tags
 ```bash
 git log --oneline -3
 git tag -l --sort=-v:refname | head -5
-npm view cc-bot version                   # 验证 npm 上的版本
+npm view cc-im version                   # 验证 npm 上的版本
 ```
 
 向用户报告发布结果，包括：
@@ -104,7 +104,7 @@ npm view cc-bot version                   # 验证 npm 上的版本
 - 新版本号
 - npm 发布状态
 - git 推送状态
-- npm 包链接：https://www.npmjs.com/package/cc-bot
+- npm 包链接：https://www.npmjs.com/package/cc-im
 
 ## 注意事项
 

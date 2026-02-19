@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-cc-bot 是一个多平台机器人桥接服务，连接飞书（Feishu）和 Telegram 到 Claude Code CLI。用户在聊天平台发送消息，服务器调用 Claude Code 执行，并将输出实时流式推送回聊天窗口。
+cc-im 是一个多平台机器人桥接服务，连接飞书（Feishu）和 Telegram 到 Claude Code CLI。用户在聊天平台发送消息，服务器调用 Claude Code 执行，并将输出实时流式推送回聊天窗口。
 
 ## 开发命令
 
@@ -213,11 +213,11 @@ pnpm test -- tests/unit/queue/request-queue.test.ts
 
 **配置来源**（优先级从高到低）：
 1. 环境变量
-2. `~/.cc-bot/config.json` 配置文件
+2. `~/.cc-im/config.json` 配置文件
 3. 默认值
 
 **环境变量列表**：
-- `LOG_DIR`：日志目录路径，默认 `~/.cc-bot/logs`
+- `LOG_DIR`：日志目录路径，默认 `~/.cc-im/logs`
 - `FEISHU_APP_ID`、`FEISHU_APP_SECRET`：飞书应用凭证
 - `TELEGRAM_BOT_TOKEN`：Telegram 机器人 Token
 - `ALLOWED_USER_IDS`：允许的用户 ID 列表（逗号分隔）
@@ -229,10 +229,10 @@ pnpm test -- tests/unit/queue/request-queue.test.ts
 - `HOOK_SERVER_PORT`：权限服务器端口，默认 18900
 
 **应用数据目录**：
-- 根目录：`~/.cc-bot`（常量 `APP_HOME`，定义在 `src/constants.ts`）
-- 配置文件：`~/.cc-bot/config.json`
-- 会话数据：`~/.cc-bot/data/sessions.json`
-- 日志文件：`~/.cc-bot/logs/` 或 `$LOG_DIR`
+- 根目录：`~/.cc-im`（常量 `APP_HOME`，定义在 `src/constants.ts`）
+- 配置文件：`~/.cc-im/config.json`
+- 会话数据：`~/.cc-im/data/sessions.json`
+- 日志文件：`~/.cc-im/logs/` 或 `$LOG_DIR`
 
 ## 日志系统
 
@@ -242,7 +242,7 @@ pnpm test -- tests/unit/queue/request-queue.test.ts
 
 **日志目录配置**：
 - 通过 `LOG_DIR` 环境变量或配置文件 `logDir` 字段指定
-- 默认 `~/.cc-bot/logs`
+- 默认 `~/.cc-im/logs`
 - 在 `main()` 中调用 `initLogger(config.logDir)` 初始化
 
 所有日志经过 `sanitize()` 自动脱敏：飞书 open_id 截断、UUID/session ID 只保留末 4 位、绝对路径只保留最后两段。业务代码无需手动处理。

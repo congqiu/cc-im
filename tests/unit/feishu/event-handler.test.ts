@@ -106,7 +106,7 @@ vi.mock('../../../src/shared/active-chats.js', () => ({
 }));
 
 vi.mock('../../../src/constants.js', () => ({
-  APP_HOME: '/tmp/cc-bot-test',
+  APP_HOME: '/tmp/cc-im-test',
   TERMINAL_ONLY_COMMANDS: new Set([
     '/context', '/rewind', '/resume', '/copy', '/export',
     '/config', '/init', '/memory', '/permissions', '/theme',

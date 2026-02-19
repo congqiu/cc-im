@@ -1,11 +1,11 @@
 {
-  "name": "cc-bot",
+  "name": "cc-im",
   "version": "1.0.0",
   "description": "Multi-platform bot bridge (Feishu & Telegram) for Claude Code CLI",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "cc-bot": "dist/cli.js"
+    "cc-im": "dist/cli.js"
   },
   "files": [
     "dist",

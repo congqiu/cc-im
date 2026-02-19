@@ -6,11 +6,11 @@ import { homedir, tmpdir } from 'node:os';
  */
 
 /**
- * 应用数据根目录 ~/.cc-bot
+ * 应用数据根目录 ~/.cc-im
  */
-export const APP_HOME = join(homedir(), '.cc-bot');
+export const APP_HOME = join(homedir(), '.cc-im');
 
-export const IMAGE_DIR = join(tmpdir(), 'cc-bot-images');
+export const IMAGE_DIR = join(tmpdir(), 'cc-im-images');
 
 /**
  * 只读工具列表 - 这些工具不需要权限确认
