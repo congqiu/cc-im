@@ -8,8 +8,8 @@
  * which notifies the user via the messaging platform and waits for their decision.
  *
  * Environment variables:
- *   CC_BOT_CHAT_ID   - Chat ID to send the permission card to
- *   CC_BOT_HOOK_PORT - Port of the local permission server (default: 18900)
+ *   CC_IM_CHAT_ID   - Chat ID to send the permission card to
+ *   CC_IM_HOOK_PORT - Port of the local permission server (default: 18900)
  *
  * stdin: JSON { session_id, tool_name, tool_input }
  * stdout: JSON { permissionDecision: "allow" | "deny" }
@@ -69,8 +69,8 @@ function httpPost(port: number, path: string, body: unknown): Promise<{ status: 
 }
 
 async function main() {
-  const chatId = process.env.CC_BOT_CHAT_ID;
-  const port = parseInt(process.env.CC_BOT_HOOK_PORT ?? '18900', 10);
+  const chatId = process.env.CC_IM_CHAT_ID;
+  const port = parseInt(process.env.CC_IM_HOOK_PORT ?? '18900', 10);
 
   // No chat ID configured - allow by default and exit
   if (!chatId) {
@@ -99,9 +99,9 @@ async function main() {
     process.exit(HOOK_EXIT_CODES.SUCCESS);
   }
 
-  const threadRootMsgId = process.env.CC_BOT_THREAD_ROOT_MSG_ID;
-  const threadId = process.env.CC_BOT_THREAD_ID;
-  const platform = process.env.CC_BOT_PLATFORM;
+  const threadRootMsgId = process.env.CC_IM_THREAD_ROOT_MSG_ID;
+  const threadId = process.env.CC_IM_THREAD_ID;
+  const platform = process.env.CC_IM_PLATFORM;
 
   try {
     const result = await httpPost(port, '/permission-request', {

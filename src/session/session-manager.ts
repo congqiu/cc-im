@@ -241,6 +241,20 @@ export class SessionManager {
     return false;
   }
 
+  removeThreadByRootMessageId(rootMessageId: string): boolean {
+    for (const [, session] of this.sessions) {
+      if (!session.threads) continue;
+      for (const [threadId, thread] of Object.entries(session.threads)) {
+        if (thread.rootMessageId === rootMessageId) {
+          delete session.threads[threadId];
+          this.save();
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   listThreads(userId: string): ThreadSession[] {
     const threads = this.sessions.get(userId)?.threads;
     if (!threads) return [];

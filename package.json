@@ -2,6 +2,11 @@
   "name": "cc-im",
   "version": "1.0.0",
   "description": "Multi-platform bot bridge (Feishu & Telegram) for Claude Code CLI",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/congqiu/cc-im.git"
+  },
+  "homepage": "https://github.com/congqiu/cc-im",
   "type": "module",
   "main": "dist/index.js",
   "bin": {

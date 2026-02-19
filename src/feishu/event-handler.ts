@@ -26,6 +26,12 @@ interface LarkEventData {
   type?: string;
 }
 
+interface LarkRecalledData {
+  message_id?: string;
+  chat_id?: string;
+  recall_type?: 'message_owner' | 'group_owner' | 'group_manager' | 'enterprise_manager';
+}
+
 interface LarkCardActionData {
   action: { value: unknown };
   operator?: { open_id?: string };
@@ -215,6 +221,16 @@ export function createEventDispatcher(config: Config) {
           log.info(`Current running tasks: ${Array.from(runningTasks.keys()).join(', ')}`);
           // 任务已结束，返回空响应保持卡片不变
         }
+      }
+    },
+  });
+
+  dispatcher.register({
+    'im.message.recalled_v1': async (data: LarkRecalledData) => {
+      const messageId = data?.message_id;
+      if (!messageId) return;
+      if (sessionManager.removeThreadByRootMessageId(messageId)) {
+        log.info(`Thread session removed for recalled message: ${messageId}`);
       }
     },
   });

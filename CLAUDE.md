@@ -38,6 +38,9 @@ pnpm test:watch
 平台特定实现：
 - 飞书：`src/feishu/` - 使用 `@larksuiteoapi/node-sdk`，长连接模式
   - 流式输出使用 CardKit v1 API，打字机效果（详见下方「飞书 CardKit 流式架构」）
+  - 支持群聊话题（thread）独立会话，每个话题有独立的 sessionId
+  - 支持图片消息，自动下载并传递给 Claude
+  - 消息撤回时自动清理关联的话题会话（`im.message.recalled_v1` 事件）
   - 权限卡片仍使用传统 `im.v1.message.patch` 更新
 - Telegram：`src/telegram/` - 使用 `telegraf`，轮询模式
   - **仅支持私聊**：群组和话题（topic）消息会被拒绝
@@ -61,6 +64,7 @@ pnpm test:watch
 - 每个用户有独立的 sessionId 和 workDir
 - 切换工作目录（`/cd`）或开始新会话（`/new`）时，旧的 convId 和 sessionId 会被转存到 `convSessionMap`，供仍在运行的旧任务使用
 - 会话数据持久化到 `data/sessions.json`，使用防抖保存（500ms）
+- 飞书话题根消息被撤回时，通过 `removeThreadByRootMessageId()` 自动清理关联的话题会话
 
 ### 3. 请求队列（RequestQueue）
 
@@ -110,13 +114,18 @@ claude -p \
 ```
 
 **环境变量传递**：
-- `CC_BOT_CHAT_ID`：聊天 ID，供 Hook 脚本识别用户
-- `CC_BOT_HOOK_PORT`：权限服务器端口
+- `CC_IM_CHAT_ID`：聊天 ID，供 Hook 脚本识别用户
+- `CC_IM_HOOK_PORT`：权限服务器端口
+- `CC_IM_THREAD_ROOT_MSG_ID`：话题根消息 ID（飞书话题会话）
+- `CC_IM_THREAD_ID`：话题 ID
+- `CC_IM_PLATFORM`：当前平台标识（`feishu` / `telegram`）
 
 **流式输出处理**：
 - 使用 `readline` 逐行解析 stdout
 - `stream-parser.ts` 解析 stream-json 格式
 - 提取文本增量（`extractTextDelta`）和思考过程（`extractThinkingDelta`）
+- 工具调用通知：通过 `onToolUse` 回调实时显示当前工具名称和参数摘要
+- 工具使用统计：完成时汇总各工具调用次数
 - 累积文本并通过回调实时推送
 
 **错误处理**：
@@ -138,6 +147,7 @@ claude -p \
 - 状态查询：`/status`、`/cost`、`/doctor`、`/todos`
 - 权限管理：`/allow`、`/deny`、`/allowall`、`/pending`
 - 模型切换：`/model`
+- 平台特有：`/threads`（飞书，列出话题会话）、`/start`（Telegram）
 
 ### 7. 飞书 CardKit 流式架构
 
@@ -232,6 +242,7 @@ pnpm test -- tests/unit/queue/request-queue.test.ts
 - 根目录：`~/.cc-im`（常量 `APP_HOME`，定义在 `src/constants.ts`）
 - 配置文件：`~/.cc-im/config.json`
 - 会话数据：`~/.cc-im/data/sessions.json`
+- 活跃聊天：`~/.cc-im/data/active-chats.json`
 - 日志文件：`~/.cc-im/logs/` 或 `$LOG_DIR`
 
 ## 日志系统

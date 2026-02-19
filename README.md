@@ -8,14 +8,22 @@
 
 - **多平台支持**：飞书和 Telegram，可同时运行或单独使用
 - **流式输出**：飞书端使用 CardKit 打字机效果，Telegram 端通过 editMessage 实时更新
+- **思考过程展示**：实时显示 Claude 的思考过程（折叠面板）
+- **工具调用通知**：流式显示当前正在使用的工具及参数摘要
+- **图片消息支持**：支持发送图片给 Claude 进行分析
+- **话题会话**：飞书群聊话题（thread）独立会话
 - **会话管理**：每用户独立 session，支持 `/new` 重置
 - **并发控制**：同会话串行执行，不同会话可并发，最多排队 3 条消息
 - **长消息分片**：超长内容自动拆分为多条消息
 - **权限确认**：通过 Hook 机制实现工具调用的交互式审批
 - **白名单**：通过环境变量或配置文件控制访问
 - **停止按钮**：执行过程中可随时停止
+- **工具使用统计**：完成时显示工具调用次数和类型
+- **生命周期通知**：服务启动/关闭时通知活跃用户
 
 ## 快速开始
+
+> 要求：Node.js >= 20，需要预先安装 [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
 
 ### 同时运行多个平台
 
@@ -53,12 +61,14 @@ pnpm dev
 
 1. 在[飞书开放平台](https://open.feishu.cn)创建应用
 2. 开启机器人能力
-3. 添加权限：`im:message`、`im:message:send_as_bot`、`im:message:patch_as_bot`、`cardkit:card`
+3. 添加权限：`im:message`、`im:message:send_as_bot`、`im:message.group_msg`、`im:message.p2p_msg:readonly`、`cardkit:card:write`
 4. 事件订阅中启用 **长连接模式**，订阅以下事件：
    - `im.message.receive_v1` — 接收消息
+   - `im.message.recalled_v1` — 消息撤回（自动清理话题会话）
+5. 回调订阅
    - `card.action.trigger` — 卡片交互（停止按钮）
-5. 发布应用
-6. 配置并启动：
+6. 发布应用
+7. 配置并启动：
 
 ```bash
 export FEISHU_APP_ID=your_app_id
@@ -69,7 +79,7 @@ npx cc-im
 ### 从源码构建
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/congqiu/cc-im.git
 cd cc-im
 pnpm install
 cp .env.example .env
@@ -96,6 +106,7 @@ pnpm start    # 生产模式
 | `/doctor` | 运行 Claude 诊断 |
 | `/compact [topic]` | 压缩当前对话上下文 |
 | `/todos` | 查看待办事项 |
+| `/threads` | 列出所有话题会话（飞书） |
 
 ### 权限相关命令
 
@@ -112,7 +123,6 @@ pnpm start    # 生产模式
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `PLATFORM` | 平台选择（`telegram` 或 `feishu`），留空自动检测 | 自动检测 |
 | `FEISHU_APP_ID` | 飞书应用 App ID | 飞书平台必填 |
 | `FEISHU_APP_SECRET` | 飞书应用 App Secret | 飞书平台必填 |
 | `TELEGRAM_BOT_TOKEN` | Telegram Bot Token | Telegram 平台必填 |
@@ -136,7 +146,6 @@ pnpm start    # 生产模式
 
 ```json
 {
-  "platform": "telegram",
   "telegramBotToken": "your_bot_token",
   "allowedUserIds": ["123456789"],
   "claudeCliPath": "/usr/local/bin/claude",
@@ -158,7 +167,8 @@ pnpm start    # 生产模式
 ~/.cc-im/
 ├── config.json          # 配置文件
 ├── data/
-│   └── sessions.json    # 会话持久化数据
+│   ├── sessions.json    # 会话持久化数据
+│   └── active-chats.json # 活跃聊天记录（生命周期通知）
 └── logs/                # 日志文件（可通过 LOG_DIR 自定义）
     ├── 2026-02-14.log
     └── 2026-02-15.log
@@ -208,6 +218,10 @@ src/
 ├── hook/
 │   ├── permission-server.ts  # 权限确认 HTTP 服务
 │   └── hook-script.ts        # Claude Code PreToolUse Hook
+├── shared/
+│   ├── active-chats.ts          # 活跃聊天记录（生命周期通知）
+│   ├── types.ts                 # 共享类型定义
+│   └── utils.ts                 # 共享工具函数
 ├── session/
 │   └── session-manager.ts    # 会话管理（持久化到 data/sessions.json）
 └── queue/
