@@ -19,20 +19,17 @@ export async function initTelegram(config: Config, setupHandlers: (bot: Telegraf
   setupHandlers(bot);
 
   try {
-    // 添加超时保护，避免卡住
-    const launchTimeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Telegram bot launch timeout after 30s')), 30000)
+    // 先验证 token 和网络连通性（30 秒超时）
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Telegram bot connect timeout after 30s')), 30000)
     );
-
-    await Promise.race([
-      bot.launch(),
-      launchTimeout
-    ]);
-
+    await Promise.race([bot.telegram.getMe(), timeout]);
+    // launch() 的 Promise 在轮询停止时才 resolve，不能 await
+    bot.launch().catch(err => log.error('Telegram polling error:', err));
     log.info('Telegram bot launched successfully');
   } catch (err) {
     log.error('Failed to launch Telegram bot:', err);
-    throw err; // 抛出错误而不是直接退出，让调用方决定如何处理
+    throw err;
   }
 }
 
