@@ -170,6 +170,15 @@ export function trackCost(userCosts: Map<string, CostRecord>, userId: string, co
 }
 
 /**
+ * 根据累计轮次返回上下文警告（null 表示无需警告）
+ */
+export function getContextWarning(totalTurns: number): string | null {
+  if (totalTurns >= 12) return '⚠️ 上下文较长，建议 /new 开始新会话或 /compact 压缩';
+  if (totalTurns >= 8) return '💡 对话已 ' + totalTurns + ' 轮，可用 /compact 压缩上下文';
+  return null;
+}
+
+/**
  * 安全的 JSON 序列化，防止循环引用导致异常
  */
 export function safeStringify(obj: unknown, indent?: number): string {

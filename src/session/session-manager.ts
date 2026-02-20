@@ -16,6 +16,7 @@ export interface ThreadSession {
   threadId: string;         // 飞书话题 ID（omt_ 前缀）
   displayName?: string;     // 话题显示名（短标题，用于列表展示）
   description?: string;     // 话题描述（完整的首条消息内容）
+  totalTurns?: number;      // 累计对话轮次
 }
 
 interface UserSession {
@@ -23,6 +24,7 @@ interface UserSession {
   workDir: string;
   activeConvId?: string;
   threads?: Record<string, ThreadSession>;  // threadId → ThreadSession
+  totalTurns?: number;      // 累计对话轮次
 }
 
 function isUserSession(val: unknown): val is UserSession {
@@ -145,11 +147,26 @@ export class SessionManager {
       }
       session.sessionId = undefined;
       session.activeConvId = this.generateConvId();
+      session.totalTurns = 0;
       this.flushSync();
       log.info(`New session started for user: ${userId}`);
       return true;
     }
     return false;
+  }
+
+  addTurns(userId: string, turns: number): number {
+    const session = this.sessions.get(userId);
+    if (!session) return 0;
+    session.totalTurns = (session.totalTurns ?? 0) + turns;
+    return session.totalTurns;
+  }
+
+  addTurnsForThread(userId: string, threadId: string, turns: number): number {
+    const thread = this.sessions.get(userId)?.threads?.[threadId];
+    if (!thread) return 0;
+    thread.totalTurns = (thread.totalTurns ?? 0) + turns;
+    return thread.totalTurns;
   }
 
   // ─── Thread Session Methods ───
@@ -234,6 +251,7 @@ export class SessionManager {
     const thread = this.sessions.get(userId)?.threads?.[threadId];
     if (thread) {
       thread.sessionId = undefined;
+      thread.totalTurns = 0;
       this.flushSync();
       log.info(`Thread session reset: user=${userId}, thread=${threadId}`);
       return true;

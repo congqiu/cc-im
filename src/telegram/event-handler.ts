@@ -10,7 +10,7 @@ import { runClaude, type ClaudeRunHandle } from '../claude/cli-runner.js';
 import { sendThinkingMessage, updateMessage, sendFinalMessages, sendTextReply, sendPermissionMessage, updatePermissionMessage, startTypingLoop } from './message-sender.js';
 import { registerPermissionSender } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord } from '../commands/handler.js';
-import { trackCost, formatToolStats, formatToolCallNotification } from '../shared/utils.js';
+import { trackCost, formatToolStats, formatToolCallNotification, getContextWarning } from '../shared/utils.js';
 import { DEDUP_TTL_MS, THROTTLE_MS, IMAGE_DIR } from '../constants.js';
 import { setActiveChatId } from '../shared/active-chats.js';
 import { createLogger } from '../logger.js';
@@ -364,6 +364,12 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
           }
           if (toolInfo) noteParts.push(toolInfo);
           if (result.model) noteParts.push(result.model);
+
+          // 轮次追踪 & 上下文警告
+          const totalTurns = sessionManager.addTurns(userId, result.numTurns);
+          const ctxWarning = getContextWarning(totalTurns);
+          if (ctxWarning) noteParts.push(ctxWarning);
+
           const note = noteParts.join(' | ');
 
           trackCost(userCosts, userId, result.cost, result.durationMs);
