@@ -1,11 +1,11 @@
 ---
 name: release
-description: 发布新版本到 npm，包括版本更新、构建、测试和发布
+description: 发布新版本，推送 tag 到 GitHub 触发 CI/CD 自动发布到 npm
 ---
 
 # Release Skill
 
-一站式完成版本发布到 npm。
+通过推送 git tag 到 GitHub，触发 GitHub Actions 自动构建并发布到 npm。
 
 ## 使用方式
 
@@ -60,9 +60,7 @@ pnpm build
 
 **如果测试或构建失败，必须修复后才能发布。**
 
-### 5. 更新版本号
-
-使用 npm version 命令更新版本号：
+### 5. 更新版本号并创建 tag
 
 ```bash
 # 使用版本类型
@@ -71,48 +69,31 @@ npm version patch -m "chore: release v%s"
 npm version 2.0.0 -m "chore: release v%s"
 ```
 
-这会自动：
-- 更新 package.json 中的版本号
-- 创建 git commit（`chore: release v<version>`）
-- 创建 git tag（`v<version>`）
+这会自动更新 package.json、创建 commit 和 git tag。
 
-### 6. 发布到 npm
-
-```bash
-npm publish
-```
-
-### 7. 推送到远程仓库
+### 6. 推送到 GitHub 触发发布
 
 ```bash
 git push
 git push --tags
 ```
 
-### 8. 验证发布结果
+推送 `v*` tag 后，GitHub Actions（`.github/workflows/ci.yml` 中的 publish job）会自动：
+- 运行 CI（构建 + 测试）
+- 通过后使用 `NPM_TOKEN` secret 发布到 npm
 
-发布完成后验证：
+### 7. 验证发布结果
 
 ```bash
 git log --oneline -3
 git tag -l --sort=-v:refname | head -5
-npm view cc-im version                   # 验证 npm 上的版本
 ```
 
-向用户报告发布结果，包括：
-
-- 新版本号
-- npm 发布状态
-- git 推送状态
-- npm 包链接：https://www.npmjs.com/package/cc-im
+向用户报告：新版本号、tag 推送状态，并提示可在 GitHub Actions 页面查看发布进度。
 
 ## 注意事项
 
-- 发布前必须确保所有变更已提交（工作区干净）
-- 发布前必须通过完整测试和构建
+- 发布前必须确保工作区干净、测试和构建通过
 - 版本号遵循语义化版本规范（Semantic Versioning）
-- 发布过程中每个关键步骤都需要用户确认
-- 如果发布失败，分析错误原因并指导用户修复
-- 确保已登录 npm（`npm whoami`）
-- 确保有发布权限
+- 实际 npm 发布由 GitHub Actions 完成，需确保仓库已配置 `NPM_TOKEN` secret
 - 发布后无法撤销，请谨慎操作
