@@ -97,27 +97,62 @@ export function formatToolStats(toolStats: Record<string, number>, numTurns: num
 /**
  * 格式化工具调用通知（用于流式显示）
  */
+function truncate(s: string, max: number): string {
+  return s.length > max ? s.slice(0, max - 3) + '...' : s;
+}
+
+function countLines(s: string): number {
+  if (!s) return 0;
+  let count = 1;
+  for (let i = 0; i < s.length; i++) { if (s[i] === '\n') count++; }
+  return count;
+}
+
 export function formatToolCallNotification(toolName: string, toolInput?: Record<string, unknown>): string {
   const emoji = getToolEmoji(toolName);
-  let detail = '';
+  if (!toolInput) return `${emoji} ${toolName}`;
 
-  if (toolInput) {
-    if ((toolName === 'Read' || toolName === 'Write' || toolName === 'Edit') && toolInput.file_path) {
-      detail = ` → ${toolInput.file_path}`;
-    } else if (toolName === 'Bash' && toolInput.command) {
-      const cmd = String(toolInput.command);
-      detail = ` → ${cmd.length > 60 ? cmd.slice(0, 57) + '...' : cmd}`;
-    } else if ((toolName === 'Grep' || toolName === 'Glob') && toolInput.pattern) {
-      detail = ` → ${toolInput.pattern}`;
-    } else if (toolName === 'WebFetch' && toolInput.url) {
-      const url = String(toolInput.url);
-      detail = ` → ${url.length > 60 ? url.slice(0, 57) + '...' : url}`;
-    } else if (toolName === 'WebSearch' && toolInput.query) {
-      detail = ` → ${toolInput.query}`;
-    } else if (toolName === 'Task' && toolInput.description) {
-      const desc = String(toolInput.description);
-      detail = ` → ${desc.length > 40 ? desc.slice(0, 37) + '...' : desc}`;
+  let detail = '';
+  switch (toolName) {
+    case 'Edit': {
+      const fp = toolInput.file_path ? String(toolInput.file_path) : '';
+      const oldLines = countLines(String(toolInput.old_string ?? ''));
+      const newLines = countLines(String(toolInput.new_string ?? ''));
+      detail = fp ? ` → ${fp} (-${oldLines}/+${newLines} 行)` : '';
+      break;
     }
+    case 'Read': {
+      const fp = toolInput.file_path ? String(toolInput.file_path) : '';
+      const parts = [fp];
+      if (toolInput.offset) parts.push(`L${toolInput.offset}`);
+      if (toolInput.limit) parts.push(`${toolInput.limit}行`);
+      detail = fp ? ` → ${parts.join(' ')}` : '';
+      break;
+    }
+    case 'Write': {
+      const fp = toolInput.file_path ? String(toolInput.file_path) : '';
+      const len = String(toolInput.content ?? '').length;
+      detail = fp ? ` → ${fp} (${len}字符)` : '';
+      break;
+    }
+    case 'Bash':
+      if (toolInput.command) detail = ` → ${truncate(String(toolInput.command), 60)}`;
+      break;
+    case 'Grep':
+    case 'Glob':
+      if (toolInput.pattern) detail = ` → ${toolInput.pattern}`;
+      break;
+    case 'WebFetch':
+      if (toolInput.url) detail = ` → ${truncate(String(toolInput.url), 60)}`;
+      break;
+    case 'WebSearch':
+      if (toolInput.query) detail = ` → ${toolInput.query}`;
+      break;
+    case 'Task':
+      if (toolInput.description) detail = ` → ${truncate(String(toolInput.description), 40)}`;
+      break;
+    default:
+      break;
   }
 
   return `${emoji} ${toolName}${detail}`;
