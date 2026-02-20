@@ -1,6 +1,7 @@
 import { getClient } from './client.js';
 import { createLogger } from '../logger.js';
 import { safeStringify } from '../shared/utils.js';
+import { withRetry } from '../shared/retry.js';
 
 const log = createLogger('CardKit');
 
@@ -40,41 +41,45 @@ function nextSeq(cardId: string): number {
  * 创建 CardKit 卡片实例，初始化 session
  */
 export async function createCard(cardJson: string): Promise<string> {
-  const client = getClient();
-  const res = await client.cardkit.v1.card.create({
-    data: { type: 'card_json', data: cardJson },
+  return withRetry(async () => {
+    const client = getClient();
+    const res = await client.cardkit.v1.card.create({
+      data: { type: 'card_json', data: cardJson },
+    });
+
+    const cardId = res.data?.card_id;
+    if (!cardId) {
+      log.error('card.create response:', safeStringify(res, 2));
+      throw new Error(`card.create returned no card_id (code=${res.code}, msg=${res.msg})`);
+    }
+
+    sessions.set(cardId, { cardId, sequence: 0, streamingEnabled: false, completed: false, createdAt: Date.now() });
+    log.debug(`Card created: ${cardId}`);
+    return cardId;
   });
-
-  const cardId = res.data?.card_id;
-  if (!cardId) {
-    log.error('card.create response:', safeStringify(res, 2));
-    throw new Error(`card.create returned no card_id (code=${res.code}, msg=${res.msg})`);
-  }
-
-  sessions.set(cardId, { cardId, sequence: 0, streamingEnabled: false, completed: false, createdAt: Date.now() });
-  log.debug(`Card created: ${cardId}`);
-  return cardId;
 }
 
 /**
  * 启用流式模式
  */
 export async function enableStreaming(cardId: string): Promise<void> {
-  const client = getClient();
-  const res = await client.cardkit.v1.card.settings({
-    path: { card_id: cardId },
-    data: {
-      settings: JSON.stringify({ streaming_mode: true }),
-      sequence: nextSeq(cardId),
-    },
+  return withRetry(async () => {
+    const client = getClient();
+    const res = await client.cardkit.v1.card.settings({
+      path: { card_id: cardId },
+      data: {
+        settings: JSON.stringify({ streaming_mode: true }),
+        sequence: nextSeq(cardId),
+      },
+    });
+    if (res?.code && res.code !== 0) {
+      log.error(`enableStreaming failed: code=${res.code}, msg=${res.msg}`);
+      throw new Error(`enableStreaming error: code=${res.code}, msg=${res.msg}`);
+    }
+    const s = sessions.get(cardId);
+    if (s) s.streamingEnabled = true;
+    log.debug(`Streaming enabled for card ${cardId}`);
   });
-  if (res?.code && res.code !== 0) {
-    log.error(`enableStreaming failed: code=${res.code}, msg=${res.msg}`);
-    throw new Error(`enableStreaming error: code=${res.code}, msg=${res.msg}`);
-  }
-  const s = sessions.get(cardId);
-  if (s) s.streamingEnabled = true;
-  log.debug(`Streaming enabled for card ${cardId}`);
 }
 
 /**
@@ -127,22 +132,24 @@ export async function streamContent(
  * 全量更新卡片（完成/错误状态）
  */
 export async function updateCardFull(cardId: string, cardJson: string): Promise<void> {
-  const client = getClient();
-  const res = await client.cardkit.v1.card.update({
-    path: { card_id: cardId },
-    data: {
-      card: { type: 'card_json', data: cardJson },
-      sequence: nextSeq(cardId),
-    },
+  return withRetry(async () => {
+    const client = getClient();
+    const res = await client.cardkit.v1.card.update({
+      path: { card_id: cardId },
+      data: {
+        card: { type: 'card_json', data: cardJson },
+        sequence: nextSeq(cardId),
+      },
+    });
+    const code = res?.code;
+    if (code && code !== 0) {
+      // 200810: 用户正在交互；300317: sequence 冲突（并发更新）→ 静默忽略
+      if (code === 200810 || code === 300317) return;
+      log.error(`updateCardFull failed: code=${code}, msg=${res.msg}`);
+      throw new Error(`updateCardFull error: code=${code}, msg=${res.msg}`);
+    }
+    log.debug(`Card ${cardId} fully updated`);
   });
-  const code = res?.code;
-  if (code && code !== 0) {
-    // 200810: 用户正在交互；300317: sequence 冲突（并发更新）→ 静默忽略
-    if (code === 200810 || code === 300317) return;
-    log.error(`updateCardFull failed: code=${code}, msg=${res.msg}`);
-    throw new Error(`updateCardFull error: code=${code}, msg=${res.msg}`);
-  }
-  log.debug(`Card ${cardId} fully updated`);
 }
 
 /**
