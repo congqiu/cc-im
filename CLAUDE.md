@@ -130,7 +130,7 @@ claude -p \
 
 **错误处理**：
 - stderr 保留首尾部分（前 4KB + 后 6KB），避免超长错误信息导致内存溢出
-- 超时控制：默认 5 分钟（`CLAUDE_TIMEOUT_MS`）
+- 超时控制：默认 10 分钟（`CLAUDE_TIMEOUT_MS`）
 
 ### 6. 命令系统
 
@@ -144,7 +144,7 @@ claude -p \
 **命令分类**：
 - 会话管理：`/new`、`/compact`
 - 工作目录：`/cd`、`/pwd`、`/list`
-- 状态查询：`/status`、`/cost`、`/doctor`、`/todos`
+- 状态查询：`/status`、`/cost`、`/doctor`、`/todos`、`/history`
 - 权限管理：`/allow`、`/deny`、`/allowall`、`/pending`
 - 模型切换：`/model`
 - 平台特有：`/threads`（飞书，列出话题会话）、`/start`（Telegram）
@@ -183,6 +183,10 @@ claude -p \
 - 按钮 value 携带 `card_id`，任务追踪键为 `userId:cardId`
 - 点击停止后通过 `updateCardFull` API 更新卡片为完成状态（回调返回值对 CardKit 卡片无效）
 - 更新完成后调用 `destroySession` 清理
+
+**CardKit API 重试策略**：
+- `card.create` 不使用重试（创建操作不幂等，重试会产生孤儿卡片）
+- 其他 API（`enableStreaming`、`updateCardFull` 等）使用 `withRetry` 自动重试
 
 **CardKit API 错误码处理**：
 - Lark SDK 不抛异常，错误码在 `res.code` 中返回，需显式检查
@@ -235,8 +239,9 @@ pnpm test -- tests/unit/queue/request-queue.test.ts
 - `CLAUDE_WORK_DIR`：默认工作目录，默认当前目录
 - `ALLOWED_BASE_DIRS`：允许的基础目录列表（逗号分隔）
 - `CLAUDE_SKIP_PERMISSIONS`：是否跳过权限确认，默认 `false`
-- `CLAUDE_TIMEOUT_MS`：Claude CLI 超时时间（毫秒），默认 300000（5分钟）
+- `CLAUDE_TIMEOUT_MS`：Claude CLI 超时时间（毫秒），默认 600000（10分钟）
 - `HOOK_SERVER_PORT`：权限服务器端口，默认 18900
+- `LOG_LEVEL`：日志等级（`DEBUG`/`INFO`/`WARN`/`ERROR`），默认 `DEBUG`
 
 **应用数据目录**：
 - 根目录：`~/.cc-im`（常量 `APP_HOME`，定义在 `src/constants.ts`）
@@ -264,3 +269,12 @@ pnpm test -- tests/unit/queue/request-queue.test.ts
 
 - **添加新命令**：使用 `/add-command` skill，会引导完成 `commands/handler.ts` + 两个平台事件处理器 + 帮助文本的修改
 - **添加新平台**：在 `src/<platform>/` 下实现 `client.ts`、`event-handler.ts`、`message-sender.ts`，然后在 `src/index.ts` 和 `src/config.ts` 中注册
+- **发布新版本**：使用 `/release` skill，会自动更新 CHANGELOG.md、版本号、创建 tag 并推送
+
+## CHANGELOG 维护
+
+项目使用 `CHANGELOG.md` 记录版本变更，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
+
+- 日常开发中的变更记录在 `## [Unreleased]` 部分
+- 分类：`### 新功能`（feat）、`### 修复`（fix）、`### 重构`（refactor）、`### 性能`（perf）、`### 其他`
+- `/release` 时自动将 Unreleased 部分转为版本号和日期

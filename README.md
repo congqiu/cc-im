@@ -19,7 +19,9 @@
 - **白名单**：通过环境变量或配置文件控制访问
 - **停止按钮**：执行过程中可随时停止
 - **工具使用统计**：完成时显示工具调用次数和类型
-- **生命周期通知**：服务启动/关闭时通知活跃用户
+- **轮次追踪**：累计对话轮次，上下文过长时自动提醒压缩
+- **生命周期通知**：服务启动/关闭时通知活跃用户（含版本信息和运行时长）
+- **日志等级配置**：支持 DEBUG/INFO/WARN/ERROR 四级日志
 
 ## 快速开始
 
@@ -106,6 +108,7 @@ pnpm start    # 生产模式
 | `/doctor` | 运行 Claude 诊断 |
 | `/compact [topic]` | 压缩当前对话上下文 |
 | `/todos` | 查看待办事项 |
+| `/history [page]` | 查看当前会话的对话历史 |
 | `/threads` | 列出所有话题会话（飞书） |
 
 ### 权限相关命令
@@ -131,9 +134,10 @@ pnpm start    # 生产模式
 | `CLAUDE_WORK_DIR` | 默认工作目录 | 当前目录 |
 | `ALLOWED_BASE_DIRS` | 允许 `/cd` 切换的基础目录，逗号分隔 | 同 `CLAUDE_WORK_DIR` |
 | `CLAUDE_SKIP_PERMISSIONS` | 跳过权限检查（生产环境建议 `false`） | `false` |
-| `CLAUDE_TIMEOUT_MS` | 执行超时（毫秒） | `300000`（5分钟） |
+| `CLAUDE_TIMEOUT_MS` | 执行超时（毫秒） | `600000`（10分钟） |
 | `HOOK_SERVER_PORT` | 权限确认 Hook 服务端口 | `18900` |
 | `LOG_DIR` | 日志文件存储目录 | `~/.cc-im/logs` |
+| `LOG_LEVEL` | 日志等级（`DEBUG`/`INFO`/`WARN`/`ERROR`） | `DEBUG` |
 
 ### 白名单用户 ID 格式
 
@@ -153,7 +157,8 @@ pnpm start    # 生产模式
   "allowedBaseDirs": ["/home/user/projects", "/tmp"],
   "claudeSkipPermissions": false,
   "claudeTimeoutMs": 300000,
-  "logDir": "/var/log/cc-im"
+  "logDir": "/var/log/cc-im",
+  "logLevel": "INFO"
 }
 ```
 
@@ -220,6 +225,8 @@ src/
 │   └── hook-script.ts        # Claude Code PreToolUse Hook
 ├── shared/
 │   ├── active-chats.ts          # 活跃聊天记录（生命周期通知）
+│   ├── history.ts               # 会话历史读取与分页
+│   ├── retry.ts                 # 通用重试工具
 │   ├── types.ts                 # 共享类型定义
 │   └── utils.ts                 # 共享工具函数
 ├── session/
