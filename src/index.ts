@@ -9,8 +9,13 @@ import { startPermissionServer } from './hook/permission-server.js';
 import { loadActiveChats, getActiveChatId } from './shared/active-chats.js';
 import { cleanOldImages } from './shared/utils.js';
 import { initLogger, createLogger, closeLogger } from './logger.js';
+import { execFileSync } from 'node:child_process';
 
 const log = createLogger('Main');
+
+function getClaudeVersion(cliPath: string): string {
+  try { return execFileSync(cliPath, ['--version'], { timeout: 5000 }).toString().trim(); } catch { return '未知'; }
+}
 
 async function sendLifecycleNotification(activeBots: string[], message: string) {
   const tasks: Promise<void>[] = [];
@@ -124,6 +129,8 @@ export async function main() {
   log.info(`Service is running with ${activeBots.join(' + ')}. Press Ctrl+C to stop.`);
 
   // 发送启动通知
+  const startedAt = Date.now();
+  const claudeVer = getClaudeVersion(config.claudeCliPath);
   const startupMsg = [
     '🟢 cc-im 服务已启动',
     '',
@@ -131,6 +138,8 @@ export async function main() {
     `工作目录: ${config.claudeWorkDir}`,
     `权限确认: ${config.claudeSkipPermissions ? '已跳过' : '已启用'}`,
     config.claudeModel ? `模型: ${config.claudeModel}` : '',
+    `Claude CLI: ${claudeVer}`,
+    `Node: ${process.version}`,
   ].filter(Boolean).join('\n');
   sendLifecycleNotification(activeBots, startupMsg).catch(() => {});
 
@@ -147,7 +156,11 @@ export async function main() {
     log.info('Shutting down...');
 
     // 发送关闭通知
-    await sendLifecycleNotification(activeBots, '🔴 cc-im 服务正在关闭...').catch(() => {});
+    const uptimeSec = Math.floor((Date.now() - startedAt) / 1000);
+    const h = Math.floor(uptimeSec / 3600);
+    const m = Math.floor((uptimeSec % 3600) / 60);
+    const uptimeStr = h > 0 ? `${h}h${m}m` : `${m}m`;
+    await sendLifecycleNotification(activeBots, `🔴 cc-im 服务正在关闭...\n运行时长: ${uptimeStr}`).catch(() => {});
 
     // 停止接受新消息
     if (config.enabledPlatforms.includes('telegram')) {
