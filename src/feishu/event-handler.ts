@@ -630,6 +630,7 @@ async function handleClaudeRequest(
       },
     }, {
       skipPermissions: config.claudeSkipPermissions,
+      timeoutMs: config.claudeTimeoutMs,
       model: config.claudeModel,
       chatId,
       hookPort: config.hookPort,

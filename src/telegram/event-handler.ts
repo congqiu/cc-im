@@ -350,6 +350,10 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
           const notification = formatToolCallNotification(toolName, toolInput);
           toolLines.push(notification);
           if (toolLines.length > 5) toolLines = toolLines.slice(-5);
+          // 文本还未产出时，也更新消息显示工具调用进度
+          if (!latestContent) {
+            throttledUpdate('💭 **思考中...**\n\n正在分析...');
+          }
         },
         onComplete: async (result) => {
           if (settled) return;
@@ -393,6 +397,7 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
         },
       }, {
         skipPermissions: config.claudeSkipPermissions,
+        timeoutMs: config.claudeTimeoutMs,
         model: config.claudeModel,
         chatId,
         hookPort: config.hookPort,
