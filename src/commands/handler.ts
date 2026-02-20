@@ -4,11 +4,12 @@ import type { SessionManager } from '../session/session-manager.js';
 import type { RequestQueue } from '../queue/request-queue.js';
 import { resolveLatestPermission, getPendingCount, listPending } from '../hook/permission-server.js';
 import { TERMINAL_ONLY_COMMANDS } from '../constants.js';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { ThreadContext, CostRecord } from '../shared/types.js';
+import { getHistory, formatHistoryPage, type HistoryPage } from '../shared/history.js';
 
 export type { ThreadContext, CostRecord };
 
@@ -104,6 +105,9 @@ export class CommandHandler {
     if (trimmed === '/compact' || trimmed.startsWith('/compact ')) {
       return this.handleCompact(chatId, userId, trimmed.slice(8).trim(), handleClaudeRequest, threadCtx);
     }
+    if (trimmed === '/history' || trimmed.startsWith('/history ')) {
+      return this.handleHistory(chatId, userId, trimmed.slice(8).trim(), threadCtx);
+    }
 
     // 仅终端可用的命令
     const cmdName = trimmed.split(/\s+/)[0];
@@ -140,6 +144,7 @@ export class CommandHandler {
       '/pwd            - 查看当前工作目录',
       '/list           - 列出所有工作区',
       '/todos          - 列出当前 TODO 项',
+      '/history [页码]  - 浏览会话历史记录',
       threadsCmd,
       '/allow (/y)     - 允许权限请求',
       '/deny (/n)      - 拒绝权限请求',
@@ -182,7 +187,13 @@ export class CommandHandler {
       const workDir = threadCtx
         ? this.deps.sessionManager.getWorkDirForThread(userId, threadCtx.threadId)
         : this.deps.sessionManager.getWorkDir(userId);
-      await this.deps.sender.sendTextReply(chatId, `当前工作目录: ${workDir}`, threadCtx);
+      const subdirs = this.listSubDirs(workDir);
+      const lines = [`当前工作目录: ${workDir}`];
+      if (subdirs.length > 0) {
+        lines.push('', '📁 子目录:', ...subdirs.map(d => `  ${d}/`));
+        lines.push('', '使用 /cd <目录名> 切换');
+      }
+      await this.deps.sender.sendTextReply(chatId, lines.join('\n'), threadCtx);
       return true;
     }
     try {
@@ -453,6 +464,27 @@ export class CommandHandler {
   }
 
   /**
+   * 处理 /history 命令 - 浏览会话历史
+   */
+  async handleHistory(chatId: string, userId: string, args: string, threadCtx?: ThreadContext): Promise<boolean> {
+    const page = parseInt(args, 10) || 1;
+    const workDir = threadCtx
+      ? this.deps.sessionManager.getWorkDirForThread(userId, threadCtx.threadId)
+      : this.deps.sessionManager.getWorkDir(userId);
+    const sessionId = threadCtx
+      ? this.deps.sessionManager.getSessionIdForThread(userId, threadCtx.threadId)
+      : this.deps.sessionManager.getSessionIdForConv(userId, this.deps.sessionManager.getConvId(userId));
+
+    const result = await getHistory(workDir, sessionId, page);
+    if (typeof result === 'string') {
+      await this.deps.sender.sendTextReply(chatId, result, threadCtx);
+    } else {
+      await this.deps.sender.sendTextReply(chatId, formatHistoryPage(result as HistoryPage), threadCtx);
+    }
+    return true;
+  }
+
+  /**
    * 处理 /threads 命令 - 列出所有话题会话
    */
   async handleThreads(chatId: string, userId: string, threadCtx?: ThreadContext): Promise<boolean> {
@@ -472,6 +504,19 @@ export class CommandHandler {
       );
     }
     return true;
+  }
+
+  /**
+   * 列出目录下的子目录（排除隐藏目录，最多30个）
+   */
+  private listSubDirs(dir: string): string[] {
+    try {
+      return readdirSync(dir, { withFileTypes: true })
+        .filter(d => d.isDirectory() && !d.name.startsWith('.'))
+        .map(d => d.name)
+        .sort()
+        .slice(0, 30);
+    } catch { return []; }
   }
 
   /**
