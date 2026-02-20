@@ -129,8 +129,8 @@ export function loadConfig(): Config {
 
   const claudeTimeoutMs =
     process.env.CLAUDE_TIMEOUT_MS !== undefined
-      ? parseInt(process.env.CLAUDE_TIMEOUT_MS, 10) || 300000
-      : file.claudeTimeoutMs ?? 300000;
+      ? parseInt(process.env.CLAUDE_TIMEOUT_MS, 10) || 600000
+      : file.claudeTimeoutMs ?? 600000;
 
   // 验证 Claude CLI 路径
   if (isAbsolute(claudeCliPath) || claudeCliPath.includes('/')) {

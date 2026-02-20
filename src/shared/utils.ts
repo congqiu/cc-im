@@ -91,7 +91,8 @@ export function formatToolStats(toolStats: Record<string, number>, numTurns: num
     .map(([name, count]) => `${getToolEmoji(name)}${name}×${count}`)
     .join(' ');
 
-  return `${numTurns} 轮 ${totalTools} 次工具（${parts}）`;
+  const turnInfo = numTurns > 0 ? `${numTurns} 轮 ` : '';
+  return `${turnInfo}${totalTools} 次工具（${parts}）`;
 }
 
 /**

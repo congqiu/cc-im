@@ -41,22 +41,21 @@ function nextSeq(cardId: string): number {
  * 创建 CardKit 卡片实例，初始化 session
  */
 export async function createCard(cardJson: string): Promise<string> {
-  return withRetry(async () => {
-    const client = getClient();
-    const res = await client.cardkit.v1.card.create({
-      data: { type: 'card_json', data: cardJson },
-    });
-
-    const cardId = res.data?.card_id;
-    if (!cardId) {
-      log.error('card.create response:', safeStringify(res, 2));
-      throw new Error(`card.create returned no card_id (code=${res.code}, msg=${res.msg})`);
-    }
-
-    sessions.set(cardId, { cardId, sequence: 0, streamingEnabled: false, completed: false, createdAt: Date.now() });
-    log.debug(`Card created: ${cardId}`);
-    return cardId;
+  // 不使用 withRetry：创建操作不幂等，重试会产生孤儿卡片
+  const client = getClient();
+  const res = await client.cardkit.v1.card.create({
+    data: { type: 'card_json', data: cardJson },
   });
+
+  const cardId = res.data?.card_id;
+  if (!cardId) {
+    log.error('card.create response:', safeStringify(res, 2));
+    throw new Error(`card.create returned no card_id (code=${res.code}, msg=${res.msg})`);
+  }
+
+  sessions.set(cardId, { cardId, sequence: 0, streamingEnabled: false, completed: false, createdAt: Date.now() });
+  log.debug(`Card created: ${cardId}`);
+  return cardId;
 }
 
 /**

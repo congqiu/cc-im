@@ -4,12 +4,13 @@ import type { SessionManager } from '../session/session-manager.js';
 import type { RequestQueue } from '../queue/request-queue.js';
 import { resolveLatestPermission, getPendingCount, listPending } from '../hook/permission-server.js';
 import { TERMINAL_ONLY_COMMANDS } from '../constants.js';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { ThreadContext, CostRecord } from '../shared/types.js';
-import { getHistory, formatHistoryPage, type HistoryPage } from '../shared/history.js';
+import { getHistory, formatHistoryPage } from '../shared/history.js';
 
 export type { ThreadContext, CostRecord };
 
@@ -187,7 +188,7 @@ export class CommandHandler {
       const workDir = threadCtx
         ? this.deps.sessionManager.getWorkDirForThread(userId, threadCtx.threadId)
         : this.deps.sessionManager.getWorkDir(userId);
-      const subdirs = this.listSubDirs(workDir);
+      const subdirs = await this.listSubDirs(workDir);
       const lines = [`当前工作目录: ${workDir}`];
       if (subdirs.length > 0) {
         lines.push('', '📁 子目录:', ...subdirs.map(d => `  ${d}/`));
@@ -476,10 +477,10 @@ export class CommandHandler {
       : this.deps.sessionManager.getSessionIdForConv(userId, this.deps.sessionManager.getConvId(userId));
 
     const result = await getHistory(workDir, sessionId, page);
-    if (typeof result === 'string') {
-      await this.deps.sender.sendTextReply(chatId, result, threadCtx);
+    if (!result.ok) {
+      await this.deps.sender.sendTextReply(chatId, result.error, threadCtx);
     } else {
-      await this.deps.sender.sendTextReply(chatId, formatHistoryPage(result as HistoryPage), threadCtx);
+      await this.deps.sender.sendTextReply(chatId, formatHistoryPage(result.data), threadCtx);
     }
     return true;
   }
@@ -509,9 +510,10 @@ export class CommandHandler {
   /**
    * 列出目录下的子目录（排除隐藏目录，最多30个）
    */
-  private listSubDirs(dir: string): string[] {
+  private async listSubDirs(dir: string): Promise<string[]> {
     try {
-      return readdirSync(dir, { withFileTypes: true })
+      const entries = await readdir(dir, { withFileTypes: true });
+      return entries
         .filter(d => d.isDirectory() && !d.name.startsWith('.'))
         .map(d => d.name)
         .sort()

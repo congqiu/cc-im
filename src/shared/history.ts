@@ -32,7 +32,9 @@ function extractText(content: unknown): string {
   return '';
 }
 
-export async function getHistory(workDir: string, sessionId: string | undefined, page: number): Promise<HistoryPage | string> {
+export type HistoryResult = { ok: true; data: HistoryPage } | { ok: false; error: string };
+
+export async function getHistory(workDir: string, sessionId: string | undefined, page: number): Promise<HistoryResult> {
   const projectDir = join(homedir(), '.claude', 'projects', encodeWorkDir(workDir));
 
   if (!sessionId) {
@@ -40,9 +42,9 @@ export async function getHistory(workDir: string, sessionId: string | undefined,
     try {
       files = (await readdir(projectDir)).filter(f => f.endsWith('.jsonl'));
     } catch {
-      return '未找到会话记录目录。';
+      return { ok: false, error: '未找到会话记录目录。' };
     }
-    if (files.length === 0) return '未找到会话记录。';
+    if (files.length === 0) return { ok: false, error: '未找到会话记录。' };
     // 按修改时间排序取最新
     const withMtime = await Promise.all(
       files.map(async f => ({ f, mtime: (await stat(join(projectDir, f)).catch(() => ({ mtimeMs: 0 }))).mtimeMs }))
@@ -56,7 +58,7 @@ export async function getHistory(workDir: string, sessionId: string | undefined,
   try {
     raw = await readFile(filePath, 'utf-8');
   } catch {
-    return `未找到会话文件: ${sessionId}`;
+    return { ok: false, error: `未找到会话文件: ${sessionId}` };
   }
 
   const entries: HistoryEntry[] = [];
@@ -75,14 +77,14 @@ export async function getHistory(workDir: string, sessionId: string | undefined,
     } catch { /* skip malformed lines */ }
   }
 
-  if (entries.length === 0) return '会话中没有可显示的消息。';
+  if (entries.length === 0) return { ok: false, error: '会话中没有可显示的消息。' };
 
   const totalPages = Math.ceil(entries.length / PAGE_SIZE);
   const p = Math.max(1, Math.min(page, totalPages));
   const start = (p - 1) * PAGE_SIZE;
   const pageEntries = entries.slice(start, start + PAGE_SIZE);
 
-  return { entries: pageEntries, page: p, totalPages, sessionId };
+  return { ok: true, data: { entries: pageEntries, page: p, totalPages, sessionId } };
 }
 
 export function formatHistoryPage(result: HistoryPage): string {
@@ -92,7 +94,7 @@ export function formatHistoryPage(result: HistoryPage): string {
     const preview = e.text.length > 120 ? e.text.slice(0, 117) + '...' : e.text;
     lines.push(`${prefix} ${preview}`);
   }
-  if (result.totalPages > 1) {
+  if (result.page < result.totalPages) {
     lines.push('', `使用 /history ${result.page + 1} 查看下一页`);
   }
   return lines.join('\n');

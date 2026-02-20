@@ -581,6 +581,7 @@ async function handleClaudeRequest(
       },
       onComplete: async (result) => {
         if (settled) return;
+        settled = true; // 立即标记，防止 onError/onComplete 竞态
 
         const toolInfo = formatToolStats(result.toolStats, result.numTurns);
         const noteParts: string[] = [];
@@ -614,19 +615,22 @@ async function handleClaudeRequest(
         } catch (err) {
           log.error('Failed to send final cards:', err);
         }
-        settle(); // 在卡片更新后再清理任务
+        cleanup();
+        resolve();
       },
       onError: async (error) => {
         if (settled) return;
+        settled = true; // 立即标记，防止 onError/onComplete 竞态
 
-        log.error(`Claude error for user ${userId}: ${error}`);
+        log.error(`Claude error for user ${userId}, sessionId=${sessionId ?? 'new'}: ${error}`);
 
         try {
           await sendErrorCard(cardId, error);
         } catch (err) {
           log.error('Failed to send error card:', err);
         }
-        settle(); // 在卡片更新后再清理任务
+        cleanup();
+        resolve();
       },
     }, {
       skipPermissions: config.claudeSkipPermissions,

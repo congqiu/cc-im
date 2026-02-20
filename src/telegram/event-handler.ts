@@ -357,6 +357,7 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
         },
         onComplete: async (result) => {
           if (settled) return;
+          settled = true; // 立即标记，防止 onError/onComplete 竞态
 
           const toolInfo = formatToolStats(result.toolStats, result.numTurns);
           const noteParts: string[] = [];
@@ -384,16 +385,20 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
           } catch (err) {
             log.error('Failed to send final messages:', err);
           }
-          settle();
+          cleanup();
+          resolve();
         },
         onError: async (error) => {
           if (settled) return;
+          settled = true; // 立即标记，防止 onError/onComplete 竞态
+          log.error(`Claude error for user ${userId}, sessionId=${sessionId ?? 'new'}: ${error}`);
           try {
             await updateMessage(chatId, msgId, `错误：${error}`, 'error', '执行失败');
           } catch (err) {
             log.error('Failed to send error message:', err);
           }
-          settle();
+          cleanup();
+          resolve();
         },
       }, {
         skipPermissions: config.claudeSkipPermissions,

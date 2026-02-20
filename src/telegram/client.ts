@@ -25,7 +25,10 @@ export async function initTelegram(config: Config, setupHandlers: (bot: Telegraf
     );
     await Promise.race([bot.telegram.getMe(), timeout]);
     // launch() 的 Promise 在轮询停止时才 resolve，不能 await
-    bot.launch().catch(err => log.error('Telegram polling error:', err));
+    bot.launch().catch(err => {
+      log.error('Telegram polling fatal error:', err);
+      process.exit(1);
+    });
     log.info('Telegram bot launched successfully');
   } catch (err) {
     log.error('Failed to launch Telegram bot:', err);
