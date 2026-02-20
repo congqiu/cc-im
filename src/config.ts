@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, mkdirSync, accessSync, constants } from 'n
 import { execFileSync } from 'node:child_process';
 import { join, isAbsolute } from 'node:path';
 import { createLogger } from './logger.js';
+import type { LogLevel } from './logger.js';
 import { APP_HOME } from './constants.js';
 
 const logger = createLogger('Config');
@@ -23,6 +24,7 @@ export interface Config {
   claudeModel?: string;
   hookPort: number;
   logDir: string;
+  logLevel: LogLevel;
 }
 
 interface FileConfig {
@@ -38,6 +40,7 @@ interface FileConfig {
   claudeTimeoutMs?: number;
   claudeModel?: string;
   logDir?: string;
+  logLevel?: LogLevel;
 }
 
 function loadFileConfig(): FileConfig {
@@ -164,6 +167,7 @@ export function loadConfig(): Config {
       : 18900;
 
   const logDir = process.env.LOG_DIR ?? file.logDir ?? join(APP_HOME, 'logs');
+  const logLevel = (process.env.LOG_LEVEL?.toUpperCase() ?? file.logLevel ?? 'DEBUG') as LogLevel;
 
   return {
     enabledPlatforms,
@@ -179,6 +183,7 @@ export function loadConfig(): Config {
     claudeModel: file.claudeModel,
     hookPort,
     logDir,
+    logLevel,
   };
 }
 

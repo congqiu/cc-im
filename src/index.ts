@@ -28,7 +28,7 @@ async function sendLifecycleNotification(activeBots: string[], message: string) 
 
 export async function main() {
   const config = loadConfig();
-  initLogger(config.logDir);
+  initLogger(config.logDir, config.logLevel);
   loadActiveChats();
   log.info('Starting cc-im bridge service...');
   log.info(`Enabled platforms: ${config.enabledPlatforms.join(', ')}`);

@@ -6,8 +6,11 @@ import { APP_HOME } from './constants.js';
 
 const DEFAULT_LOG_DIR = join(APP_HOME, 'logs');
 const MAX_LOG_FILES = 10;
+const LOG_LEVELS = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 } as const;
+export type LogLevel = keyof typeof LOG_LEVELS;
 
 let logDir = DEFAULT_LOG_DIR;
+let minLevel: number = LOG_LEVELS.DEBUG;
 
 let logStream: WriteStream;
 
@@ -40,9 +43,12 @@ function rotateOldLogs() {
   }
 }
 
-export function initLogger(dir?: string) {
+export function initLogger(dir?: string, level?: LogLevel) {
   if (dir) {
     logDir = dir;
+  }
+  if (level) {
+    minLevel = LOG_LEVELS[level] ?? LOG_LEVELS.DEBUG;
   }
 
   if (!existsSync(logDir)) {
@@ -68,7 +74,8 @@ export function initLogger(dir?: string) {
   scheduleReopen();
 }
 
-function write(level: string, tag: string, msg: string, ...args: unknown[]) {
+function write(level: keyof typeof LOG_LEVELS, tag: string, msg: string, ...args: unknown[]) {
+  if (LOG_LEVELS[level] < minLevel) return;
   const extra = args.length > 0
     ? ' ' + args.map((a) => (a instanceof Error ? a.stack ?? a.message : String(a))).join(' ')
     : '';
