@@ -10,7 +10,7 @@ import { runClaude, type ClaudeRunHandle } from '../claude/cli-runner.js';
 import { sendThinkingMessage, updateMessage, sendFinalMessages, sendTextReply, sendPermissionMessage, updatePermissionMessage, startTypingLoop } from './message-sender.js';
 import { registerPermissionSender } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord } from '../commands/handler.js';
-import { trackCost, formatToolStats, formatToolCallNotification, getContextWarning } from '../shared/utils.js';
+import { runClaudeTask, type TaskRunState } from '../shared/claude-task.js';
 import { DEDUP_TTL_MS, THROTTLE_MS, IMAGE_DIR } from '../constants.js';
 import { setActiveChatId } from '../shared/active-chats.js';
 import { createLogger } from '../logger.js';
@@ -19,12 +19,7 @@ const log = createLogger('TgHandler');
 
 const userCosts = new Map<string, CostRecord>();
 
-interface TaskInfo {
-  handle: ClaudeRunHandle;
-  latestContent: string;
-  settle: () => void;
-  startedAt: number;
-}
+type TaskInfo = TaskRunState;
 const runningTasks = new Map<string, TaskInfo>();
 
 // 定期清理超时任务（30分钟超时，每10分钟检查一次）
@@ -85,6 +80,7 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
   });
 
   const processedMessages = new Map<string, number>();
+  const MAX_DEDUP_SIZE = 1000;
 
   // Dedup helper: returns true if message is duplicate
   const isDuplicate = (messageId: string): boolean => {
@@ -93,6 +89,11 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
     processedMessages.set(messageId, now);
     for (const [mid, ts] of processedMessages.entries()) {
       if (now - ts > DEDUP_TTL_MS) processedMessages.delete(mid);
+    }
+    while (processedMessages.size > MAX_DEDUP_SIZE) {
+      const oldest = processedMessages.keys().next().value;
+      if (oldest !== undefined) processedMessages.delete(oldest);
+      else break;
     }
     return false;
   };
@@ -268,148 +269,53 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
       return;
     }
 
-    const startTime = Date.now();
     const stopTyping = startTypingLoop(chatId);
+    const taskKey = `${userId}:${msgId}`;
 
-    return new Promise<void>((resolve) => {
-      let lastUpdateTime = 0;
-      let pendingUpdate: ReturnType<typeof setTimeout> | null = null;
-      let latestContent = '';
-      let settled = false;
-      let firstContentLogged = false;
-      let toolLines: string[] = [];
-      const taskKey = `${userId}:${msgId}`;
-
-      const cleanup = () => {
-        stopTyping();
-        if (pendingUpdate) {
-          clearTimeout(pendingUpdate);
-          pendingUpdate = null;
-        }
-        runningTasks.delete(taskKey);
-      };
-
-      const settle = () => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        resolve();
-      };
-
-      const throttledUpdate = (content: string) => {
-        latestContent = content;
-        const taskInfo = runningTasks.get(taskKey);
-        if (taskInfo) taskInfo.latestContent = content;
-
-        const now = Date.now();
-        const elapsed = now - lastUpdateTime;
-
-        const toolNote = toolLines.length > 0
-          ? '输出中...\n' + toolLines.slice(-3).join('\n')
-          : '输出中...';
-
-        if (elapsed >= THROTTLE_MS) {
-          lastUpdateTime = now;
-          if (pendingUpdate) {
-            clearTimeout(pendingUpdate);
-            pendingUpdate = null;
-          }
-          updateMessage(chatId, msgId, latestContent, 'streaming', toolNote).catch(() => {});
-        } else if (!pendingUpdate) {
-          pendingUpdate = setTimeout(() => {
-            pendingUpdate = null;
-            lastUpdateTime = Date.now();
-            updateMessage(chatId, msgId, latestContent, 'streaming', toolNote).catch(() => {});
-          }, THROTTLE_MS - elapsed);
-        }
-      };
-
-      const handle = runClaude(config.claudeCliPath, prompt, sessionId, workDir, {
-        onSessionId: (id) => {
-          if (convId) {
-            sessionManager.setSessionIdForConv(userId, convId, id);
-            log.info(`Session created for user ${userId}, convId=${convId}: ${id}`);
-          }
+    await runClaudeTask(
+      config,
+      sessionManager,
+      {
+        userId,
+        chatId,
+        workDir,
+        sessionId,
+        convId,
+        platform: 'telegram',
+        taskKey,
+      },
+      prompt,
+      {
+        throttleMs: THROTTLE_MS,
+        streamUpdate: (content, toolNote) => {
+          const note = toolNote
+            ? '输出中...\n' + toolNote
+            : '输出中...';
+          updateMessage(chatId, msgId, content, 'streaming', note).catch(() => {});
         },
-        onThinking: (thinking) => {
-          if (!firstContentLogged) {
-            firstContentLogged = true;
-            log.debug(`First content (thinking) for user ${userId} after ${Date.now() - startTime}ms`);
-          }
-          const display = `💭 **思考中...**\n\n${thinking}`;
-          throttledUpdate(display);
-        },
-        onText: (accumulated) => {
-          if (!firstContentLogged) {
-            firstContentLogged = true;
-            log.debug(`First content (text) for user ${userId} after ${Date.now() - startTime}ms`);
-          }
-          throttledUpdate(accumulated);
-        },
-        onToolUse: (toolName, toolInput) => {
-          const notification = formatToolCallNotification(toolName, toolInput);
-          toolLines.push(notification);
-          if (toolLines.length > 5) toolLines = toolLines.slice(-5);
-          // 文本还未产出时，也更新消息显示工具调用进度
-          if (!latestContent) {
-            throttledUpdate('💭 **思考中...**\n\n正在分析...');
-          }
-        },
-        onComplete: async (result) => {
-          if (settled) return;
-          settled = true; // 立即标记，防止 onError/onComplete 竞态
-
-          const toolInfo = formatToolStats(result.toolStats, result.numTurns);
-          const noteParts: string[] = [];
-          if (result.cost > 0) {
-            noteParts.push(`耗时 ${(result.durationMs / 1000).toFixed(1)}s`);
-            noteParts.push(`费用 $${result.cost.toFixed(4)}`);
-          } else {
-            noteParts.push('完成');
-          }
-          if (toolInfo) noteParts.push(toolInfo);
-          if (result.model) noteParts.push(result.model);
-
-          // 轮次追踪 & 上下文警告
-          const totalTurns = sessionManager.addTurns(userId, result.numTurns);
-          const ctxWarning = getContextWarning(totalTurns);
-          if (ctxWarning) noteParts.push(ctxWarning);
-
-          const note = noteParts.join(' | ');
-
-          trackCost(userCosts, userId, result.cost, result.durationMs);
-
-          const finalContent = result.accumulated || result.result || '(无输出)';
+        sendComplete: async (content, note) => {
           try {
-            await sendFinalMessages(chatId, msgId, finalContent, note);
+            await sendFinalMessages(chatId, msgId, content, note);
           } catch (err) {
             log.error('Failed to send final messages:', err);
           }
-          cleanup();
-          resolve();
         },
-        onError: async (error) => {
-          if (settled) return;
-          settled = true; // 立即标记，防止 onError/onComplete 竞态
-          log.error(`Claude error for user ${userId}, sessionId=${sessionId ?? 'new'}: ${error}`);
+        sendError: async (error) => {
           try {
             await updateMessage(chatId, msgId, `错误：${error}`, 'error', '执行失败');
           } catch (err) {
             log.error('Failed to send error message:', err);
           }
-          cleanup();
-          resolve();
         },
-      }, {
-        skipPermissions: config.claudeSkipPermissions,
-        timeoutMs: config.claudeTimeoutMs,
-        model: config.claudeModel,
-        chatId,
-        hookPort: config.hookPort,
-        platform: 'telegram',
-      });
-
-      runningTasks.set(taskKey, { handle, latestContent: '', settle, startedAt: Date.now() });
-    });
+        extraCleanup: () => {
+          stopTyping();
+          runningTasks.delete(taskKey);
+        },
+      },
+      userCosts,
+      (state) => {
+        runningTasks.set(taskKey, state);
+      },
+    );
   }
 }

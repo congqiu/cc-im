@@ -227,7 +227,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
 }
 
 export function startPermissionServer(port: number): Promise<void> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
       handleRequest(req, res).catch((err) => {
         log.error('Unhandled error in permission server:', err);
@@ -235,6 +235,11 @@ export function startPermissionServer(port: number): Promise<void> {
           sendJson(res, 500, { error: 'Internal error' });
         }
       });
+    });
+
+    server.on('error', (err) => {
+      log.error(`Permission server failed to start on port ${port}:`, err);
+      reject(err);
     });
 
     server.listen(port, '127.0.0.1', () => {

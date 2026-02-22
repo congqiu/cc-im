@@ -13,6 +13,9 @@
 - 添加日志等级配置支持
 - 启动通知增加版本信息和运行时长
 - 轮次追踪与上下文警告
+- CLI 支持守护进程模式（`-d`/`--daemon` 启动后台运行，`cc-im stop` 停止）
+- `/model` 命令支持按用户和按话题粒度设置模型
+- 支持 `CLAUDE_MODEL` 环境变量设置默认模型
 
 ### 修复
 
@@ -23,13 +26,26 @@
 - 修复 /history 翻页提示：仅在有下一页时显示
 - 修复 formatToolStats 在 0 轮次时的显示
 - Telegram bot.launch() 致命错误时退出进程而非仅记录日志
+- 修复 CardKit disableStreaming 的 settings JSON 格式
+- 权限服务器启动失败时正确抛出错误（而非静默挂起）
+- 飞书/Telegram 客户端在未初始化时调用 getClient()/getBot() 抛出明确错误
 
 ### 重构
 
+- 提取共享 Claude 任务执行层（`src/shared/claude-task.ts`），消除飞书和 Telegram 事件处理器中的重复代码
+- `/model` 模型存储从全局配置文件改为 SessionManager（按用户/话题粒度），移除 `saveRuntimeConfig()`
+- 提取公共 `truncateText()` 工具函数，消除三处重复的截断逻辑
 - 改进工具调用通知格式
 - getHistory 返回值改为 discriminated union（HistoryResult）
 - listSubDirs 改为异步操作
 - 错误日志增加 sessionId 便于排查
+- SessionManager 会话保存改为同步写入
+- Telegram 去重 Map 增加容量上限（1000 条）
+- convSessionMap 增加容量上限（200 条），防止内存泄漏
+
+### 其他
+
+- 移除 `uuid` 依赖
 
 ## [1.0.1] - 2026-02-20
 

@@ -12,7 +12,8 @@ import { buildCardV2 } from './card-builder.js';
 import { destroySession, updateCardFull, disableStreaming } from './cardkit-manager.js';
 import { registerPermissionSender } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord } from '../commands/handler.js';
-import { trackCost, formatToolStats, formatToolCallNotification, getContextWarning, safeStringify } from '../shared/utils.js';
+import { safeStringify } from '../shared/utils.js';
+import { runClaudeTask, type TaskRunState } from '../shared/claude-task.js';
 import { DEDUP_TTL_MS, CARDKIT_THROTTLE_MS, IMAGE_DIR } from '../constants.js';
 import { setActiveChatId } from '../shared/active-chats.js';
 import { createLogger } from '../logger.js';
@@ -58,13 +59,9 @@ interface LarkMessageData {
 const userCosts = new Map<string, CostRecord>();
 
 // 跟踪正在执行的任务
-interface TaskInfo {
-  handle: ClaudeRunHandle;
+interface TaskInfo extends TaskRunState {
   cardId: string;
   messageId: string;
-  latestContent: string;
-  settle: () => void;  // 添加 settle 函数，用于在停止时标记任务已完成
-  startedAt: number;   // 任务启动时间，用于超时清理
 }
 const runningTasks = new Map<string, TaskInfo>();
 
@@ -470,191 +467,74 @@ async function handleClaudeRequest(
     return;
   }
 
-  // 捕获最终的 threadCtx 用于闭包
   const finalThreadCtx = threadCtx;
+  const taskKey = `${userId}:${cardId}`;
 
-  return new Promise<void>((resolve) => {
-    let lastUpdateTime = 0;
-    let pendingUpdate: ReturnType<typeof setTimeout> | null = null;
-    let waitingTimer: ReturnType<typeof setInterval> | null = null;
-    let latestContent = '';
-    let settled = false;
-    let firstContentLogged = false;
-    let wasThinking = false;
-    let thinkingText = '';
-    let toolLines: string[] = [];
-    const startTime = Date.now();
-    const taskKey = `${userId}:${cardId}`;
+  let waitingTimer: ReturnType<typeof setInterval> | null = null;
 
-    const cleanup = () => {
-      if (waitingTimer) { clearInterval(waitingTimer); waitingTimer = null; }
-      if (pendingUpdate) { clearTimeout(pendingUpdate); pendingUpdate = null; }
-      runningTasks.delete(taskKey);
-    };
-
-    const settle = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve();
-    };
-
-    const throttledUpdate = (content: string) => {
-      latestContent = content;
-
-      // 更新 runningTasks 中的最新内容
-      const taskInfo = runningTasks.get(taskKey);
-      if (taskInfo) {
-        taskInfo.latestContent = content;
-      }
-
-      const now = Date.now();
-      const elapsed = now - lastUpdateTime;
-
-      if (elapsed >= CARDKIT_THROTTLE_MS) {
-        lastUpdateTime = now;
-        if (pendingUpdate) {
-          clearTimeout(pendingUpdate);
-          pendingUpdate = null;
-        }
-        streamContentUpdate(cardId, latestContent, toolLines.slice(-3).join('\n') || undefined).catch((e) => log.warn('Stream update failed:', e?.message ?? e));
-      } else if (!pendingUpdate) {
-        pendingUpdate = setTimeout(() => {
-          pendingUpdate = null;
-          lastUpdateTime = Date.now();
-          streamContentUpdate(cardId, latestContent, toolLines.slice(-3).join('\n') || undefined).catch((e) => log.warn('Stream update failed:', e?.message ?? e));
-        }, CARDKIT_THROTTLE_MS - elapsed);
-      }
-    };
-
-    const handle = runClaude(config.claudeCliPath, prompt, sessionId, workDir, {
-      onSessionId: (id) => {
-        if (finalThreadCtx?.threadId) {
-          sessionManager.setSessionIdForThread(userId, finalThreadCtx.threadId, id);
-          log.info(`Session created for user ${userId}, thread=${finalThreadCtx.threadId}: ${id}`);
-        } else if (convId) {
-          sessionManager.setSessionIdForConv(userId, convId, id);
-          log.info(`Session created for user ${userId}, convId=${convId}: ${id}`);
-        }
+  await runClaudeTask(
+    config,
+    sessionManager,
+    {
+      userId,
+      chatId,
+      workDir,
+      sessionId,
+      convId,
+      threadId: finalThreadCtx?.threadId,
+      threadRootMsgId: finalThreadCtx?.rootMessageId,
+      platform: 'feishu',
+      taskKey,
+    },
+    prompt,
+    {
+      throttleMs: CARDKIT_THROTTLE_MS,
+      streamUpdate: (content, toolNote) => {
+        streamContentUpdate(cardId, content, toolNote).catch((e) => log.warn('Stream update failed:', e?.message ?? e));
       },
-      onThinking: (thinking) => {
-        if (!firstContentLogged) {
-          firstContentLogged = true;
-          log.debug(`First content (thinking) for user ${userId} after ${Date.now() - startTime}ms`);
-        }
-        wasThinking = true;
-        thinkingText = thinking;
-        // 思考阶段也更新卡片，让用户看到 Claude 在想什么
-        const display = `💭 **思考中...**\n\n${thinking}`;
-        throttledUpdate(display);
-      },
-      onText: (accumulated) => {
-        if (!firstContentLogged) {
-          firstContentLogged = true;
-          log.debug(`First content (text) for user ${userId} after ${Date.now() - startTime}ms`);
-        }
-        if (wasThinking) {
-          wasThinking = false;
-          // 思考→文本切换：内容前缀完全改变，CardKit 无法做增量渲染
-          // 用 updateCardFull 重置卡片基线，后续流式更新才能正常增量
-          if (pendingUpdate) {
-            clearTimeout(pendingUpdate);
-            pendingUpdate = null;
-          }
-          const resetCard = buildCardV2({ content: accumulated || '...', status: 'streaming' }, cardId);
-          updateCardFull(cardId, resetCard)
-            .catch((e) => log.warn('Thinking→text transition update failed:', e?.message ?? e));
-          lastUpdateTime = Date.now();
-          latestContent = accumulated;
-          const taskInfo = runningTasks.get(taskKey);
-          if (taskInfo) taskInfo.latestContent = accumulated;
-          return;
-        }
-        throttledUpdate(accumulated);
-      },
-      onToolUse: (toolName, toolInput) => {
-        const notification = formatToolCallNotification(toolName, toolInput);
-        toolLines.push(notification);
-        if (toolLines.length > 5) toolLines = toolLines.slice(-5);
-        // 工具调用时立即更新卡片 note，避免工具执行期间卡片长时间静止
-        throttledUpdate(latestContent);
-      },
-      onComplete: async (result) => {
-        if (settled) return;
-        settled = true; // 立即标记，防止 onError/onComplete 竞态
-
-        const toolInfo = formatToolStats(result.toolStats, result.numTurns);
-        const noteParts: string[] = [];
-        if (result.cost > 0) {
-          noteParts.push(`耗时 ${(result.durationMs / 1000).toFixed(1)}s`);
-          noteParts.push(`费用 $${result.cost.toFixed(4)}`);
-        } else {
-          noteParts.push('完成');
-        }
-        if (toolInfo) noteParts.push(toolInfo);
-        if (result.model) noteParts.push(result.model);
-
-        // 轮次追踪 & 上下文警告
-        const totalTurns = finalThreadCtx?.threadId
-          ? sessionManager.addTurnsForThread(userId, finalThreadCtx.threadId, result.numTurns)
-          : sessionManager.addTurns(userId, result.numTurns);
-        const ctxWarning = getContextWarning(totalTurns);
-        if (ctxWarning) noteParts.push(ctxWarning);
-
-        const note = noteParts.join(' | ');
-
-        log.info(`Claude completed for user ${userId}: success=${result.success}, cost=$${result.cost.toFixed(4)}`);
-
-        // 累积费用统计
-        trackCost(userCosts, userId, result.cost, result.durationMs);
-
-        // 优先使用流式累积的原始文本，避免 result.result 中的 HTML 实体编码
-        const finalContent = result.accumulated || result.result || '(无输出)';
+      sendComplete: async (content, note, thinkingText) => {
         try {
-          await sendFinalCards(chatId, messageId, cardId, finalContent, note, finalThreadCtx, thinkingText || undefined);
+          await sendFinalCards(chatId, messageId, cardId, content, note, finalThreadCtx, thinkingText);
         } catch (err) {
           log.error('Failed to send final cards:', err);
         }
-        cleanup();
-        resolve();
       },
-      onError: async (error) => {
-        if (settled) return;
-        settled = true; // 立即标记，防止 onError/onComplete 竞态
-
-        log.error(`Claude error for user ${userId}, sessionId=${sessionId ?? 'new'}: ${error}`);
-
+      sendError: async (error) => {
         try {
           await sendErrorCard(cardId, error);
         } catch (err) {
           log.error('Failed to send error card:', err);
         }
-        cleanup();
-        resolve();
       },
-    }, {
-      skipPermissions: config.claudeSkipPermissions,
-      timeoutMs: config.claudeTimeoutMs,
-      model: config.claudeModel,
-      chatId,
-      hookPort: config.hookPort,
-      threadRootMsgId: finalThreadCtx?.rootMessageId,
-      threadId: finalThreadCtx?.threadId,
-      platform: 'feishu',
-    });
+      onThinkingToText: (content) => {
+        const resetCard = buildCardV2({ content: content || '...', status: 'streaming' }, cardId);
+        updateCardFull(cardId, resetCard)
+          .catch((e) => log.warn('Thinking→text transition update failed:', e?.message ?? e));
+      },
+      extraCleanup: () => {
+        if (waitingTimer) { clearInterval(waitingTimer); waitingTimer = null; }
+        runningTasks.delete(taskKey);
+      },
+    },
+    userCosts,
+    (state) => {
+      runningTasks.set(taskKey, { ...state, cardId, messageId });
 
-    // 将任务 handle 和 settle 函数存储到 Map 中，以便能够在用户点击停止按钮时中止
-    runningTasks.set(taskKey, { handle, cardId, messageId, latestContent: '', settle, startedAt: Date.now() });
-
-    // 等待首次内容期间，每3秒更新卡片显示已等待时间
-    waitingTimer = setInterval(() => {
-      if (firstContentLogged || settled) {
-        clearInterval(waitingTimer!);
-        waitingTimer = null;
-        return;
-      }
-      const elapsed = Math.floor((Date.now() - startTime) / 1000);
-      streamContentUpdate(cardId, `等待 Claude 响应... (${elapsed}s)`).catch(() => {});
-    }, 3000);
-  });
+      // 等待首次内容期间，每3秒更新卡片显示已等待时间
+      const startTime = Date.now();
+      waitingTimer = setInterval(() => {
+        const taskInfo = runningTasks.get(taskKey);
+        if (!taskInfo) {
+          if (waitingTimer) { clearInterval(waitingTimer); waitingTimer = null; }
+          return;
+        }
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        streamContentUpdate(cardId, `等待 Claude 响应... (${elapsed}s)`).catch(() => {});
+      }, 3000);
+    },
+    () => {
+      // 首次内容到达，清除等待计时器
+      if (waitingTimer) { clearInterval(waitingTimer); waitingTimer = null; }
+    },
+  );
 }

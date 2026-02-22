@@ -7,6 +7,7 @@ const log = createLogger('Telegram');
 let bot: Telegraf;
 
 export function getBot(): Telegraf {
+  if (!bot) throw new Error('Telegram bot not initialized. Call initTelegram() first.');
   return bot;
 }
 

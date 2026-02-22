@@ -15,8 +15,14 @@ pnpm dev
 # 构建项目
 pnpm build
 
-# 生产模式运行
+# 生产模式运行（前台）
 pnpm start
+
+# 守护进程模式运行（后台）
+cc-im -d
+
+# 停止守护进程
+cc-im stop
 
 # 运行测试
 pnpm test
@@ -62,9 +68,10 @@ pnpm test:watch
 
 **设计要点**：
 - 每个用户有独立的 sessionId 和 workDir
-- 切换工作目录（`/cd`）或开始新会话（`/new`）时，旧的 convId 和 sessionId 会被转存到 `convSessionMap`，供仍在运行的旧任务使用
+- 切换工作目录（`/cd`）或开始新会话（`/new`）时，旧的 convId 和 sessionId 会被转存到 `convSessionMap`（上限 200 条，超出自动淘汰最早的），供仍在运行的旧任务使用
 - 会话数据持久化到 `data/sessions.json`，使用防抖保存（500ms）
 - 飞书话题根消息被撤回时，通过 `removeThreadByRootMessageId()` 自动清理关联的话题会话
+- 模型选择支持按用户和按话题粒度：`getModel(userId, threadId?)` 优先返回话题级模型，其次用户级模型，最后回退到全局配置
 
 ### 3. 请求队列（RequestQueue）
 
@@ -97,7 +104,27 @@ pnpm test:watch
 - 只读工具自动放行：`Read`、`Glob`、`Grep`、`WebFetch`、`WebSearch`、`Task`、`TodoRead`
 - 使用 `resolveLatestPermission()` 解决最早的待确认请求（FIFO）
 
-### 5. Claude CLI 集成
+### 5. 共享任务执行层（ClaudeTask）
+
+位置：`src/shared/claude-task.ts`
+
+将两个平台重复的 Claude 任务执行逻辑（节流更新、完成统计、竞态保护、轮次追踪等）提取为共享模块。
+
+**核心接口**：
+- `TaskAdapter` — 平台适配器，各平台提供 `streamUpdate`、`sendComplete`、`sendError` 等具体实现
+- `TaskContext` — 任务上下文（userId、chatId、workDir、sessionId、threadId 等）
+- `TaskRunState` — 可变状态对象，调用方存入 `runningTasks` Map，任务运行期间 `latestContent` 持续更新
+
+**`runClaudeTask()` 封装的通用逻辑**：
+- 节流更新（各平台自定义间隔）
+- 思考→文本切换检测
+- 工具调用通知收集（保留最近 5 条，显示最近 3 条）
+- 完成时构建 note（耗时/费用/工具统计/模型/上下文警告）
+- `onComplete` / `onError` 竞态保护（`settled` 标记）
+- sessionId 回写到 SessionManager
+- 费用追踪与轮次累加
+
+### 6. Claude CLI 集成
 
 位置：`src/claude/cli-runner.ts`
 
@@ -132,7 +159,7 @@ claude -p \
 - stderr 保留首尾部分（前 4KB + 后 6KB），避免超长错误信息导致内存溢出
 - 超时控制：默认 10 分钟（`CLAUDE_TIMEOUT_MS`）
 
-### 6. 命令系统
+### 7. 命令系统
 
 位置：`src/commands/handler.ts`
 
@@ -146,10 +173,10 @@ claude -p \
 - 工作目录：`/cd`、`/pwd`、`/list`
 - 状态查询：`/status`、`/cost`、`/doctor`、`/todos`、`/history`
 - 权限管理：`/allow`、`/deny`、`/allowall`、`/pending`
-- 模型切换：`/model`
+- 模型切换：`/model`（按用户/话题粒度，存储在 SessionManager 中，不修改全局配置）
 - 平台特有：`/threads`（飞书，列出话题会话）、`/start`（Telegram）
 
-### 7. 飞书 CardKit 流式架构
+### 8. 飞书 CardKit 流式架构
 
 飞书端的流式输出使用 CardKit v1 API 实现打字机效果，相关模块：
 
@@ -240,6 +267,7 @@ pnpm test -- tests/unit/queue/request-queue.test.ts
 - `ALLOWED_BASE_DIRS`：允许的基础目录列表（逗号分隔）
 - `CLAUDE_SKIP_PERMISSIONS`：是否跳过权限确认，默认 `false`
 - `CLAUDE_TIMEOUT_MS`：Claude CLI 超时时间（毫秒），默认 600000（10分钟）
+- `CLAUDE_MODEL`：Claude 模型名（如 `sonnet`、`opus`，可被用户 `/model` 命令覆盖）
 - `HOOK_SERVER_PORT`：权限服务器端口，默认 18900
 - `LOG_LEVEL`：日志等级（`DEBUG`/`INFO`/`WARN`/`ERROR`），默认 `DEBUG`
 
@@ -263,7 +291,7 @@ pnpm test -- tests/unit/queue/request-queue.test.ts
 
 所有日志经过 `sanitize()` 自动脱敏：飞书 open_id 截断、UUID/session ID 只保留末 4 位、绝对路径只保留最后两段。业务代码无需手动处理。
 
-各模块标签：`Main`、`Config`、`Session`、`Queue`、`PermissionServer`、`EventHandler`（飞书）、`TgHandler`（Telegram）。
+各模块标签：`Main`、`Config`、`Session`、`Queue`、`PermissionServer`、`ClaudeTask`、`EventHandler`（飞书）、`TgHandler`（Telegram）。
 
 ## 常见开发任务
 

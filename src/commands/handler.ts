@@ -1,5 +1,4 @@
 import type { Config } from '../config.js';
-import { saveRuntimeConfig } from '../config.js';
 import type { SessionManager } from '../session/session-manager.js';
 import type { RequestQueue } from '../queue/request-queue.js';
 import { resolveLatestPermission, getPendingCount, listPending } from '../hook/permission-server.js';
@@ -101,7 +100,7 @@ export class CommandHandler {
       return this.handleCd(chatId, userId, trimmed.slice(3).trim(), threadCtx);
     }
     if (trimmed === '/model' || trimmed.startsWith('/model ')) {
-      return this.handleModel(chatId, trimmed.slice(6).trim(), threadCtx);
+      return this.handleModel(chatId, userId, trimmed.slice(6).trim(), threadCtx);
     }
     if (trimmed === '/compact' || trimmed.startsWith('/compact ')) {
       return this.handleCompact(chatId, userId, trimmed.slice(8).trim(), handleClaudeRequest, threadCtx);
@@ -299,12 +298,15 @@ export class CommandHandler {
   /**
    * 处理 /model 命令
    */
-  async handleModel(chatId: string, args: string, threadCtx?: ThreadContext): Promise<boolean> {
+  async handleModel(chatId: string, userId: string, args: string, threadCtx?: ThreadContext): Promise<boolean> {
     const modelArg = args.trim();
+    const threadId = threadCtx?.threadId;
     if (!modelArg) {
+      const currentModel = this.deps.sessionManager.getModel(userId, threadId);
+      const scope = threadId ? '当前话题' : '当前';
       await this.deps.sender.sendTextReply(
         chatId,
-        `当前模型: ${this.deps.config.claudeModel ?? '默认 (由 Claude Code 决定)'}\n\n可选模型: sonnet, opus, haiku 或完整模型名\n用法: /model <模型名>`,
+        `${scope}模型: ${currentModel ?? this.deps.config.claudeModel ?? '默认 (由 Claude Code 决定)'}\n\n可选模型: sonnet, opus, haiku 或完整模型名\n用法: /model <模型名>`,
         threadCtx,
       );
     } else {
@@ -316,9 +318,9 @@ export class CommandHandler {
         );
         return true;
       }
-      this.deps.config.claudeModel = modelArg;
-      saveRuntimeConfig(this.deps.config);
-      await this.deps.sender.sendTextReply(chatId, `模型已切换为: ${modelArg}\n后续对话将使用此模型。`, threadCtx);
+      this.deps.sessionManager.setModel(userId, modelArg, threadId);
+      const scope = threadId ? '当前话题' : '';
+      await this.deps.sender.sendTextReply(chatId, `${scope}模型已切换为: ${modelArg}\n后续对话将使用此模型。`, threadCtx);
     }
     return true;
   }

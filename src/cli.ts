@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 import { join } from 'path';
 import { existsSync, writeFileSync, unlinkSync, mkdirSync, readFileSync, openSync, closeSync } from 'fs';
+import { spawn } from 'child_process';
+import { fileURLToPath } from 'url';
 
 import { createLogger } from './logger.js';
 import { APP_HOME } from './constants.js';
 
 const PID_FILE = join(APP_HOME, 'pid');
+const LOG_DIR = join(APP_HOME, 'logs');
 const logger = createLogger('CLI');
 
 function getPidFromFile() {
@@ -87,20 +90,67 @@ async function start() {
     throw err;
   }
 
-  try {
-    const { main } = await import('./index.js');
-    await main();
-  } finally {
-    if (existsSync(PID_FILE)) {
-      unlinkSync(PID_FILE);
-    }
-  }
+  // 进程退出时清理 PID 文件
+  const cleanupPid = () => {
+    try { if (existsSync(PID_FILE)) unlinkSync(PID_FILE); } catch {}
+  };
+  process.on('exit', cleanupPid);
+
+  const { main } = await import('./index.js');
+  await main();
 }
 
-const command = process.argv[2];
+function parseArgs() {
+  const args = process.argv.slice(2);
+  let command = 'start';
+  let daemon = false;
+
+  for (const arg of args) {
+    if (arg === 'stop') {
+      command = 'stop';
+    } else if (arg === '-d' || arg === '--daemon') {
+      daemon = true;
+    }
+  }
+
+  return { command, daemon };
+}
+
+function startDaemon() {
+  // 检查是否已在运行
+  const oldPid = getPidFromFile();
+  if (oldPid && isRunning(oldPid)) {
+    logger.info(`服务已在运行中 (PID: ${oldPid})`);
+    logger.info(`请先运行: cc-im stop`);
+    process.exit(1);
+  }
+
+  mkdirSync(LOG_DIR, { recursive: true });
+
+  const outLog = join(LOG_DIR, 'daemon.log');
+  const outFd = openSync(outLog, 'a');
+
+  const scriptPath = fileURLToPath(import.meta.url);
+  const child = spawn(process.execPath, [scriptPath], {
+    detached: true,
+    stdio: ['ignore', outFd, outFd],
+    env: process.env,
+  });
+
+  child.unref();
+  closeSync(outFd);
+
+  logger.info(`服务已在后台启动 (PID: ${child.pid})`);
+  logger.info(`日志文件: ${outLog}`);
+  logger.info(`停止服务: cc-im stop`);
+}
+
+const { command, daemon } = parseArgs();
 
 if (command === 'stop') {
   await stop();
+} else if (daemon) {
+  startDaemon();
 } else {
   await start();
 }

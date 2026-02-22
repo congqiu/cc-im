@@ -48,6 +48,7 @@ vi.mock('../../../src/session/session-manager.js', () => ({
     });
     this.getSessionIdForThread = vi.fn();
     this.setSessionIdForThread = vi.fn();
+    this.getModel = vi.fn();
   }),
 }));
 
@@ -115,6 +116,7 @@ vi.mock('../../../src/constants.js', () => ({
   ]),
   DEDUP_TTL_MS: 5 * 60 * 1000,
   THROTTLE_MS: 200,
+  CARDKIT_THROTTLE_MS: 80,
   READ_ONLY_TOOLS: ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Task', 'TodoRead'],
 }));
 

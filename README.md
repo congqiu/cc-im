@@ -19,8 +19,10 @@
 - **白名单**：通过环境变量或配置文件控制访问
 - **停止按钮**：执行过程中可随时停止
 - **工具使用统计**：完成时显示工具调用次数和类型
+- **模型切换**：支持按用户和按话题粒度切换模型
 - **轮次追踪**：累计对话轮次，上下文过长时自动提醒压缩
 - **生命周期通知**：服务启动/关闭时通知活跃用户（含版本信息和运行时长）
+- **守护进程模式**：支持 `-d` 后台运行和 `stop` 停止
 - **日志等级配置**：支持 DEBUG/INFO/WARN/ERROR 四级日志
 
 ## 快速开始
@@ -89,8 +91,20 @@ cp .env.example .env
 
 pnpm dev      # 开发模式
 pnpm build    # 编译
-pnpm start    # 生产模式
+pnpm start    # 生产模式（前台）
 ```
+
+### 守护进程模式
+
+```bash
+# 后台启动
+cc-im -d
+
+# 停止服务
+cc-im stop
+```
+
+日志输出到 `~/.cc-im/logs/daemon.log`。
 
 ## 命令列表
 
@@ -104,7 +118,7 @@ pnpm start    # 生产模式
 | `/list` | 列出所有项目的工作区 |
 | `/cost` | 查看 Claude API 用量和费用 |
 | `/status` | 查看当前会话状态 |
-| `/model [name]` | 查看或切换模型 |
+| `/model [name]` | 查看或切换模型（按用户/话题粒度） |
 | `/doctor` | 运行 Claude 诊断 |
 | `/compact [topic]` | 压缩当前对话上下文 |
 | `/todos` | 查看待办事项 |
@@ -135,6 +149,7 @@ pnpm start    # 生产模式
 | `ALLOWED_BASE_DIRS` | 允许 `/cd` 切换的基础目录，逗号分隔 | 同 `CLAUDE_WORK_DIR` |
 | `CLAUDE_SKIP_PERMISSIONS` | 跳过权限检查（生产环境建议 `false`） | `false` |
 | `CLAUDE_TIMEOUT_MS` | 执行超时（毫秒） | `600000`（10分钟） |
+| `CLAUDE_MODEL` | 默认模型（如 `sonnet`、`opus`、`haiku`） | 空（由 Claude Code 决定） |
 | `HOOK_SERVER_PORT` | 权限确认 Hook 服务端口 | `18900` |
 | `LOG_DIR` | 日志文件存储目录 | `~/.cc-im/logs` |
 | `LOG_LEVEL` | 日志等级（`DEBUG`/`INFO`/`WARN`/`ERROR`） | `DEBUG` |
@@ -156,7 +171,8 @@ pnpm start    # 生产模式
   "claudeWorkDir": "/home/user/projects",
   "allowedBaseDirs": ["/home/user/projects", "/tmp"],
   "claudeSkipPermissions": false,
-  "claudeTimeoutMs": 300000,
+  "claudeTimeoutMs": 600000,
+  "claudeModel": "sonnet",
   "logDir": "/var/log/cc-im",
   "logLevel": "INFO"
 }
@@ -201,7 +217,7 @@ src/
 ├── constants.ts              # 系统常量（节流、长度限制、错误码等）
 ├── logger.ts                 # 带标签的日志系统（自动脱敏）
 ├── sanitize.ts               # 日志脱敏规则
-├── cli.ts                    # CLI 入口
+├── cli.ts                    # CLI 入口（前台/守护进程/停止）
 ├── access/
 │   └── access-control.ts     # 白名单访问控制
 ├── claude/
@@ -225,6 +241,7 @@ src/
 │   └── hook-script.ts        # Claude Code PreToolUse Hook
 ├── shared/
 │   ├── active-chats.ts          # 活跃聊天记录（生命周期通知）
+│   ├── claude-task.ts           # 共享 Claude 任务执行层（节流、统计、竞态保护）
 │   ├── history.ts               # 会话历史读取与分页
 │   ├── retry.ts                 # 通用重试工具
 │   ├── types.ts                 # 共享类型定义

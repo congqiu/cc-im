@@ -20,7 +20,6 @@ vi.mock('node:fs', () => ({
 
 // Mock node:fs/promises
 vi.mock('node:fs/promises', () => ({
-  writeFile: vi.fn().mockResolvedValue(undefined),
   realpath: vi.fn().mockImplementation((path: string) => Promise.resolve(path)),
 }));
 
@@ -33,7 +32,6 @@ const mockReadFileSync = vi.mocked(fs.readFileSync);
 const mockWriteFileSync = vi.mocked(fs.writeFileSync);
 const mockExistsSync = vi.mocked(fs.existsSync);
 const mockMkdirSync = vi.mocked(fs.mkdirSync);
-const mockWriteFile = vi.mocked(fsPromises.writeFile);
 const mockRealpath = vi.mocked(fsPromises.realpath);
 
 describe('SessionManager', () => {
@@ -231,8 +229,8 @@ describe('SessionManager', () => {
     // Fast-forward debounce timer
     vi.advanceTimersByTime(1000);
 
-    // 应该调用writeFile
-    expect(mockWriteFile).toHaveBeenCalled();
+    // 应该调用writeFileSync
+    expect(mockWriteFileSync).toHaveBeenCalled();
 
     vi.useRealTimers();
   });
@@ -424,8 +422,8 @@ describe('SessionManager', () => {
 
       vi.advanceTimersByTime(1000);
 
-      expect(mockWriteFile).toHaveBeenCalled();
-      const savedData = JSON.parse(mockWriteFile.mock.calls[0][1] as string);
+      expect(mockWriteFileSync).toHaveBeenCalled();
+      const savedData = JSON.parse(mockWriteFileSync.mock.calls[mockWriteFileSync.mock.calls.length - 1][1] as string);
       expect(savedData.user1.threads).toBeDefined();
       expect(savedData.user1.threads['thread-123']).toEqual({
         sessionId: 'session-abc',

@@ -1,5 +1,5 @@
-import { MAX_STREAMING_CONTENT_LENGTH } from '../constants.js';
-import { splitLongContent as sharedSplitLongContent } from '../shared/utils.js';
+import { MAX_STREAMING_CONTENT_LENGTH, MAX_CARD_CONTENT_LENGTH } from '../constants.js';
+import { splitLongContent as sharedSplitLongContent, truncateText } from '../shared/utils.js';
 import { buildInputSummary } from '../shared/utils.js';
 
 export type CardStatus = 'processing' | 'thinking' | 'streaming' | 'done' | 'error';
@@ -27,16 +27,8 @@ const HEADER_TITLES: Record<CardStatus, string> = {
   error: 'Claude Code - 错误',
 };
 
-const MAX_CARD_CONTENT_LENGTH = 3800;
-
 export function truncateForCard(text: string): string {
-  if (text.length <= MAX_CARD_CONTENT_LENGTH) return text;
-  // 保留尾部内容，在换行符处截断以避免断行
-  const keepLen = MAX_CARD_CONTENT_LENGTH - 20;
-  const tail = text.slice(text.length - keepLen);
-  const lineBreak = tail.indexOf('\n');
-  const clean = lineBreak > 0 && lineBreak < 200 ? tail.slice(lineBreak + 1) : tail;
-  return `...(前文已省略)...\n${clean}`;
+  return truncateText(text, MAX_CARD_CONTENT_LENGTH);
 }
 
 export function buildCardObject(options: CardOptions, messageId?: string): Record<string, unknown> {
@@ -130,12 +122,7 @@ export function buildPermissionResultCard(toolName: string, decision: 'allow' | 
 // ─── CardKit JSON 2.0 ───
 
 export function truncateForStreaming(text: string): string {
-  if (text.length <= MAX_STREAMING_CONTENT_LENGTH) return text;
-  const keepLen = MAX_STREAMING_CONTENT_LENGTH - 20;
-  const tail = text.slice(text.length - keepLen);
-  const lineBreak = tail.indexOf('\n');
-  const clean = lineBreak > 0 && lineBreak < 200 ? tail.slice(lineBreak + 1) : tail;
-  return `...(前文已省略)...\n${clean}`;
+  return truncateText(text, MAX_STREAMING_CONTENT_LENGTH);
 }
 
 export function buildCardV2Object(options: CardOptions, cardId?: string): Record<string, unknown> {

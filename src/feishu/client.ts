@@ -8,6 +8,7 @@ let client: Lark.Client;
 let wsClient: Lark.WSClient;
 
 export function getClient(): Lark.Client {
+  if (!client) throw new Error('Feishu client not initialized. Call initFeishu() first.');
   return client;
 }
 

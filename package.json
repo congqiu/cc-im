@@ -37,12 +37,10 @@
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.45.0",
     "dotenv": "^16.4.7",
-    "telegraf": "^4.16.3",
-    "uuid": "^11.1.0"
+    "telegraf": "^4.16.3"
   },
   "devDependencies": {
     "@types/node": "^22.12.0",
-    "@types/uuid": "^10.0.0",
     "@vitest/coverage-v8": "^4.0.18",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",

@@ -203,7 +203,7 @@ export async function disableStreaming(cardId: string): Promise<void> {
     const res = await client.cardkit.v1.card.settings({
       path: { card_id: cardId },
       data: {
-        settings: JSON.stringify({ config: { streaming_mode: false } }),
+        settings: JSON.stringify({ streaming_mode: false }),
         sequence: nextSeq(cardId),
       },
     });

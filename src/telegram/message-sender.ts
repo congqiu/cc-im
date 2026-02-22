@@ -1,6 +1,6 @@
 import { getBot } from './client.js';
 import { createLogger } from '../logger.js';
-import { splitLongContent, buildInputSummary } from '../shared/utils.js';
+import { splitLongContent, buildInputSummary, truncateText } from '../shared/utils.js';
 
 const log = createLogger('TgSender');
 
@@ -96,12 +96,7 @@ function formatMessage(content: string, status: MessageStatus, note?: string): s
 }
 
 function truncateForMessage(text: string): string {
-  if (text.length <= MAX_MESSAGE_LENGTH) return text;
-  const keepLen = MAX_MESSAGE_LENGTH - 20;
-  const tail = text.slice(text.length - keepLen);
-  const lineBreak = tail.indexOf('\n');
-  const clean = lineBreak > 0 && lineBreak < 200 ? tail.slice(lineBreak + 1) : tail;
-  return `...(前文已省略)...\n${clean}`;
+  return truncateText(text, MAX_MESSAGE_LENGTH);
 }
 
 function buildStopKeyboard(messageId: number) {

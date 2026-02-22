@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { writeFile, realpath } from 'node:fs/promises';
+import { realpath } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { dirname, resolve, join } from 'node:path';
 import { createLogger } from '../logger.js';
@@ -17,6 +17,7 @@ export interface ThreadSession {
   displayName?: string;     // 话题显示名（短标题，用于列表展示）
   description?: string;     // 话题描述（完整的首条消息内容）
   totalTurns?: number;      // 累计对话轮次
+  claudeModel?: string;     // 话题指定的模型（覆盖用户级默认）
 }
 
 interface UserSession {
@@ -25,6 +26,7 @@ interface UserSession {
   activeConvId?: string;
   threads?: Record<string, ThreadSession>;  // threadId → ThreadSession
   totalTurns?: number;      // 累计对话轮次
+  claudeModel?: string;     // 用户指定的模型（覆盖全局默认）
 }
 
 function isUserSession(val: unknown): val is UserSession {
@@ -36,6 +38,7 @@ function isUserSession(val: unknown): val is UserSession {
 export class SessionManager {
   private sessions: Map<string, UserSession> = new Map();
   private convSessionMap: Map<string, string> = new Map(); // userId:convId -> sessionId
+  private static readonly MAX_CONV_SESSION_MAP_SIZE = 200;
   private defaultWorkDir: string;
   private allowedBaseDirs: string[];
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -98,6 +101,15 @@ export class SessionManager {
     } else {
       // 旧 convId，存到 convSessionMap
       this.convSessionMap.set(`${userId}:${convId}`, sessionId);
+      this.pruneConvSessionMap();
+    }
+  }
+
+  private pruneConvSessionMap() {
+    while (this.convSessionMap.size > SessionManager.MAX_CONV_SESSION_MAP_SIZE) {
+      const oldest = this.convSessionMap.keys().next().value;
+      if (oldest !== undefined) this.convSessionMap.delete(oldest);
+      else break;
     }
   }
 
@@ -125,6 +137,7 @@ export class SessionManager {
       // 转存旧 convId 的 sessionId，供仍在运行的旧任务使用
       if (session.activeConvId && session.sessionId) {
         this.convSessionMap.set(`${userId}:${session.activeConvId}`, session.sessionId);
+        this.pruneConvSessionMap();
       }
       session.workDir = realPath;
       session.sessionId = undefined;
@@ -144,6 +157,7 @@ export class SessionManager {
       // 转存旧 convId 的 sessionId，供仍在运行的旧任务使用
       if (session.activeConvId && session.sessionId) {
         this.convSessionMap.set(`${userId}:${session.activeConvId}`, session.sessionId);
+        this.pruneConvSessionMap();
       }
       session.sessionId = undefined;
       session.activeConvId = this.generateConvId();
@@ -167,6 +181,33 @@ export class SessionManager {
     if (!thread) return 0;
     thread.totalTurns = (thread.totalTurns ?? 0) + turns;
     return thread.totalTurns;
+  }
+
+  getModel(userId: string, threadId?: string): string | undefined {
+    const session = this.sessions.get(userId);
+    if (threadId) {
+      const threadModel = session?.threads?.[threadId]?.claudeModel;
+      if (threadModel) return threadModel;
+    }
+    return session?.claudeModel;
+  }
+
+  setModel(userId: string, model: string | undefined, threadId?: string): void {
+    if (threadId) {
+      const thread = this.sessions.get(userId)?.threads?.[threadId];
+      if (thread) {
+        thread.claudeModel = model;
+        this.save();
+        return;
+      }
+    }
+    const session = this.sessions.get(userId);
+    if (session) {
+      session.claudeModel = model;
+    } else {
+      this.sessions.set(userId, { workDir: this.defaultWorkDir, activeConvId: this.generateConvId(), claudeModel: model });
+    }
+    this.save();
   }
 
   // ─── Thread Session Methods ───
@@ -318,9 +359,7 @@ export class SessionManager {
       for (const [key, val] of this.sessions) {
         obj[key] = val;
       }
-      writeFile(SESSIONS_FILE, JSON.stringify(obj, null, 2)).catch((err) => {
-        log.error('Failed to save sessions:', err);
-      });
+      writeFileSync(SESSIONS_FILE, JSON.stringify(obj, null, 2), 'utf-8');
     } catch (err) {
       log.error('Failed to save sessions:', err);
     }

@@ -31,6 +31,18 @@ function getToolEmoji(toolName: string): string {
 }
 
 /**
+ * 截断文本，保留尾部内容，在换行符处截断以避免断行
+ */
+export function truncateText(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  const keepLen = maxLen - 20;
+  const tail = text.slice(text.length - keepLen);
+  const lineBreak = tail.indexOf('\n');
+  const clean = lineBreak > 0 && lineBreak < 200 ? tail.slice(lineBreak + 1) : tail;
+  return `...(前文已省略)...\n${clean}`;
+}
+
+/**
  * 分割长内容为多个片段
  */
 export function splitLongContent(text: string, maxLen: number): string[] {
