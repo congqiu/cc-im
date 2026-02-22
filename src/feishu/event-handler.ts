@@ -14,7 +14,9 @@ import { registerPermissionSender } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord } from '../commands/handler.js';
 import { safeStringify } from '../shared/utils.js';
 import { runClaudeTask, type TaskRunState } from '../shared/claude-task.js';
-import { DEDUP_TTL_MS, CARDKIT_THROTTLE_MS, IMAGE_DIR } from '../constants.js';
+import { startTaskCleanup } from '../shared/task-cleanup.js';
+import { MessageDedup } from '../shared/message-dedup.js';
+import { CARDKIT_THROTTLE_MS, IMAGE_DIR } from '../constants.js';
 import { setActiveChatId } from '../shared/active-chats.js';
 import { createLogger } from '../logger.js';
 
@@ -65,25 +67,11 @@ interface TaskInfo extends TaskRunState {
 }
 const runningTasks = new Map<string, TaskInfo>();
 
-// 定期清理超时任务（30分钟超时，每10分钟检查一次）
-const TASK_TIMEOUT_MS = 30 * 60 * 1000;
-const TASK_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
-
-const taskCleanupTimer = setInterval(() => {
-  const now = Date.now();
-  for (const [key, task] of runningTasks) {
-    if (now - task.startedAt > TASK_TIMEOUT_MS) {
-      log.warn(`Auto-cleaning timeout task: ${key}`);
-      task.handle.abort();
-      task.settle();
-      runningTasks.delete(key);
-    }
-  }
-}, TASK_CLEANUP_INTERVAL_MS);
-taskCleanupTimer.unref();
+// 定期清理超时任务
+const stopTaskCleanup = startTaskCleanup(runningTasks);
 
 export function stopEventHandler(): void {
-  clearInterval(taskCleanupTimer);
+  stopTaskCleanup();
 }
 
 export function getRunningTaskCount(): number {
@@ -125,9 +113,8 @@ export function createEventDispatcher(config: Config) {
       updatePermissionCard(messageId, toolName, decision),
   });
 
-  // Dedup: track processed message IDs with timestamps (max 1000 entries)
-  const processedMessages = new Map<string, number>();
-  const MAX_DEDUP_SIZE = 1000;
+  // Dedup
+  const dedup = new MessageDedup();
 
   const dispatcher = new Lark.EventDispatcher({
     // @ts-ignore - defaultCallback 是自定义选项
@@ -238,23 +225,7 @@ export function createEventDispatcher(config: Config) {
       const messageId = message.message_id;
 
       // Dedup
-      if (processedMessages.has(messageId)) return;
-      const now = Date.now();
-      processedMessages.set(messageId, now);
-      // Evict expired entries
-      for (const [id, ts] of processedMessages) {
-        if (now - ts > DEDUP_TTL_MS) {
-          processedMessages.delete(id);
-        } else {
-          break; // Map preserves insertion order, so we can stop early
-        }
-      }
-      // Enforce max size: remove oldest entries
-      while (processedMessages.size > MAX_DEDUP_SIZE) {
-        const oldest = processedMessages.keys().next().value;
-        if (oldest !== undefined) processedMessages.delete(oldest);
-        else break;
-      }
+      if (dedup.isDuplicate(messageId)) return;
 
       const chatId = message.chat_id;
       const senderId = data.sender?.sender_id?.open_id;

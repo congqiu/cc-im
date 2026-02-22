@@ -171,7 +171,7 @@ claude -p \
 **命令分类**：
 - 会话管理：`/new`、`/compact`
 - 工作目录：`/cd`、`/pwd`、`/list`
-- 状态查询：`/status`、`/cost`、`/doctor`、`/todos`、`/history`
+- 状态查询：`/status`、`/cost`、`/doctor`、`/history`
 - 权限管理：`/allow`、`/deny`、`/allowall`、`/pending`
 - 模型切换：`/model`（按用户/话题粒度，存储在 SessionManager 中，不修改全局配置）
 - 平台特有：`/threads`（飞书，列出话题会话）、`/start`（Telegram）

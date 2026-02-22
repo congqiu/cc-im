@@ -91,7 +91,7 @@ export function formatHistoryPage(result: HistoryPage): string {
   const lines = [`📜 会话历史 (${result.page}/${result.totalPages}) — ${result.sessionId.slice(-8)}`, ''];
   for (const e of result.entries) {
     const prefix = e.role === 'user' ? '👤' : '🤖';
-    const preview = e.text.length > 120 ? e.text.slice(0, 117) + '...' : e.text;
+    const preview = e.text.length > 300 ? e.text.slice(0, 297) + '...' : e.text;
     lines.push(`${prefix} ${preview}`);
   }
   if (result.page < result.totalPages) {

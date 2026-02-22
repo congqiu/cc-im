@@ -11,7 +11,9 @@ import { sendThinkingMessage, updateMessage, sendFinalMessages, sendTextReply, s
 import { registerPermissionSender } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord } from '../commands/handler.js';
 import { runClaudeTask, type TaskRunState } from '../shared/claude-task.js';
-import { DEDUP_TTL_MS, THROTTLE_MS, IMAGE_DIR } from '../constants.js';
+import { startTaskCleanup } from '../shared/task-cleanup.js';
+import { MessageDedup } from '../shared/message-dedup.js';
+import { THROTTLE_MS, IMAGE_DIR } from '../constants.js';
 import { setActiveChatId } from '../shared/active-chats.js';
 import { createLogger } from '../logger.js';
 
@@ -22,25 +24,11 @@ const userCosts = new Map<string, CostRecord>();
 type TaskInfo = TaskRunState;
 const runningTasks = new Map<string, TaskInfo>();
 
-// 定期清理超时任务（30分钟超时，每10分钟检查一次）
-const TASK_TIMEOUT_MS = 30 * 60 * 1000;
-const TASK_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
-
-const taskCleanupTimer = setInterval(() => {
-  const now = Date.now();
-  for (const [key, task] of runningTasks) {
-    if (now - task.startedAt > TASK_TIMEOUT_MS) {
-      log.warn(`Auto-cleaning timeout task: ${key}`);
-      task.handle.abort();
-      task.settle();
-      runningTasks.delete(key);
-    }
-  }
-}, TASK_CLEANUP_INTERVAL_MS);
-taskCleanupTimer.unref();
+// 定期清理超时任务
+const stopTaskCleanup = startTaskCleanup(runningTasks);
 
 export function stopTelegramEventHandler(): void {
-  clearInterval(taskCleanupTimer);
+  stopTaskCleanup();
 }
 
 export function getRunningTaskCount(): number {
@@ -79,24 +67,7 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
     updatePermissionCard: updatePermissionMessage,
   });
 
-  const processedMessages = new Map<string, number>();
-  const MAX_DEDUP_SIZE = 1000;
-
-  // Dedup helper: returns true if message is duplicate
-  const isDuplicate = (messageId: string): boolean => {
-    const now = Date.now();
-    if (processedMessages.has(messageId)) return true;
-    processedMessages.set(messageId, now);
-    for (const [mid, ts] of processedMessages.entries()) {
-      if (now - ts > DEDUP_TTL_MS) processedMessages.delete(mid);
-    }
-    while (processedMessages.size > MAX_DEDUP_SIZE) {
-      const oldest = processedMessages.keys().next().value;
-      if (oldest !== undefined) processedMessages.delete(oldest);
-      else break;
-    }
-    return false;
-  };
+  const dedup = new MessageDedup();
 
   // Handle callback queries (stop button)
   bot.on('callback_query', async (ctx) => {
@@ -144,7 +115,7 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
     }
 
     // Dedup
-    if (isDuplicate(messageId)) {
+    if (dedup.isDuplicate(messageId)) {
       log.debug(`Duplicate message ${messageId}, skipping`);
       return;
     }
@@ -199,7 +170,7 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config) {
     }
 
     // Dedup
-    if (isDuplicate(messageId)) return;
+    if (dedup.isDuplicate(messageId)) return;
 
     // Access control
     if (!accessControl.isAllowed(userId)) {

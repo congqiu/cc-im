@@ -6,6 +6,9 @@ import { readdir, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CostRecord } from './types.js';
 import { IMAGE_DIR } from '../constants.js';
+import { createLogger } from '../logger.js';
+
+const log = createLogger('Utils');
 
 /**
  * 工具 emoji 映射
@@ -220,8 +223,8 @@ export async function cleanOldImages(): Promise<number> {
           await unlink(fp);
           cleaned++;
         }
-      } catch { /* ignore per-file errors */ }
+      } catch (e) { log.debug(`Failed to clean image ${f}:`, e); }
     }));
-  } catch { /* dir may not exist */ }
+  } catch (e) { log.debug('Image dir not accessible:', e); }
   return cleaned;
 }

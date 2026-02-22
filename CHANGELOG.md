@@ -32,6 +32,11 @@
 
 ### 重构
 
+- 提取共享任务清理模块（`src/shared/task-cleanup.ts`）和消息去重模块（`src/shared/message-dedup.ts`），消除两个平台事件处理器中的重复代码
+- 移除 `/todos` 命令
+- 空 catch 块添加 debug 级别日志（`cli.ts`、`utils.ts`）
+- 启用 TypeScript `noImplicitReturns` 和 `noFallthroughCasesInSwitch`
+- `/history` 消息预览截断阈值从 120 提升到 300 字符
 - 提取共享 Claude 任务执行层（`src/shared/claude-task.ts`），消除飞书和 Telegram 事件处理器中的重复代码
 - `/model` 模型存储从全局配置文件改为 SessionManager（按用户/话题粒度），移除 `saveRuntimeConfig()`
 - 提取公共 `truncateText()` 工具函数，消除三处重复的截断逻辑

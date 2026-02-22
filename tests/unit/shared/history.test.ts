@@ -315,8 +315,8 @@ describe('formatHistoryPage', () => {
     expect(output).toContain('the answer is 2');
   });
 
-  it('截断超过 120 字符的消息', () => {
-    const longText = 'x'.repeat(200);
+  it('截断超过 300 字符的消息', () => {
+    const longText = 'x'.repeat(400);
     const page: HistoryPage = {
       entries: [{ role: 'user', text: longText }],
       page: 1,
@@ -326,13 +326,13 @@ describe('formatHistoryPage', () => {
 
     const output = formatHistoryPage(page);
 
-    // 117 chars + '...' = 120 display chars
-    expect(output).toContain('x'.repeat(117) + '...');
-    expect(output).not.toContain('x'.repeat(118));
+    // 297 chars + '...' = 300 display chars
+    expect(output).toContain('x'.repeat(297) + '...');
+    expect(output).not.toContain('x'.repeat(298));
   });
 
-  it('不足 120 字符的消息不截断', () => {
-    const text = 'x'.repeat(120);
+  it('不足 300 字符的消息不截断', () => {
+    const text = 'x'.repeat(300);
     const page: HistoryPage = {
       entries: [{ role: 'user', text }],
       page: 1,

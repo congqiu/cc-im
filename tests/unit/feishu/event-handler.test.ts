@@ -201,7 +201,6 @@ vi.mock('../../../src/commands/handler.js', () => {
         if (t === '/cost') return this.handleCost(chatId, userId, threadCtx);
         if (t === '/status') return this.handleStatus(chatId, userId, threadCtx);
         if (t === '/doctor') return this.handleDoctor(chatId, userId, threadCtx);
-        if (t === '/todos') return this.handleTodos(chatId, userId, _handleClaudeRequest, threadCtx);
         if (t === '/allow' || t === '/y') return this.handleAllow(chatId, threadCtx);
         if (t === '/deny' || t === '/n') return this.handleDeny(chatId, threadCtx);
         if (t === '/allowall') return this.handleAllowAll(chatId, threadCtx);

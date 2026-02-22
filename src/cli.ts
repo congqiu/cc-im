@@ -80,7 +80,7 @@ async function start() {
     fd = null;
   } catch (err: unknown) {
     if (fd !== null) {
-      try { closeSync(fd); } catch {}
+      try { closeSync(fd); } catch (e) { logger.debug('closeSync cleanup failed:', e); }
     }
     const error = err as NodeJS.ErrnoException;
     if (error.code === 'EEXIST') {
@@ -92,7 +92,7 @@ async function start() {
 
   // 进程退出时清理 PID 文件
   const cleanupPid = () => {
-    try { if (existsSync(PID_FILE)) unlinkSync(PID_FILE); } catch {}
+    try { if (existsSync(PID_FILE)) unlinkSync(PID_FILE); } catch (e) { logger.debug('PID file cleanup failed:', e); }
   };
   process.on('exit', cleanupPid);
 

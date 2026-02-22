@@ -89,7 +89,6 @@ export class CommandHandler {
     if (trimmed === '/cost') return this.handleCost(chatId, userId, threadCtx);
     if (trimmed === '/status') return this.handleStatus(chatId, userId, threadCtx);
     if (trimmed === '/doctor') return this.handleDoctor(chatId, userId, threadCtx);
-    if (trimmed === '/todos') return this.handleTodos(chatId, userId, handleClaudeRequest, threadCtx);
     if (trimmed === '/allow' || trimmed === '/y') return this.handleAllow(chatId, threadCtx);
     if (trimmed === '/deny' || trimmed === '/n') return this.handleDeny(chatId, threadCtx);
     if (trimmed === '/allowall') return this.handleAllowAll(chatId, threadCtx);
@@ -143,7 +142,6 @@ export class CommandHandler {
       '/cd <路径>      - 切换工作目录',
       '/pwd            - 查看当前工作目录',
       '/list           - 列出所有工作区',
-      '/todos          - 列出当前 TODO 项',
       '/history [页码]  - 浏览会话历史记录',
       threadsCmd,
       '/allow (/y)     - 允许权限请求',
@@ -383,30 +381,6 @@ export class CommandHandler {
     return true;
   }
 
-  /**
-   * 处理 /todos 命令
-   */
-  async handleTodos(
-    chatId: string,
-    userId: string,
-    handleClaudeRequest: ClaudeRequestHandler,
-    threadCtx?: ThreadContext,
-  ): Promise<boolean> {
-    const workDir = threadCtx
-      ? this.deps.sessionManager.getWorkDirForThread(userId, threadCtx.threadId)
-      : this.deps.sessionManager.getWorkDir(userId);
-    const queueKey = threadCtx ? threadCtx.threadId : this.deps.sessionManager.getConvId(userId);
-    const todosPrompt = '请列出当前项目中所有的 TODO 项（检查代码中的 TODO、FIXME、HACK 注释）。';
-    const enqueueResult = this.deps.requestQueue.enqueue(userId, queueKey, todosPrompt, async (prompt) => {
-      await handleClaudeRequest(this.deps.config, this.deps.sessionManager, userId, chatId, prompt, workDir, undefined, threadCtx);
-    });
-    if (enqueueResult === 'rejected') {
-      await this.deps.sender.sendTextReply(chatId, '请求队列已满，请等待当前任务完成后再试。', threadCtx);
-    } else if (enqueueResult === 'queued') {
-      await this.deps.sender.sendTextReply(chatId, '前面还有任务在处理中，请求已排队等待。', threadCtx);
-    }
-    return true;
-  }
 
   /**
    * 处理 /allow 或 /y 命令

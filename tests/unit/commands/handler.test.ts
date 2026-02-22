@@ -214,11 +214,6 @@ describe('CommandHandler', () => {
       expect(result).toBe(true);
     });
 
-    it('should route /todos to handleTodos and return true', async () => {
-      const result = await handler.dispatch('/todos', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
-      expect(result).toBe(true);
-    });
-
     it('should route /compact to handleCompact and return true', async () => {
       const result = await handler.dispatch('/compact', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
       expect(result).toBe(true);
@@ -376,7 +371,6 @@ describe('CommandHandler', () => {
       expect(text).toContain('/deny');
       expect(text).toContain('/pending');
       expect(text).toContain('/compact');
-      expect(text).toContain('/todos');
       expect(text).toContain('/history');
     });
   });
@@ -794,7 +788,7 @@ describe('CommandHandler', () => {
     });
   });
 
-  // ─── /compact and /todos ───
+  // ─── /compact ───
 
   describe('handleCompact', () => {
     it('should send "no active session" when no sessionId', async () => {
@@ -854,48 +848,6 @@ describe('CommandHandler', () => {
     it('should use thread context for compact', async () => {
       vi.mocked(deps.sessionManager.getSessionIdForThread).mockReturnValue('thread-session');
       await handler.dispatch('/compact', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest, THREAD_CTX);
-      expect(deps.requestQueue.enqueue).toHaveBeenCalledWith(
-        USER_ID,
-        THREAD_CTX.threadId,
-        expect.any(String),
-        expect.any(Function),
-      );
-    });
-  });
-
-  describe('handleTodos', () => {
-    it('should enqueue todos request', async () => {
-      await handler.dispatch('/todos', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
-      expect(deps.requestQueue.enqueue).toHaveBeenCalledWith(
-        USER_ID,
-        'conv-123',
-        expect.stringContaining('TODO'),
-        expect.any(Function),
-      );
-    });
-
-    it('should show queue full message when rejected', async () => {
-      vi.mocked(deps.requestQueue.enqueue).mockReturnValue('rejected');
-      await handler.dispatch('/todos', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
-      expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
-        CHAT_ID,
-        expect.stringContaining('请求队列已满'),
-        undefined,
-      );
-    });
-
-    it('should show queued message when queued', async () => {
-      vi.mocked(deps.requestQueue.enqueue).mockReturnValue('queued');
-      await handler.dispatch('/todos', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
-      expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
-        CHAT_ID,
-        expect.stringContaining('请求已排队等待'),
-        undefined,
-      );
-    });
-
-    it('should use thread context for todos', async () => {
-      await handler.dispatch('/todos', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest, THREAD_CTX);
       expect(deps.requestQueue.enqueue).toHaveBeenCalledWith(
         USER_ID,
         THREAD_CTX.threadId,
