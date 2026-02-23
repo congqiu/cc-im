@@ -113,6 +113,19 @@ describe('CLI Runner', () => {
     expect(args).toContain('opus');
   });
 
+  it.each([
+    { option: 'chatId', value: 'chat-123', envKey: 'CC_IM_CHAT_ID', envValue: 'chat-123' },
+    { option: 'hookPort', value: 18900, envKey: 'CC_IM_HOOK_PORT', envValue: '18900' },
+    { option: 'threadRootMsgId', value: 'om-root-123', envKey: 'CC_IM_THREAD_ROOT_MSG_ID', envValue: 'om-root-123' },
+    { option: 'threadId', value: 'omt-thread-456', envKey: 'CC_IM_THREAD_ID', envValue: 'omt-thread-456' },
+    { option: 'platform', value: 'feishu', envKey: 'CC_IM_PLATFORM', envValue: 'feishu' },
+  ])('传入 $option 时应该设置 $envKey 环境变量', ({ option, value, envKey, envValue }) => {
+    const callbacks = { onText: vi.fn(), onComplete: vi.fn(), onError: vi.fn() };
+    runClaude('/claude', 'prompt', undefined, '/work', callbacks, { [option]: value });
+    const env = mockSpawn.mock.calls[0][2].env;
+    expect(env[envKey]).toBe(envValue);
+  });
+
   it('收到 init 事件应该回调 onSessionId', async () => {
     const onSessionId = vi.fn();
     const callbacks = {

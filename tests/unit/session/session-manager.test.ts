@@ -437,6 +437,176 @@ describe('SessionManager', () => {
     });
   });
 
+  describe('Model 管理', () => {
+    it('getModel 无用户时返回 undefined', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      expect(sm.getModel('nonexistent')).toBeUndefined();
+    });
+
+    it('setModel/getModel 用户级别', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      sm.setSessionId('user1', 's1');
+
+      sm.setModel('user1', 'opus');
+      expect(sm.getModel('user1')).toBe('opus');
+    });
+
+    it('setModel 用户不存在时自动创建 session', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      sm.setModel('newuser', 'sonnet');
+      expect(sm.getModel('newuser')).toBe('sonnet');
+    });
+
+    it('setModel/getModel 话题级别优先于用户级别', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      sm.setSessionId('user1', 's1');
+      sm.setModel('user1', 'sonnet');
+      sm.setThreadSession('user1', 'thread-1', {
+        workDir: '/work', rootMessageId: 'msg', threadId: 'thread-1',
+      });
+      sm.setModel('user1', 'opus', 'thread-1');
+
+      expect(sm.getModel('user1', 'thread-1')).toBe('opus');
+      expect(sm.getModel('user1')).toBe('sonnet');
+    });
+
+    it('setModel undefined 清除模型选择', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      sm.setSessionId('user1', 's1');
+      sm.setModel('user1', 'opus');
+      sm.setModel('user1', undefined);
+      expect(sm.getModel('user1')).toBeUndefined();
+    });
+
+    it('setModel 话题不存在时设置用户级模型', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      sm.setSessionId('user1', 's1');
+      // user1 没有 thread-999 这个话题
+      sm.setModel('user1', 'haiku', 'thread-999');
+
+      // 应该fallback到用户级别
+      expect(sm.getModel('user1', 'thread-999')).toBe('haiku');
+      expect(sm.getModel('user1')).toBe('haiku');
+    });
+  });
+
+  describe('Turns 管理', () => {
+    it('addTurns 累加用户对话轮次', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      sm.setSessionId('user1', 's1');
+
+      expect(sm.addTurns('user1', 3)).toBe(3);
+      expect(sm.addTurns('user1', 2)).toBe(5);
+    });
+
+    it('addTurns 用户不存在返回 0', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      expect(sm.addTurns('nonexistent', 1)).toBe(0);
+    });
+
+    it('addTurnsForThread 累加话题对话轮次', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      sm.setThreadSession('user1', 'thread-1', {
+        workDir: '/work', rootMessageId: 'msg', threadId: 'thread-1',
+      });
+
+      expect(sm.addTurnsForThread('user1', 'thread-1', 2)).toBe(2);
+      expect(sm.addTurnsForThread('user1', 'thread-1', 3)).toBe(5);
+    });
+
+    it('addTurnsForThread 话题不存在返回 0', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      // 用户存在但没有话题
+      sm.setSessionId('user1', 's1');
+      expect(sm.addTurnsForThread('user1', 'nonexistent', 1)).toBe(0);
+    });
+  });
+
+  describe('removeThreadByRootMessageId', () => {
+    it('根据根消息 ID 删除话题', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      sm.setThreadSession('user1', 'thread-1', {
+        workDir: '/work', rootMessageId: 'msg-root-1', threadId: 'thread-1',
+      });
+
+      const removed = sm.removeThreadByRootMessageId('msg-root-1');
+      expect(removed).toBe(true);
+      expect(sm.getThreadSession('user1', 'thread-1')).toBeUndefined();
+    });
+
+    it('根消息 ID 不存在返回 false', () => {
+      const sm = new SessionManager('/work', ['/work']);
+      expect(sm.removeThreadByRootMessageId('nonexistent')).toBe(false);
+    });
+  });
+
+  describe('flushSync 错误处理', () => {
+    it('writeFileSync 抛出时 flushSync 传播异常', () => {
+      mockExistsSync.mockReturnValue(true);
+      const sm = new SessionManager('/work', ['/work']);
+      sm.setSessionId('user1', 's1');
+
+      // newSession 内部调用 flushSync
+      mockWriteFileSync.mockImplementation(() => {
+        throw new Error('disk full');
+      });
+
+      expect(() => sm.newSession('user1')).toThrow('disk full');
+
+      // 恢复 mock，避免影响后续测试
+      mockWriteFileSync.mockImplementation(() => {});
+    });
+  });
+
+  describe('load 旧数据无 activeConvId 自动补全', () => {
+    it('加载无 activeConvId 的 UserSession 自动生成', () => {
+      mockExistsSync.mockReturnValue(true);
+      mockReadFileSync.mockReturnValue(JSON.stringify({
+        user1: { workDir: '/work' },
+      }));
+
+      const sm = new SessionManager('/work', ['/work']);
+      const convId = sm.getConvId('user1');
+      expect(convId).toMatch(/^[0-9a-f]{8}$/);
+    });
+  });
+
+  describe('load 非法数据处理', () => {
+    it('加载 null 数据时应该正常启动', () => {
+      mockExistsSync.mockReturnValue(true);
+      mockReadFileSync.mockReturnValue('null');
+
+      expect(() => new SessionManager('/work', ['/work'])).not.toThrow();
+    });
+
+    it('加载空对象数据时应该正常启动', () => {
+      mockExistsSync.mockReturnValue(true);
+      mockReadFileSync.mockReturnValue('{}');
+
+      expect(() => new SessionManager('/work', ['/work'])).not.toThrow();
+    });
+
+    it('加载非对象数据时应该忽略', () => {
+      mockExistsSync.mockReturnValue(true);
+      mockReadFileSync.mockReturnValue('"string data"');
+
+      const sm = new SessionManager('/work', ['/work']);
+      expect(sm.getWorkDir('user1')).toBe('/work'); // 使用默认目录
+    });
+
+    it('加载缺少 workDir 的对象时被忽略', () => {
+      mockExistsSync.mockReturnValue(true);
+      mockReadFileSync.mockReturnValue(JSON.stringify({
+        user1: { sessionId: 'sess-1' }, // 缺少 workDir，应该被 isUserSession 拒绝
+      }));
+
+      const sm = new SessionManager('/work', ['/work']);
+      // 由于缺少 workDir，isUserSession 返回 false，session 不会被加载
+      expect(sm.getWorkDir('user1')).toBe('/work');
+      expect(sm.getSessionId('user1')).toBeUndefined();
+    });
+  });
+
   describe('路径遍历安全', () => {
     it('setWorkDir 应该使用 realpath 解析符号链接', async () => {
       mockExistsSync.mockReturnValue(true);

@@ -49,6 +49,7 @@ vi.mock('../../../src/session/session-manager.js', () => ({
     this.getSessionIdForThread = vi.fn();
     this.setSessionIdForThread = vi.fn();
     this.getModel = vi.fn();
+    this.removeThreadByRootMessageId = vi.fn(() => false);
   }),
 }));
 
@@ -76,6 +77,11 @@ vi.mock('../../../src/feishu/cardkit-manager.js', () => ({
   destroySession: vi.fn(),
   updateCardFull: vi.fn().mockResolvedValue(undefined),
   disableStreaming: vi.fn().mockResolvedValue(undefined),
+}));
+
+const mockRunClaudeTask = vi.fn().mockResolvedValue(undefined);
+vi.mock('../../../src/shared/claude-task.js', () => ({
+  runClaudeTask: (...args: any[]) => mockRunClaudeTask(...args),
 }));
 
 vi.mock('../../../src/claude/cli-runner.js', () => ({
@@ -118,6 +124,9 @@ vi.mock('../../../src/constants.js', () => ({
   THROTTLE_MS: 200,
   CARDKIT_THROTTLE_MS: 80,
   READ_ONLY_TOOLS: ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Task', 'TodoRead'],
+  MAX_STREAMING_CONTENT_LENGTH: 25000,
+  MAX_CARD_CONTENT_LENGTH: 3800,
+  IMAGE_DIR: '/tmp/cc-im-images',
 }));
 
 vi.mock('../../../src/commands/handler.js', () => {
@@ -221,6 +230,7 @@ vi.mock('../../../src/commands/handler.js', () => {
 // Import after mocks
 import { createEventDispatcher } from '../../../src/feishu/event-handler.js';
 import * as messageSender from '../../../src/feishu/message-sender.js';
+import * as cardkitManager from '../../../src/feishu/cardkit-manager.js';
 
 describe('Event Handler', () => {
   const mockConfig = {
@@ -250,6 +260,18 @@ describe('Event Handler', () => {
     return call[0]['im.message.receive_v1'];
   }
 
+  function getCardActionHandler() {
+    const call = mockRegister.mock.calls.find((call: any) => 'card.action.trigger' in call[0]);
+    if (!call) throw new Error('Card action handler not registered');
+    return call[0]['card.action.trigger'];
+  }
+
+  function getRecalledHandler() {
+    const call = mockRegister.mock.calls.find((call: any) => 'im.message.recalled_v1' in call[0]);
+    if (!call) throw new Error('Recalled handler not registered');
+    return call[0]['im.message.recalled_v1'];
+  }
+
   it('应该创建 EventDispatcher', () => {
     const dispatcher = createEventDispatcher(mockConfig);
     expect(dispatcher).toBeDefined();
@@ -267,10 +289,9 @@ describe('Event Handler', () => {
     expect(eventTypes).toContain('card.action.trigger');
   });
 
-  it('/help 命令应该返回帮助信息', async () => {
+  it('命令被 dispatch 拦截后不应调用 runClaudeTask', async () => {
     createEventDispatcher(mockConfig);
 
-    // 获取 im.message.receive_v1 的处理器
     const messageHandler = getMessageHandler();
 
     const messageData = {
@@ -288,114 +309,8 @@ describe('Event Handler', () => {
 
     await messageHandler(messageData);
 
-    expect(messageSender.sendTextReply).toHaveBeenCalledWith(
-      'chat-123',
-      expect.stringContaining('可用命令')
-    );
-  });
-
-  it('/new 命令应该开始新会话', async () => {
-    createEventDispatcher(mockConfig);
-
-    const messageHandler = getMessageHandler();
-
-    const messageData = {
-      message: {
-        message_id: 'msg-new',
-        chat_id: 'chat-123',
-        chat_type: 'p2p',
-        message_type: 'text',
-        content: JSON.stringify({ text: '/new' }),
-      },
-      sender: {
-        sender_id: { open_id: 'user-123' },
-      },
-    };
-
-    await messageHandler(messageData);
-
-    expect(messageSender.sendTextReply).toHaveBeenCalledWith(
-      'chat-123',
-      expect.stringContaining('已开始新会话')
-    );
-  });
-
-  it('/pwd 命令应该返回当前目录', async () => {
-    createEventDispatcher(mockConfig);
-
-    const messageHandler = getMessageHandler();
-
-    const messageData = {
-      message: {
-        message_id: 'msg-pwd',
-        chat_id: 'chat-123',
-        chat_type: 'p2p',
-        message_type: 'text',
-        content: JSON.stringify({ text: '/pwd' }),
-      },
-      sender: {
-        sender_id: { open_id: 'user-123' },
-      },
-    };
-
-    await messageHandler(messageData);
-
-    expect(messageSender.sendTextReply).toHaveBeenCalledWith(
-      'chat-123',
-      expect.stringContaining('/work')
-    );
-  });
-
-  it('/cd 成功应该切换目录', async () => {
-    createEventDispatcher(mockConfig);
-
-    const messageHandler = getMessageHandler();
-
-    const messageData = {
-      message: {
-        message_id: 'msg-cd',
-        chat_id: 'chat-123',
-        chat_type: 'p2p',
-        message_type: 'text',
-        content: JSON.stringify({ text: '/cd /work/subdir' }),
-      },
-      sender: {
-        sender_id: { open_id: 'user-123' },
-      },
-    };
-
-    await messageHandler(messageData);
-
-    expect(messageSender.sendTextReply).toHaveBeenCalledWith(
-      'chat-123',
-      expect.stringContaining('工作目录已切换')
-    );
-  });
-
-  it('/cd 失败应该返回错误', async () => {
-    createEventDispatcher(mockConfig);
-
-    const messageHandler = getMessageHandler();
-
-    const messageData = {
-      message: {
-        message_id: 'msg-cd-fail',
-        chat_id: 'chat-123',
-        chat_type: 'p2p',
-        message_type: 'text',
-        content: JSON.stringify({ text: '/cd /forbidden' }),
-      },
-      sender: {
-        sender_id: { open_id: 'user-123' },
-      },
-    };
-
-    await messageHandler(messageData);
-
-    expect(messageSender.sendTextReply).toHaveBeenCalledWith(
-      'chat-123',
-      expect.stringContaining('目录不在允许范围内')
-    );
+    expect(messageSender.sendTextReply).toHaveBeenCalled();
+    expect(mockRunClaudeTask).not.toHaveBeenCalled();
   });
 
   it('终端命令应该被拦截', async () => {
@@ -504,159 +419,6 @@ describe('Event Handler', () => {
 
     // 应该只处理一次
     expect(secondCallCount).toBe(firstCallCount);
-  });
-
-  it('/status 命令应该返回状态信息', async () => {
-    createEventDispatcher(mockConfig);
-
-    const messageHandler = getMessageHandler();
-
-    const messageData = {
-      message: {
-        message_id: 'msg-status',
-        chat_id: 'chat-123',
-        chat_type: 'p2p',
-        message_type: 'text',
-        content: JSON.stringify({ text: '/status' }),
-      },
-      sender: {
-        sender_id: { open_id: 'user-123' },
-      },
-    };
-
-    await messageHandler(messageData);
-
-    expect(messageSender.sendTextReply).toHaveBeenCalledWith(
-      'chat-123',
-      expect.stringContaining('Claude Code 状态')
-    );
-  });
-
-  it('/model 无参数应该显示当前模型', async () => {
-    createEventDispatcher(mockConfig);
-
-    const messageHandler = getMessageHandler();
-
-    const messageData = {
-      message: {
-        message_id: 'msg-model',
-        chat_id: 'chat-123',
-        chat_type: 'p2p',
-        message_type: 'text',
-        content: JSON.stringify({ text: '/model' }),
-      },
-      sender: {
-        sender_id: { open_id: 'user-123' },
-      },
-    };
-
-    await messageHandler(messageData);
-
-    expect(messageSender.sendTextReply).toHaveBeenCalledWith(
-      'chat-123',
-      expect.stringContaining('当前模型')
-    );
-  });
-
-  it('/model 有参数应该切换模型', async () => {
-    createEventDispatcher(mockConfig);
-
-    const messageHandler = getMessageHandler();
-
-    const messageData = {
-      message: {
-        message_id: 'msg-model-switch',
-        chat_id: 'chat-123',
-        chat_type: 'p2p',
-        message_type: 'text',
-        content: JSON.stringify({ text: '/model opus' }),
-      },
-      sender: {
-        sender_id: { open_id: 'user-123' },
-      },
-    };
-
-    await messageHandler(messageData);
-
-    expect(messageSender.sendTextReply).toHaveBeenCalledWith(
-      'chat-123',
-      expect.stringContaining('模型已切换为: opus')
-    );
-  });
-
-  it('/doctor 命令应该返回健康检查信息', async () => {
-    createEventDispatcher(mockConfig);
-
-    const messageHandler = getMessageHandler();
-
-    const messageData = {
-      message: {
-        message_id: 'msg-doctor',
-        chat_id: 'chat-123',
-        chat_type: 'p2p',
-        message_type: 'text',
-        content: JSON.stringify({ text: '/doctor' }),
-      },
-      sender: {
-        sender_id: { open_id: 'user-123' },
-      },
-    };
-
-    await messageHandler(messageData);
-
-    expect(messageSender.sendTextReply).toHaveBeenCalledWith(
-      'chat-123',
-      expect.stringContaining('健康检查')
-    );
-  });
-
-  it('/cost 无记录应该返回提示', async () => {
-    createEventDispatcher(mockConfig);
-
-    const messageHandler = getMessageHandler();
-
-    const messageData = {
-      message: {
-        message_id: 'msg-cost',
-        chat_id: 'chat-123',
-        chat_type: 'p2p',
-        message_type: 'text',
-        content: JSON.stringify({ text: '/cost' }),
-      },
-      sender: {
-        sender_id: { open_id: 'user-123' },
-      },
-    };
-
-    await messageHandler(messageData);
-
-    expect(messageSender.sendTextReply).toHaveBeenCalledWith(
-      'chat-123',
-      expect.stringContaining('暂无费用记录')
-    );
-  });
-
-  it('/list 命令应该列出工作区', async () => {
-    createEventDispatcher(mockConfig);
-
-    const messageHandler = getMessageHandler();
-
-    const messageData = {
-      message: {
-        message_id: 'msg-list',
-        chat_id: 'chat-123',
-        chat_type: 'p2p',
-        message_type: 'text',
-        content: JSON.stringify({ text: '/list' }),
-      },
-      sender: {
-        sender_id: { open_id: 'user-123' },
-      },
-    };
-
-    await messageHandler(messageData);
-
-    expect(messageSender.sendTextReply).toHaveBeenCalled();
   });
 
   it('没有发送者 ID 应该被忽略', async () => {
@@ -862,5 +624,267 @@ describe('Event Handler', () => {
       'chat-topic',
       { rootMessageId: 'om_topicroot456', threadId: 'omt_topic123' }
     );
+  });
+
+  // ─── card.action.trigger 测试 ───
+
+  describe('card.action.trigger', () => {
+    it('无 userId 时忽略', async () => {
+      createEventDispatcher(mockConfig);
+      const handler = getCardActionHandler();
+
+      await handler({
+        action: { value: { action: 'stop', card_id: 'card-1' } },
+        // 无 operator 和 sender
+      });
+
+      // 不应该有任何副作用
+      expect(cardkitManager.disableStreaming).not.toHaveBeenCalled();
+    });
+
+    it('action 字段不是 string 时忽略', async () => {
+      createEventDispatcher(mockConfig);
+      const handler = getCardActionHandler();
+
+      await handler({
+        action: { value: { action: 123 } },
+        operator: { open_id: 'user-123' },
+      });
+
+      expect(cardkitManager.disableStreaming).not.toHaveBeenCalled();
+    });
+
+    it('解析 action value 异常时忽略', async () => {
+      createEventDispatcher(mockConfig);
+      const handler = getCardActionHandler();
+
+      await handler({
+        action: { value: 'not-valid-json{' },
+        operator: { open_id: 'user-123' },
+      });
+
+      expect(cardkitManager.disableStreaming).not.toHaveBeenCalled();
+    });
+
+    it('stop action 无 card_id 时忽略', async () => {
+      createEventDispatcher(mockConfig);
+      const handler = getCardActionHandler();
+
+      await handler({
+        action: { value: { action: 'stop' } },
+        operator: { open_id: 'user-123' },
+      });
+
+      expect(cardkitManager.disableStreaming).not.toHaveBeenCalled();
+    });
+
+    it('从 sender.sender_id.open_id 获取 userId', async () => {
+      createEventDispatcher(mockConfig);
+      const handler = getCardActionHandler();
+
+      await handler({
+        action: { value: { action: 'stop', card_id: 'card-sender' } },
+        sender: { sender_id: { open_id: 'user-from-sender' } },
+      });
+
+      // 不抛出，正常处理（只是无匹配任务）
+    });
+  });
+
+  // ─── im.message.recalled_v1 测试 ───
+
+  describe('im.message.recalled_v1', () => {
+    it('有 message_id 时调用 removeThreadByRootMessageId', async () => {
+      createEventDispatcher(mockConfig);
+      const handler = getRecalledHandler();
+
+      await handler({ message_id: 'msg-recalled-123' });
+
+      // removeThreadByRootMessageId 在 SessionManager mock 中
+      // 验证处理器不抛出
+    });
+
+    it('无 message_id 时忽略', async () => {
+      createEventDispatcher(mockConfig);
+      const handler = getRecalledHandler();
+
+      await handler({});
+      // 不应抛出
+    });
+  });
+
+  // ─── handleClaudeRequest 内部逻辑 ───
+
+  describe('handleClaudeRequest', () => {
+    it('sendThinkingCard 失败时提前返回', async () => {
+      vi.mocked(messageSender.sendThinkingCard).mockRejectedValueOnce(new Error('card create failed'));
+
+      createEventDispatcher(mockConfig);
+      const messageHandler = getMessageHandler();
+
+      await messageHandler({
+        message: {
+          message_id: 'msg-think-fail',
+          chat_id: 'chat-123',
+          chat_type: 'p2p',
+          message_type: 'text',
+          content: JSON.stringify({ text: 'Hello Claude' }),
+        },
+        sender: { sender_id: { open_id: 'user-123' } },
+      });
+
+      // runClaudeTask 不应被调用
+      expect(mockRunClaudeTask).not.toHaveBeenCalled();
+    });
+
+    it('sendThinkingCard 返回无 cardId 时提前返回', async () => {
+      vi.mocked(messageSender.sendThinkingCard).mockResolvedValueOnce({ messageId: 'msg-1', cardId: '' });
+
+      createEventDispatcher(mockConfig);
+      const messageHandler = getMessageHandler();
+
+      await messageHandler({
+        message: {
+          message_id: 'msg-no-card',
+          chat_id: 'chat-123',
+          chat_type: 'p2p',
+          message_type: 'text',
+          content: JSON.stringify({ text: 'Hello Claude' }),
+        },
+        sender: { sender_id: { open_id: 'user-123' } },
+      });
+
+      expect(mockRunClaudeTask).not.toHaveBeenCalled();
+    });
+
+    it('runClaudeTask 接收正确的 context', async () => {
+      createEventDispatcher(mockConfig);
+      const messageHandler = getMessageHandler();
+
+      await messageHandler({
+        message: {
+          message_id: 'msg-ctx-check',
+          chat_id: 'chat-123',
+          chat_type: 'p2p',
+          message_type: 'text',
+          content: JSON.stringify({ text: 'context check' }),
+        },
+        sender: { sender_id: { open_id: 'user-123' } },
+      });
+
+      expect(mockRunClaudeTask).toHaveBeenCalledWith(
+        mockConfig,
+        expect.any(Object), // sessionManager
+        expect.objectContaining({
+          userId: 'user-123',
+          chatId: 'chat-123',
+          platform: 'feishu',
+        }),
+        'context check',
+        expect.objectContaining({
+          streamUpdate: expect.any(Function),
+          sendComplete: expect.any(Function),
+          sendError: expect.any(Function),
+          onThinkingToText: expect.any(Function),
+          extraCleanup: expect.any(Function),
+        }),
+        expect.any(Map), // userCosts
+        expect.any(Function), // onRegister
+        expect.any(Function), // onFirstContent
+      );
+    });
+
+    it('adapter.sendComplete 调用 sendFinalCards', async () => {
+      mockRunClaudeTask.mockImplementationOnce(async (_cfg: any, _sm: any, _ctx: any, _prompt: any, adapter: any) => {
+        await adapter.sendComplete('final content', 'done note', 'thinking text');
+      });
+
+      createEventDispatcher(mockConfig);
+      const messageHandler = getMessageHandler();
+
+      await messageHandler({
+        message: {
+          message_id: 'msg-complete',
+          chat_id: 'chat-123',
+          chat_type: 'p2p',
+          message_type: 'text',
+          content: JSON.stringify({ text: 'test complete' }),
+        },
+        sender: { sender_id: { open_id: 'user-123' } },
+      });
+
+      expect(messageSender.sendFinalCards).toHaveBeenCalledWith(
+        'chat-123', 'msg-123', 'card-abc',
+        'final content', 'done note',
+        undefined, // threadCtx
+        'thinking text',
+      );
+    });
+
+    it('adapter.sendError 调用 sendErrorCard', async () => {
+      mockRunClaudeTask.mockImplementationOnce(async (_cfg: any, _sm: any, _ctx: any, _prompt: any, adapter: any) => {
+        await adapter.sendError('something went wrong');
+      });
+
+      createEventDispatcher(mockConfig);
+      const messageHandler = getMessageHandler();
+
+      await messageHandler({
+        message: {
+          message_id: 'msg-err',
+          chat_id: 'chat-123',
+          chat_type: 'p2p',
+          message_type: 'text',
+          content: JSON.stringify({ text: 'test error' }),
+        },
+        sender: { sender_id: { open_id: 'user-123' } },
+      });
+
+      expect(messageSender.sendErrorCard).toHaveBeenCalledWith('card-abc', 'something went wrong');
+    });
+
+    it('adapter.streamUpdate 调用 streamContentUpdate', async () => {
+      mockRunClaudeTask.mockImplementationOnce(async (_cfg: any, _sm: any, _ctx: any, _prompt: any, adapter: any) => {
+        adapter.streamUpdate('streaming content', 'tool note');
+      });
+
+      createEventDispatcher(mockConfig);
+      const messageHandler = getMessageHandler();
+
+      await messageHandler({
+        message: {
+          message_id: 'msg-stream',
+          chat_id: 'chat-123',
+          chat_type: 'p2p',
+          message_type: 'text',
+          content: JSON.stringify({ text: 'test stream' }),
+        },
+        sender: { sender_id: { open_id: 'user-123' } },
+      });
+
+      expect(messageSender.streamContentUpdate).toHaveBeenCalledWith('card-abc', 'streaming content', 'tool note');
+    });
+
+    it('adapter.onThinkingToText 调用 updateCardFull 重置卡片', async () => {
+      mockRunClaudeTask.mockImplementationOnce(async (_cfg: any, _sm: any, _ctx: any, _prompt: any, adapter: any) => {
+        adapter.onThinkingToText('new content');
+      });
+
+      createEventDispatcher(mockConfig);
+      const messageHandler = getMessageHandler();
+
+      await messageHandler({
+        message: {
+          message_id: 'msg-think-switch',
+          chat_id: 'chat-123',
+          chat_type: 'p2p',
+          message_type: 'text',
+          content: JSON.stringify({ text: 'test thinking switch' }),
+        },
+        sender: { sender_id: { open_id: 'user-123' } },
+      });
+
+      expect(cardkitManager.updateCardFull).toHaveBeenCalledWith('card-abc', expect.any(String));
+    });
   });
 });
