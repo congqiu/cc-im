@@ -45,7 +45,7 @@ pnpm test:watch
 - 飞书：`src/feishu/` - 使用 `@larksuiteoapi/node-sdk`，长连接模式
   - 流式输出使用 CardKit v1 API，打字机效果（详见下方「飞书 CardKit 流式架构」）
   - 支持群聊话题（thread）独立会话，每个话题有独立的 sessionId
-  - 支持图片消息，自动下载并传递给 Claude
+  - 支持图片消息，自动下载并传递给 Claude（话题中的图片以 post 富文本形式发送，自动解析图片和文字）
   - 消息撤回时自动清理关联的话题会话（`im.message.recalled_v1` 事件）
   - 权限卡片仍使用传统 `im.v1.message.patch` 更新
 - Telegram：`src/telegram/` - 使用 `telegraf`，轮询模式

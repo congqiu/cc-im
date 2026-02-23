@@ -78,6 +78,32 @@ export function getRunningTaskCount(): number {
   return runningTasks.size;
 }
 
+/**
+ * 从富文本消息（post）中一次遍历提取所有图片 image_key 和文字内容
+ */
+export function parsePostContent(postContent: { content?: unknown[][] }): { imageKeys: string[]; text: string | null } {
+  const content = postContent?.content;
+  if (!Array.isArray(content)) return { imageKeys: [], text: null };
+
+  const imageKeys: string[] = [];
+  const texts: string[] = [];
+
+  for (const block of content) {
+    if (!Array.isArray(block)) continue;
+    for (const element of block) {
+      if (!element || typeof element !== 'object') continue;
+      const el = element as { tag?: string; image_key?: string; text?: string };
+      if (el.tag === 'img' && el.image_key) {
+        imageKeys.push(el.image_key);
+      } else if (el.tag === 'text' && el.text) {
+        texts.push(el.text);
+      }
+    }
+  }
+
+  return { imageKeys, text: texts.length > 0 ? texts.join('\n') : null };
+}
+
 async function downloadFeishuImage(messageId: string, imageKey: string): Promise<string> {
   await mkdir(IMAGE_DIR, { recursive: true });
   const safeKey = imageKey.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -121,7 +147,7 @@ export function createEventDispatcher(config: Config) {
     // 添加通用事件监听器，捕获所有事件
     defaultCallback: async (data: LarkEventData) => {
       const eventType = data?.header?.event_type || data?.type || 'unknown';
-      log.info(`Received event: ${eventType}`);
+      log.info(`Received event: ${eventType}`, safeStringify(data).slice(0, 500));
 
       // 如果是卡片交互事件，记录详细信息
       if (eventType.includes('card') || eventType.includes('action')) {
@@ -262,9 +288,13 @@ export function createEventDispatcher(config: Config) {
 
       // Parse message content
       const msgType = message.message_type;
-      if (msgType !== 'text' && msgType !== 'image') {
+      log.debug(`Message type: ${msgType}, threadId: ${threadId}, content: ${message.content?.slice(0, 200)}`);
+
+      // 支持 text、image 和 post（话题中的图片会作为富文本发送）
+      if (msgType !== 'text' && msgType !== 'image' && msgType !== 'post') {
         // 话题内的非文本消息（如创建话题的系统消息）直接忽略，不回复
         if (threadId) {
+          log.debug(`Ignoring non-text/image/post message in thread: ${msgType}`);
           return;
         }
         await sendTextReply(chatId, '目前仅支持文本和图片消息。');
@@ -290,6 +320,37 @@ export function createEventDispatcher(config: Config) {
         } catch (err) {
           log.error('Failed to download image:', err);
           await sendTextReply(chatId, '图片下载失败，请重试。', threadCtx);
+          return;
+        }
+      } else if (msgType === 'post') {
+        // 话题中发送的图片会被包装成富文本消息（post）
+        // 解析其中的图片和文字
+        try {
+          const postContent = JSON.parse(message.content);
+          const { imageKeys, text: textContent } = parsePostContent(postContent);
+
+          log.debug(`Post message - images: ${imageKeys.length}, textContent: ${textContent?.slice(0, 100)}`);
+
+          if (imageKeys.length > 0) {
+            const imagePaths = await Promise.all(
+              imageKeys.map(key => downloadFeishuImage(message.message_id, key))
+            );
+            const pathList = imagePaths.map(p => `- ${p}`).join('\n');
+            if (textContent) {
+              text = `用户发送了 ${imagePaths.length} 张图片和文字：\n\n图片路径：\n${pathList}\n\n文字内容：${textContent}\n\n请用 Read 工具查看图片并分析。`;
+            } else {
+              text = `用户发送了 ${imagePaths.length} 张图片，已保存到：\n${pathList}\n\n请用 Read 工具查看并分析图片内容。`;
+            }
+            isImageMessage = true;
+          } else if (textContent) {
+            // 只有文字没有图片
+            text = textContent;
+          } else {
+            // post 消息没有图片也没有文字，直接忽略
+            return;
+          }
+        } catch (err) {
+          log.error('Failed to parse post message:', err);
           return;
         }
       } else {

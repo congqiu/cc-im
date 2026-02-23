@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import type { CostRecord } from './types.js';
 import { IMAGE_DIR } from '../constants.js';
 import { createLogger } from '../logger.js';
+import { mkdir } from 'node:fs/promises';
 
 const log = createLogger('Utils');
 
@@ -213,6 +214,8 @@ const IMAGE_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
 export async function cleanOldImages(): Promise<number> {
   let cleaned = 0;
   try {
+    // 确保目录存在
+    await mkdir(IMAGE_DIR, { recursive: true });
     const files = await readdir(IMAGE_DIR);
     const now = Date.now();
     await Promise.all(files.map(async (f) => {

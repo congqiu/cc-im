@@ -16,8 +16,11 @@
 - CLI 支持守护进程模式（`-d`/`--daemon` 启动后台运行，`cc-im stop` 停止）
 - `/model` 命令支持按用户和按话题粒度设置模型
 - 支持 `CLAUDE_MODEL` 环境变量设置默认模型
+- 飞书话题中的图片消息（post 富文本）自动解析图片和文字
 
 ### 修复
+
+- `cleanOldImages` 在目录不存在时自动创建，避免启动报错
 
 - 修复 Telegram bot 启动超时问题
 - 传递 claudeTimeoutMs 给 runClaude 并改进 Telegram 工具调用进度显示

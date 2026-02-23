@@ -228,7 +228,7 @@ vi.mock('../../../src/commands/handler.js', () => {
 });
 
 // Import after mocks
-import { createEventDispatcher } from '../../../src/feishu/event-handler.js';
+import { createEventDispatcher, parsePostContent } from '../../../src/feishu/event-handler.js';
 import * as messageSender from '../../../src/feishu/message-sender.js';
 import * as cardkitManager from '../../../src/feishu/cardkit-manager.js';
 
@@ -886,5 +886,139 @@ describe('Event Handler', () => {
 
       expect(cardkitManager.updateCardFull).toHaveBeenCalledWith('card-abc', expect.any(String));
     });
+  });
+});
+
+describe('parsePostContent', () => {
+  it('提取图片和文字', () => {
+    const post = {
+      title: '标题',
+      content: [
+        [
+          { tag: 'text', text: '第一行' },
+          { tag: 'a', href: 'http://example.com', text: '链接' },
+        ],
+        [
+          { tag: 'img', image_key: 'img_key_1' },
+        ],
+        [
+          { tag: 'text', text: '第二行' },
+        ],
+      ],
+    };
+    const result = parsePostContent(post);
+    expect(result.imageKeys).toEqual(['img_key_1']);
+    expect(result.text).toBe('第一行\n第二行');
+  });
+
+  it('提取多张图片', () => {
+    const post = {
+      content: [
+        [{ tag: 'img', image_key: 'img_a' }],
+        [{ tag: 'text', text: '中间文字' }],
+        [{ tag: 'img', image_key: 'img_b' }],
+        [{ tag: 'img', image_key: 'img_c' }],
+      ],
+    };
+    const result = parsePostContent(post);
+    expect(result.imageKeys).toEqual(['img_a', 'img_b', 'img_c']);
+    expect(result.text).toBe('中间文字');
+  });
+
+  it('只有文字没有图片', () => {
+    const post = {
+      content: [
+        [{ tag: 'text', text: '纯文字消息' }],
+        [{ tag: 'text', text: '第二段' }],
+      ],
+    };
+    const result = parsePostContent(post);
+    expect(result.imageKeys).toEqual([]);
+    expect(result.text).toBe('纯文字消息\n第二段');
+  });
+
+  it('只有图片没有文字', () => {
+    const post = {
+      content: [
+        [{ tag: 'img', image_key: 'img_only' }],
+      ],
+    };
+    const result = parsePostContent(post);
+    expect(result.imageKeys).toEqual(['img_only']);
+    expect(result.text).toBeNull();
+  });
+
+  it('空 content 数组', () => {
+    const result = parsePostContent({ content: [] });
+    expect(result.imageKeys).toEqual([]);
+    expect(result.text).toBeNull();
+  });
+
+  it('content 不是数组', () => {
+    const result = parsePostContent({ content: 'invalid' as any });
+    expect(result.imageKeys).toEqual([]);
+    expect(result.text).toBeNull();
+  });
+
+  it('无 content 字段', () => {
+    const result = parsePostContent({} as any);
+    expect(result.imageKeys).toEqual([]);
+    expect(result.text).toBeNull();
+  });
+
+  it('忽略非 img/text 标签', () => {
+    const post = {
+      content: [
+        [
+          { tag: 'text', text: '文字' },
+          { tag: 'a', href: 'http://example.com', text: '链接文字' },
+          { tag: 'at', user_id: 'ou_123', user_name: '用户' },
+          { tag: 'emotion', emoji_type: 'SMILE' },
+          { tag: 'img', image_key: 'img_1' },
+        ],
+      ],
+    };
+    const result = parsePostContent(post);
+    expect(result.imageKeys).toEqual(['img_1']);
+    expect(result.text).toBe('文字');
+  });
+
+  it('跳过 null 和非对象元素', () => {
+    const post = {
+      content: [
+        [null, undefined, 42, 'string', { tag: 'text', text: '有效' }],
+      ],
+    };
+    const result = parsePostContent(post as any);
+    expect(result.text).toBe('有效');
+    expect(result.imageKeys).toEqual([]);
+  });
+
+  it('跳过非数组的 block', () => {
+    const post = {
+      content: [
+        'not-an-array',
+        [{ tag: 'text', text: '有效块' }],
+        null,
+      ] as any,
+    };
+    const result = parsePostContent(post);
+    expect(result.text).toBe('有效块');
+  });
+
+  it('忽略空 text 和空 image_key', () => {
+    const post = {
+      content: [
+        [
+          { tag: 'text', text: '' },
+          { tag: 'img', image_key: '' },
+          { tag: 'text', text: '非空' },
+          { tag: 'img', image_key: 'valid_key' },
+        ],
+      ],
+    };
+    const result = parsePostContent(post);
+    expect(result.text).toBe('非空');
+    expect(result.imageKeys).toEqual(['valid_key']);
   });
 });
