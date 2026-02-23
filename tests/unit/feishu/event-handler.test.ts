@@ -135,7 +135,6 @@ vi.mock('../../../src/commands/handler.js', () => {
   return {
     CommandHandler: vi.fn().mockImplementation(function (this: any, deps: any) {
       this.deps = deps;
-      this.updateRunningTasksSize = vi.fn();
 
       // Mock handlers that actually call sendTextReply so tests can verify them
       this.handleHelp = vi.fn(async (chatId: string, platform: string) => {
@@ -247,10 +246,31 @@ describe('Event Handler', () => {
     hookPort: 18900,
   };
 
+  const threadSessionsMap = new Map<string, any>();
+  const mockSessionManager = {
+    getSessionId: vi.fn(),
+    setSessionId: vi.fn(),
+    getConvId: vi.fn(() => 'conv-123'),
+    getWorkDir: vi.fn(() => '/work'),
+    setWorkDir: vi.fn(),
+    clearSession: vi.fn(() => true),
+    getSessionIdForConv: vi.fn(),
+    setSessionIdForConv: vi.fn(),
+    getThreadSession: vi.fn((userId: string, threadId: string) => threadSessionsMap.get(`${userId}:${threadId}`)),
+    setThreadSession: vi.fn((userId: string, threadId: string, session: any) => {
+      threadSessionsMap.set(`${userId}:${threadId}`, session);
+    }),
+    getSessionIdForThread: vi.fn(),
+    setSessionIdForThread: vi.fn(),
+    getModel: vi.fn(),
+    removeThreadByRootMessageId: vi.fn(() => false),
+  };
+
   let mockDispatcher: any;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    threadSessionsMap.clear();
   });
 
   // Helper function to get message handler safely
@@ -273,12 +293,12 @@ describe('Event Handler', () => {
   }
 
   it('应该创建 EventDispatcher', () => {
-    const dispatcher = createEventDispatcher(mockConfig);
+    const dispatcher = createEventDispatcher(mockConfig, mockSessionManager as any);
     expect(dispatcher).toBeDefined();
   });
 
   it('应该注册消息接收事件', async () => {
-    createEventDispatcher(mockConfig);
+    createEventDispatcher(mockConfig, mockSessionManager as any);
 
     expect(mockRegister).toHaveBeenCalled();
     const registerCalls = mockRegister.mock.calls;
@@ -290,7 +310,7 @@ describe('Event Handler', () => {
   });
 
   it('命令被 dispatch 拦截后不应调用 runClaudeTask', async () => {
-    createEventDispatcher(mockConfig);
+    createEventDispatcher(mockConfig, mockSessionManager as any);
 
     const messageHandler = getMessageHandler();
 
@@ -314,7 +334,7 @@ describe('Event Handler', () => {
   });
 
   it('终端命令应该被拦截', async () => {
-    createEventDispatcher(mockConfig);
+    createEventDispatcher(mockConfig, mockSessionManager as any);
 
     const messageHandler = getMessageHandler();
 
@@ -341,7 +361,7 @@ describe('Event Handler', () => {
   });
 
   it('非文本消息应该返回提示', async () => {
-    createEventDispatcher(mockConfig);
+    createEventDispatcher(mockConfig, mockSessionManager as any);
 
     const messageHandler = getMessageHandler();
 
@@ -367,7 +387,7 @@ describe('Event Handler', () => {
   });
 
   it('群聊无 @mention 应该被忽略', async () => {
-    createEventDispatcher(mockConfig);
+    createEventDispatcher(mockConfig, mockSessionManager as any);
 
     const messageHandler = getMessageHandler();
 
@@ -392,7 +412,7 @@ describe('Event Handler', () => {
   });
 
   it('相同 messageId 应该只处理一次（去重）', async () => {
-    createEventDispatcher(mockConfig);
+    createEventDispatcher(mockConfig, mockSessionManager as any);
 
     const messageHandler = getMessageHandler();
 
@@ -422,7 +442,7 @@ describe('Event Handler', () => {
   });
 
   it('没有发送者 ID 应该被忽略', async () => {
-    createEventDispatcher(mockConfig);
+    createEventDispatcher(mockConfig, mockSessionManager as any);
 
     const messageHandler = getMessageHandler();
 
@@ -447,7 +467,7 @@ describe('Event Handler', () => {
       ...mockConfig,
       allowedUserIds: ['allowed-user'],
     };
-    createEventDispatcher(restrictedConfig);
+    createEventDispatcher(restrictedConfig, mockSessionManager as any);
 
     const messageHandler = getMessageHandler();
 
@@ -473,7 +493,7 @@ describe('Event Handler', () => {
   });
 
   it('空文本消息应该被忽略', async () => {
-    createEventDispatcher(mockConfig);
+    createEventDispatcher(mockConfig, mockSessionManager as any);
 
     const messageHandler = getMessageHandler();
 
@@ -496,7 +516,7 @@ describe('Event Handler', () => {
   });
 
   it('消息内容解析失败应该被忽略', async () => {
-    createEventDispatcher(mockConfig);
+    createEventDispatcher(mockConfig, mockSessionManager as any);
 
     const messageHandler = getMessageHandler();
 
@@ -520,7 +540,7 @@ describe('Event Handler', () => {
 
 
   it('应该去除飞书 @mention 占位符', async () => {
-    createEventDispatcher(mockConfig);
+    createEventDispatcher(mockConfig, mockSessionManager as any);
 
     const messageHandler = getMessageHandler();
 
@@ -546,7 +566,7 @@ describe('Event Handler', () => {
   });
 
   it('群聊主聊天区应该使用默认会话（不创建话题）', async () => {
-    createEventDispatcher(mockConfig);
+    createEventDispatcher(mockConfig, mockSessionManager as any);
     const messageHandler = getMessageHandler();
 
     const messageData = {
@@ -571,7 +591,7 @@ describe('Event Handler', () => {
   });
 
   it('群聊话题内应该使用话题会话', async () => {
-    createEventDispatcher(mockConfig);
+    createEventDispatcher(mockConfig, mockSessionManager as any);
     const messageHandler = getMessageHandler();
 
     const messageData = {
@@ -599,7 +619,7 @@ describe('Event Handler', () => {
   });
 
   it('话题群（topic）应该使用话题会话', async () => {
-    createEventDispatcher(mockConfig);
+    createEventDispatcher(mockConfig, mockSessionManager as any);
     const messageHandler = getMessageHandler();
 
     const messageData = {
@@ -630,7 +650,7 @@ describe('Event Handler', () => {
 
   describe('card.action.trigger', () => {
     it('无 userId 时忽略', async () => {
-      createEventDispatcher(mockConfig);
+      createEventDispatcher(mockConfig, mockSessionManager as any);
       const handler = getCardActionHandler();
 
       await handler({
@@ -643,7 +663,7 @@ describe('Event Handler', () => {
     });
 
     it('action 字段不是 string 时忽略', async () => {
-      createEventDispatcher(mockConfig);
+      createEventDispatcher(mockConfig, mockSessionManager as any);
       const handler = getCardActionHandler();
 
       await handler({
@@ -655,7 +675,7 @@ describe('Event Handler', () => {
     });
 
     it('解析 action value 异常时忽略', async () => {
-      createEventDispatcher(mockConfig);
+      createEventDispatcher(mockConfig, mockSessionManager as any);
       const handler = getCardActionHandler();
 
       await handler({
@@ -667,7 +687,7 @@ describe('Event Handler', () => {
     });
 
     it('stop action 无 card_id 时忽略', async () => {
-      createEventDispatcher(mockConfig);
+      createEventDispatcher(mockConfig, mockSessionManager as any);
       const handler = getCardActionHandler();
 
       await handler({
@@ -679,7 +699,7 @@ describe('Event Handler', () => {
     });
 
     it('从 sender.sender_id.open_id 获取 userId', async () => {
-      createEventDispatcher(mockConfig);
+      createEventDispatcher(mockConfig, mockSessionManager as any);
       const handler = getCardActionHandler();
 
       await handler({
@@ -695,7 +715,7 @@ describe('Event Handler', () => {
 
   describe('im.message.recalled_v1', () => {
     it('有 message_id 时调用 removeThreadByRootMessageId', async () => {
-      createEventDispatcher(mockConfig);
+      createEventDispatcher(mockConfig, mockSessionManager as any);
       const handler = getRecalledHandler();
 
       await handler({ message_id: 'msg-recalled-123' });
@@ -705,7 +725,7 @@ describe('Event Handler', () => {
     });
 
     it('无 message_id 时忽略', async () => {
-      createEventDispatcher(mockConfig);
+      createEventDispatcher(mockConfig, mockSessionManager as any);
       const handler = getRecalledHandler();
 
       await handler({});
@@ -719,7 +739,7 @@ describe('Event Handler', () => {
     it('sendThinkingCard 失败时提前返回', async () => {
       vi.mocked(messageSender.sendThinkingCard).mockRejectedValueOnce(new Error('card create failed'));
 
-      createEventDispatcher(mockConfig);
+      createEventDispatcher(mockConfig, mockSessionManager as any);
       const messageHandler = getMessageHandler();
 
       await messageHandler({
@@ -740,7 +760,7 @@ describe('Event Handler', () => {
     it('sendThinkingCard 返回无 cardId 时提前返回', async () => {
       vi.mocked(messageSender.sendThinkingCard).mockResolvedValueOnce({ messageId: 'msg-1', cardId: '' });
 
-      createEventDispatcher(mockConfig);
+      createEventDispatcher(mockConfig, mockSessionManager as any);
       const messageHandler = getMessageHandler();
 
       await messageHandler({
@@ -758,7 +778,7 @@ describe('Event Handler', () => {
     });
 
     it('runClaudeTask 接收正确的 context', async () => {
-      createEventDispatcher(mockConfig);
+      createEventDispatcher(mockConfig, mockSessionManager as any);
       const messageHandler = getMessageHandler();
 
       await messageHandler({
@@ -799,7 +819,7 @@ describe('Event Handler', () => {
         await adapter.sendComplete('final content', 'done note', 'thinking text');
       });
 
-      createEventDispatcher(mockConfig);
+      createEventDispatcher(mockConfig, mockSessionManager as any);
       const messageHandler = getMessageHandler();
 
       await messageHandler({
@@ -826,7 +846,7 @@ describe('Event Handler', () => {
         await adapter.sendError('something went wrong');
       });
 
-      createEventDispatcher(mockConfig);
+      createEventDispatcher(mockConfig, mockSessionManager as any);
       const messageHandler = getMessageHandler();
 
       await messageHandler({
@@ -848,7 +868,7 @@ describe('Event Handler', () => {
         adapter.streamUpdate('streaming content', 'tool note');
       });
 
-      createEventDispatcher(mockConfig);
+      createEventDispatcher(mockConfig, mockSessionManager as any);
       const messageHandler = getMessageHandler();
 
       await messageHandler({
@@ -870,7 +890,7 @@ describe('Event Handler', () => {
         adapter.onThinkingToText('new content');
       });
 
-      createEventDispatcher(mockConfig);
+      createEventDispatcher(mockConfig, mockSessionManager as any);
       const messageHandler = getMessageHandler();
 
       await messageHandler({

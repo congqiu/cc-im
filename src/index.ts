@@ -1,11 +1,12 @@
 import { loadConfig } from './config.js';
 import { initFeishu, stopFeishu } from './feishu/client.js';
 import { initTelegram, stopTelegram } from './telegram/client.js';
-import { createEventDispatcher, getRunningTaskCount as getFeishuTaskCount, stopEventHandler as stopFeishuEventHandler } from './feishu/event-handler.js';
+import { createEventDispatcher, type FeishuEventHandlerHandle } from './feishu/event-handler.js';
 import { sendTextReply as feishuSendText } from './feishu/message-sender.js';
-import { setupTelegramHandlers, getRunningTaskCount as getTelegramTaskCount, stopTelegramEventHandler } from './telegram/event-handler.js';
+import { setupTelegramHandlers, type TelegramEventHandlerHandle } from './telegram/event-handler.js';
 import { sendTextReply as telegramSendText } from './telegram/message-sender.js';
 import { startPermissionServer } from './hook/permission-server.js';
+import { SessionManager } from './session/session-manager.js';
 import { loadActiveChats, getActiveChatId } from './shared/active-chats.js';
 import { cleanOldImages } from './shared/utils.js';
 import { initLogger, createLogger, closeLogger } from './logger.js';
@@ -44,37 +45,20 @@ export async function main() {
   log.info(`Timeout: ${config.claudeTimeoutMs}ms`);
   log.info(`Allowed base dirs: ${config.allowedBaseDirs.length} dirs configured`);
 
-  /**
-   * Permission Hook Server
-   *
-   * When CLAUDE_SKIP_PERMISSIONS is false (default), we start a local HTTP server
-   * to handle permission confirmation requests from the Claude Code PreToolUse hook.
-   *
-   * How it works:
-   * 1. Claude Code invokes the hook script before executing sensitive tools (Bash, Write, Edit, etc.)
-   * 2. The hook script sends a permission request to this server
-   * 3. The server sends a permission card/message to the user via the messaging platform
-   * 4. User responds with /allow or /deny
-   * 5. The decision is returned to the hook script, which returns it to Claude Code
-   *
-   * Important limitations:
-   * - The server is started only once at application startup
-   * - Changing CLAUDE_SKIP_PERMISSIONS at runtime requires restarting the application
-   * - The server listens only on localhost (127.0.0.1) for security
-   * - Permission requests timeout after 5 minutes if user doesn't respond
-   *
-   * Configuration:
-   * - CLAUDE_SKIP_PERMISSIONS: Set to "true" to disable permission checks (NOT recommended)
-   * - HOOK_SERVER_PORT: Port for the permission server (default: 18900)
-   */
   if (!config.claudeSkipPermissions) {
     await startPermissionServer(config.hookPort);
     log.info(`Permission hook server started on port ${config.hookPort}`);
   }
 
+  // 创建共享的 SessionManager 单例
+  const sessionManager = new SessionManager(config.claudeWorkDir, config.allowedBaseDirs);
+
   // Initialize enabled platforms in parallel
   const activeBots: string[] = [];
   const initTasks: Promise<{ platform: string; success: boolean }>[] = [];
+
+  let feishuHandle: FeishuEventHandlerHandle | null = null;
+  let telegramHandle: TelegramEventHandlerHandle | null = null;
 
   if (config.enabledPlatforms.includes('telegram')) {
     log.debug('Initializing Telegram platform...');
@@ -84,7 +68,9 @@ export async function main() {
       log.info(`Telegram whitelist: ${config.allowedUserIds.filter(id => /^\d+$/.test(id)).length} users configured`);
     }
     initTasks.push(
-      initTelegram(config, (bot) => setupTelegramHandlers(bot, config))
+      initTelegram(config, (bot) => {
+        telegramHandle = setupTelegramHandlers(bot, config, sessionManager);
+      })
         .then(() => {
           log.info('Telegram bot initialized');
           return { platform: 'Telegram', success: true };
@@ -101,8 +87,8 @@ export async function main() {
     initTasks.push(
       Promise.resolve()
         .then(() => {
-          const eventDispatcher = createEventDispatcher(config);
-          initFeishu(config, eventDispatcher);
+          feishuHandle = createEventDispatcher(config, sessionManager);
+          initFeishu(config, feishuHandle.dispatcher);
           log.info('Feishu bot initialized');
           return { platform: 'Feishu', success: true };
         })
@@ -163,19 +149,19 @@ export async function main() {
     await sendLifecycleNotification(activeBots, `🔴 cc-im 服务正在关闭...\n运行时长: ${uptimeStr}`).catch(() => {});
 
     // 停止接受新消息
+    telegramHandle?.stop();
     if (config.enabledPlatforms.includes('telegram')) {
-      stopTelegramEventHandler();
       stopTelegram();
     }
+    feishuHandle?.stop();
     if (config.enabledPlatforms.includes('feishu')) {
-      stopFeishuEventHandler();
       stopFeishu();
     }
 
     // 等待运行中的任务完成（最多 30 秒）
     const maxWait = 30_000;
     const start = Date.now();
-    const getTotalTasks = () => getFeishuTaskCount() + getTelegramTaskCount();
+    const getTotalTasks = () => (feishuHandle?.getRunningTaskCount() ?? 0) + (telegramHandle?.getRunningTaskCount() ?? 0);
     let remaining = getTotalTasks();
     if (remaining > 0) {
       log.info(`Waiting for ${remaining} running task(s) to complete...`);

@@ -19,16 +19,21 @@ const sessions = new Map<string, CardSession>();
 const SESSION_TTL_MS = 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
 
-const cleanupTimer = setInterval(() => {
-  const now = Date.now();
-  for (const [id, s] of sessions) {
-    if (now - s.createdAt > SESSION_TTL_MS) {
-      sessions.delete(id);
-      log.info(`Auto-cleaned expired card session: ${id}`);
+let cleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+function ensureCleanupTimer() {
+  if (cleanupTimer) return;
+  cleanupTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [id, s] of sessions) {
+      if (now - s.createdAt > SESSION_TTL_MS) {
+        sessions.delete(id);
+        log.info(`Auto-cleaned expired card session: ${id}`);
+      }
     }
-  }
-}, CLEANUP_INTERVAL_MS);
-cleanupTimer.unref();
+  }, CLEANUP_INTERVAL_MS);
+  cleanupTimer.unref();
+}
 
 function nextSeq(cardId: string): number {
   const s = sessions.get(cardId);
@@ -41,6 +46,7 @@ function nextSeq(cardId: string): number {
  * 创建 CardKit 卡片实例，初始化 session
  */
 export async function createCard(cardJson: string): Promise<string> {
+  ensureCleanupTimer();
   // 不使用 withRetry：创建操作不幂等，重试会产生孤儿卡片
   const client = getClient();
   const res = await client.cardkit.v1.card.create({

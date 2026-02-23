@@ -103,7 +103,6 @@ vi.mock('../../../src/shared/message-dedup.js', () => ({
 vi.mock('../../../src/commands/handler.js', () => ({
   CommandHandler: vi.fn().mockImplementation(function (this: any, deps: any) {
     this.deps = deps;
-    this.updateRunningTasksSize = vi.fn();
     this.dispatch = vi.fn(async (text: string, chatId: string, userId: string, platform: string, _handleClaudeRequest: any) => {
       const t = text.trim();
       if (platform === 'telegram' && t === '/start') {
@@ -140,7 +139,7 @@ vi.mock('node:child_process', () => ({
 }));
 
 // Import after all mocks
-import { setupTelegramHandlers, stopTelegramEventHandler, getRunningTaskCount } from '../../../src/telegram/event-handler.js';
+import { setupTelegramHandlers } from '../../../src/telegram/event-handler.js';
 import * as messageSender from '../../../src/telegram/message-sender.js';
 import { runClaudeTask } from '../../../src/shared/claude-task.js';
 import { setActiveChatId } from '../../../src/shared/active-chats.js';
@@ -179,6 +178,18 @@ const mockConfig = {
   hookPort: 18900,
 };
 
+const mockSessionManager = {
+  getSessionId: vi.fn(),
+  setSessionId: vi.fn(),
+  getConvId: vi.fn(() => 'conv-123'),
+  getWorkDir: vi.fn(() => '/work'),
+  setWorkDir: vi.fn(),
+  clearSession: vi.fn(() => true),
+  getSessionIdForConv: vi.fn(() => 'session-abc'),
+  setSessionIdForConv: vi.fn(),
+  getModel: vi.fn(),
+};
+
 describe('Telegram Event Handler', () => {
   let mockBot: ReturnType<typeof createMockBot>;
 
@@ -190,7 +201,7 @@ describe('Telegram Event Handler', () => {
   // --- setup & lifecycle ---
 
   it('setupTelegramHandlers 应该注册 callback_query、text 和 photo 处理器', () => {
-    setupTelegramHandlers(mockBot as any, mockConfig as any);
+    setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
 
     expect(mockBot.on).toHaveBeenCalledTimes(3);
     expect(mockBot.handlers['callback_query']).toBeDefined();
@@ -199,7 +210,8 @@ describe('Telegram Event Handler', () => {
   });
 
   it('getRunningTaskCount 初始应该返回 0', () => {
-    expect(getRunningTaskCount()).toBe(0);
+    const handle = setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
+    expect(handle.getRunningTaskCount()).toBe(0);
   });
 
   // --- text message handlers ---
@@ -214,7 +226,7 @@ describe('Telegram Event Handler', () => {
     }
 
     it('非私聊消息应该被拒绝', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['text'];
 
       const ctx = createTextCtx({ chat: { id: 123, type: 'group' } });
@@ -227,7 +239,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('重复消息应该被忽略', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['text'];
 
       const ctx = createTextCtx({ message: { message_id: 999, text: 'Hello' } });
@@ -244,7 +256,7 @@ describe('Telegram Event Handler', () => {
 
     it('未授权用户应该被拒绝', async () => {
       const restrictedConfig = { ...mockConfig, allowedUserIds: ['allowed-user'] };
-      setupTelegramHandlers(mockBot as any, restrictedConfig as any);
+      setupTelegramHandlers(mockBot as any, restrictedConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['text'];
 
       const ctx = createTextCtx({ from: { id: 789 } });
@@ -257,7 +269,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('命令分发成功时应该直接返回', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['text'];
 
       const ctx = createTextCtx({ message: { message_id: 1001, text: '/help' } });
@@ -272,7 +284,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('普通消息应该入队并调用 runClaudeTask', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['text'];
 
       const ctx = createTextCtx({ message: { message_id: 2001, text: '帮我写代码' } });
@@ -283,7 +295,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('队列满时应该返回拒绝消息', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['text'];
 
       // 让 RequestQueue.enqueue 返回 'rejected'
@@ -303,7 +315,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('队列排队时应该返回排队消息', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['text'];
 
       const { RequestQueue } = await import('../../../src/queue/request-queue.js');
@@ -322,7 +334,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('应该设置活跃聊天 ID', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['text'];
 
       const ctx = createTextCtx({ message: { message_id: 4001, text: '测试' } });
@@ -352,7 +364,7 @@ describe('Telegram Event Handler', () => {
     }
 
     it('非私聊应该被拒绝', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['photo'];
 
       const ctx = createPhotoCtx({ chat: { id: 123, type: 'group' } });
@@ -365,7 +377,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('重复图片消息应该被忽略', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['photo'];
 
       // 需要提供 getFileLink 的 mock
@@ -391,7 +403,7 @@ describe('Telegram Event Handler', () => {
 
     it('未授权用户应该被拒绝', async () => {
       const restrictedConfig = { ...mockConfig, allowedUserIds: ['allowed-user'] };
-      setupTelegramHandlers(mockBot as any, restrictedConfig as any);
+      setupTelegramHandlers(mockBot as any, restrictedConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['photo'];
 
       const ctx = createPhotoCtx({ from: { id: 789 }, message: { message_id: 5002, photo: [{ file_id: 'photo-1', width: 800, height: 600 }] } });
@@ -404,7 +416,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('图片下载成功应该入队并构建提示词', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['photo'];
 
       mockBot.telegram.getFileLink.mockResolvedValue({ href: 'https://example.com/photo.jpg' });
@@ -423,7 +435,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('图片下载失败应该提示错误', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['photo'];
 
       mockBot.telegram.getFileLink.mockRejectedValue(new Error('network error'));
@@ -439,7 +451,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('带附言的图片应该在提示词中包含附言', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['photo'];
 
       mockBot.telegram.getFileLink.mockResolvedValue({ href: 'https://example.com/photo.jpg' });
@@ -474,7 +486,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('图片队列满时应该返回拒绝消息', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['photo'];
 
       mockBot.telegram.getFileLink.mockResolvedValue({ href: 'https://example.com/photo.jpg' });
@@ -505,7 +517,7 @@ describe('Telegram Event Handler', () => {
 
   describe('回调查询（停止按钮）处理', () => {
     it('没有 data 字段的回调应该被忽略', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['callback_query'];
 
       const ctx = {
@@ -522,7 +534,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('停止按钮有对应任务时应该停止任务', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
 
       // 先通过发送消息创建一个运行中的任务
       const textHandler = mockBot.handlers['text'];
@@ -572,7 +584,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('停止按钮没有对应任务时应该提示', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['callback_query'];
 
       const ctx = {
@@ -593,7 +605,7 @@ describe('Telegram Event Handler', () => {
 
   describe('handleClaudeRequest 内部逻辑', () => {
     it('sendThinkingMessage 失败时应该提前返回', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['text'];
 
       vi.mocked(messageSender.sendThinkingMessage).mockRejectedValueOnce(new Error('send failed'));
@@ -605,7 +617,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('sendThinkingMessage 返回空值时应该提前返回', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['text'];
 
       vi.mocked(messageSender.sendThinkingMessage).mockResolvedValueOnce('');
@@ -617,7 +629,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('runClaudeTask 应该接收正确的参数', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['text'];
 
       vi.mocked(messageSender.sendThinkingMessage).mockResolvedValueOnce('msg-test-456');
@@ -648,7 +660,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('adapter.streamUpdate 应该调用 updateMessage', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['text'];
 
       vi.mocked(messageSender.sendThinkingMessage).mockResolvedValueOnce('msg-stream-789');
@@ -674,7 +686,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('adapter.streamUpdate 没有工具提示时应该只显示"输出中..."', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['text'];
 
       vi.mocked(messageSender.sendThinkingMessage).mockResolvedValueOnce('msg-stream-no-tool');
@@ -699,7 +711,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('adapter.sendComplete 应该调用 sendFinalMessages', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['text'];
 
       vi.mocked(messageSender.sendThinkingMessage).mockResolvedValueOnce('msg-complete');
@@ -723,7 +735,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('adapter.sendError 应该调用 updateMessage 显示错误', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['text'];
 
       vi.mocked(messageSender.sendThinkingMessage).mockResolvedValueOnce('msg-error');
@@ -748,7 +760,7 @@ describe('Telegram Event Handler', () => {
     });
 
     it('adapter.extraCleanup 应该停止 typing 并清理任务', async () => {
-      setupTelegramHandlers(mockBot as any, mockConfig as any);
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['text'];
 
       const mockStopTyping = vi.fn();

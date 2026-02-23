@@ -29,15 +29,13 @@ export interface CommandHandlerDeps {
   requestQueue: RequestQueue;
   sender: MessageSender;
   userCosts: Map<string, CostRecord>;
-  runningTasksSize: number;
+  getRunningTasksSize: () => number;
 }
 
 /**
  * Claude 请求处理器类型
  */
 export type ClaudeRequestHandler = (
-  config: Config,
-  sessionManager: SessionManager,
   userId: string,
   chatId: string,
   prompt: string,
@@ -51,13 +49,6 @@ export type ClaudeRequestHandler = (
  */
 export class CommandHandler {
   constructor(private deps: CommandHandlerDeps) {}
-
-  /**
-   * 更新运行中的任务数量
-   */
-  updateRunningTasksSize(size: number): void {
-    this.deps.runningTasksSize = size;
-  }
 
   /**
    * 统一命令分发：识别并处理所有命令，返回 true 表示已处理
@@ -338,7 +329,7 @@ export class CommandHandler {
       `版本: ${version}`,
       `工作目录: ${workDir}`,
       `允许的基础目录: ${this.deps.config.allowedBaseDirs.join(', ')}`,
-      `活跃任务数: ${this.deps.runningTasksSize}`,
+      `活跃任务数: ${this.deps.getRunningTasksSize()}`,
     ];
     await this.deps.sender.sendTextReply(chatId, lines.join('\n'), threadCtx);
     return true;
@@ -371,7 +362,7 @@ export class CommandHandler {
       : this.deps.sessionManager.getWorkDir(userId);
     const queueKey = threadCtx ? threadCtx.threadId : this.deps.sessionManager.getConvId(userId);
     const enqueueResult = this.deps.requestQueue.enqueue(userId, queueKey, compactPrompt, async (prompt) => {
-      await handleClaudeRequest(this.deps.config, this.deps.sessionManager, userId, chatId, prompt, workDir, undefined, threadCtx);
+      await handleClaudeRequest(userId, chatId, prompt, workDir, undefined, threadCtx);
     });
     if (enqueueResult === 'rejected') {
       await this.deps.sender.sendTextReply(chatId, '请求队列已满，请等待当前任务完成后再试。', threadCtx);

@@ -38,6 +38,7 @@ function isUserSession(val: unknown): val is UserSession {
 export class SessionManager {
   private sessions: Map<string, UserSession> = new Map();
   private convSessionMap: Map<string, string> = new Map(); // userId:convId -> sessionId
+  private rootMsgIndex: Map<string, { userId: string; threadId: string }> = new Map(); // rootMessageId -> location
   private static readonly MAX_CONV_SESSION_MAP_SIZE = 200;
   private defaultWorkDir: string;
   private allowedBaseDirs: string[];
@@ -117,21 +118,24 @@ export class SessionManager {
     return this.sessions.get(userId)?.workDir ?? this.defaultWorkDir;
   }
 
-  async setWorkDir(userId: string, workDir: string): Promise<string> {
-    const currentDir = this.getWorkDir(userId);
-    const resolved = resolve(currentDir, workDir);
+  private async resolveAndValidatePath(baseDir: string, targetDir: string): Promise<string> {
+    const resolved = resolve(baseDir, targetDir);
     if (!existsSync(resolved)) {
       throw new Error(`目录不存在: ${resolved}`);
     }
-    // 解析符号链接获取真实路径，防止路径遍历攻击
     const realPath = await realpath(resolved);
-    // Check path is under an allowed base directory
     const allowed = this.allowedBaseDirs.some(
       (base) => realPath === base || realPath.startsWith(base + '/')
     );
     if (!allowed) {
       throw new Error(`目录不在允许范围内: ${realPath}\n允许的目录: ${this.allowedBaseDirs.join(', ')}`);
     }
+    return realPath;
+  }
+
+  async setWorkDir(userId: string, workDir: string): Promise<string> {
+    const currentDir = this.getWorkDir(userId);
+    const realPath = await this.resolveAndValidatePath(currentDir, workDir);
     const session = this.sessions.get(userId);
     if (session) {
       // 转存旧 convId 的 sessionId，供仍在运行的旧任务使用
@@ -217,6 +221,11 @@ export class SessionManager {
   }
 
   setThreadSession(userId: string, threadId: string, session: ThreadSession): void {
+    // 清除旧的 rootMsgIndex 条目（如果该 threadId 已有旧 session）
+    const oldThread = this.sessions.get(userId)?.threads?.[threadId];
+    if (oldThread?.rootMessageId) {
+      this.rootMsgIndex.delete(oldThread.rootMessageId);
+    }
     const userSession = this.sessions.get(userId);
     if (userSession) {
       if (!userSession.threads) userSession.threads = {};
@@ -228,12 +237,20 @@ export class SessionManager {
         threads: { [threadId]: session },
       });
     }
+    // 维护反向索引
+    if (session.rootMessageId) {
+      this.rootMsgIndex.set(session.rootMessageId, { userId, threadId });
+    }
     this.save();
   }
 
   removeThreadSession(userId: string, threadId: string): void {
     const threads = this.sessions.get(userId)?.threads;
     if (threads) {
+      const thread = threads[threadId];
+      if (thread?.rootMessageId) {
+        this.rootMsgIndex.delete(thread.rootMessageId);
+      }
       delete threads[threadId];
       this.flushSync();
     }
@@ -269,18 +286,7 @@ export class SessionManager {
         throw new Error(`Failed to initialize thread session: user=${userId}, thread=${threadId}`);
       }
     }
-    const resolved = resolve(thread.workDir, workDir);
-    if (!existsSync(resolved)) {
-      throw new Error(`目录不存在: ${resolved}`);
-    }
-    // 解析符号链接获取真实路径，防止路径遍历攻击
-    const realPath = await realpath(resolved);
-    const allowed = this.allowedBaseDirs.some(
-      (base) => realPath === base || realPath.startsWith(base + '/')
-    );
-    if (!allowed) {
-      throw new Error(`目录不在允许范围内: ${realPath}\n允许的目录: ${this.allowedBaseDirs.join(', ')}`);
-    }
+    const realPath = await this.resolveAndValidatePath(thread.workDir, workDir);
     thread.workDir = realPath;
     thread.sessionId = undefined; // 切换目录重置会话
     this.flushSync();
@@ -301,16 +307,17 @@ export class SessionManager {
   }
 
   removeThreadByRootMessageId(rootMessageId: string): boolean {
-    for (const [, session] of this.sessions) {
-      if (!session.threads) continue;
-      for (const [threadId, thread] of Object.entries(session.threads)) {
-        if (thread.rootMessageId === rootMessageId) {
-          delete session.threads[threadId];
-          this.save();
-          return true;
-        }
-      }
+    const loc = this.rootMsgIndex.get(rootMessageId);
+    if (!loc) return false;
+    const threads = this.sessions.get(loc.userId)?.threads;
+    if (threads && threads[loc.threadId]) {
+      delete threads[loc.threadId];
+      this.rootMsgIndex.delete(rootMessageId);
+      this.save();
+      return true;
     }
+    // 索引过期，清理
+    this.rootMsgIndex.delete(rootMessageId);
     return false;
   }
 
@@ -334,6 +341,14 @@ export class SessionManager {
               val.activeConvId = this.generateConvId();
             }
             this.sessions.set(key, val);
+            // 重建 rootMsgIndex
+            if (val.threads) {
+              for (const [threadId, thread] of Object.entries(val.threads)) {
+                if (thread.rootMessageId) {
+                  this.rootMsgIndex.set(thread.rootMessageId, { userId: key, threadId });
+                }
+              }
+            }
           }
         }
         log.info(`Loaded ${this.sessions.size} sessions`);
@@ -353,13 +368,7 @@ export class SessionManager {
 
   private flush() {
     try {
-      const dir = dirname(SESSIONS_FILE);
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      const obj: Record<string, UserSession> = {};
-      for (const [key, val] of this.sessions) {
-        obj[key] = val;
-      }
-      writeFileSync(SESSIONS_FILE, JSON.stringify(obj, null, 2), 'utf-8');
+      this.doFlush();
     } catch (err) {
       log.error('Failed to save sessions:', err);
     }
@@ -372,17 +381,21 @@ export class SessionManager {
       this.saveTimer = null;
     }
     try {
-      const dir = dirname(SESSIONS_FILE);
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      const obj: Record<string, UserSession> = {};
-      for (const [key, val] of this.sessions) {
-        obj[key] = val;
-      }
-      writeFileSync(SESSIONS_FILE, JSON.stringify(obj, null, 2), 'utf-8');
+      this.doFlush();
       log.info('Sessions saved synchronously');
     } catch (err) {
       log.error('Failed to save sessions synchronously:', err);
       throw err;
     }
+  }
+
+  private doFlush() {
+    const dir = dirname(SESSIONS_FILE);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const obj: Record<string, UserSession> = {};
+    for (const [key, val] of this.sessions) {
+      obj[key] = val;
+    }
+    writeFileSync(SESSIONS_FILE, JSON.stringify(obj, null, 2), 'utf-8');
   }
 }

@@ -20,6 +20,7 @@
 
 ### 修复
 
+- 修复 stderr 在 4KB~10KB 之间时拼接产生重复内容
 - `cleanOldImages` 在目录不存在时自动创建，避免启动报错
 
 - 修复 Telegram bot 启动超时问题
@@ -47,6 +48,10 @@
 - getHistory 返回值改为 discriminated union（HistoryResult）
 - listSubDirs 改为异步操作
 - 错误日志增加 sessionId 便于排查
+- SessionManager 改为共享单例注入各平台，事件处理器状态从模块级移入闭包并返回 Handle 对象
+- `removeThreadByRootMessageId` 添加反向索引优化为 O(1) 查找
+- 提取 `resolveAndValidatePath`、`doFlush` 消除重复代码
+- CardKit 清理定时器改为懒初始化
 - SessionManager 会话保存改为同步写入
 - Telegram 去重 Map 增加容量上限（1000 条）
 - convSessionMap 增加容量上限（200 条），防止内存泄漏

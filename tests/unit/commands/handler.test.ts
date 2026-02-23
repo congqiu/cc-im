@@ -125,7 +125,7 @@ function createDeps(overrides?: Partial<CommandHandlerDeps>): CommandHandlerDeps
     requestQueue: createMockRequestQueue() as any,
     sender: createMockSender(),
     userCosts: new Map<string, CostRecord>(),
-    runningTasksSize: 0,
+    getRunningTasksSize: () => 0,
     ...overrides,
   };
 }
@@ -660,7 +660,7 @@ describe('CommandHandler', () => {
     });
 
     it('should show running tasks count', async () => {
-      handler.updateRunningTasksSize(5);
+      deps.getRunningTasksSize = () => 5;
       await handler.dispatch('/doctor', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
       const text = vi.mocked(deps.sender.sendTextReply).mock.calls[0][1];
       expect(text).toContain('5');
@@ -973,15 +973,6 @@ describe('CommandHandler', () => {
       vi.mocked(getHistory).mockResolvedValue({ ok: false, error: 'no' });
       await handler.dispatch('/history', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
       expect(getHistory).toHaveBeenCalledWith('/work', 'session-abc', 1);
-    });
-  });
-
-  // ─── updateRunningTasksSize ───
-
-  describe('updateRunningTasksSize', () => {
-    it('should update the running tasks size', () => {
-      handler.updateRunningTasksSize(10);
-      expect(deps.runningTasksSize).toBe(10);
     });
   });
 });

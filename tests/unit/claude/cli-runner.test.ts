@@ -362,6 +362,32 @@ describe('CLI Runner', () => {
     });
   });
 
+  it('stderr 在 4KB~10KB 之间时不应有重复内容', async () => {
+    const onError = vi.fn();
+    const callbacks = {
+      onText: vi.fn(),
+      onComplete: vi.fn(),
+      onError,
+    };
+
+    runClaude('/claude', 'prompt', undefined, '/work', callbacks);
+
+    // 生成 5KB 的 stderr（介于 HEAD 4KB 和 HEAD+TAIL 10KB 之间）
+    const chunk = 'x'.repeat(5 * 1024);
+    mockStderr.push(chunk);
+    mockStderr.push(null);
+    mockStdout.push(null);
+
+    mockChild.emit('close', 1);
+
+    await vi.waitFor(() => {
+      expect(onError).toHaveBeenCalled();
+      const error = onError.mock.calls[0][0] as string;
+      // 输出应该恰好是 5KB，不含重复
+      expect(error.length).toBe(5 * 1024);
+    });
+  });
+
   it('无 result 但正常退出应该用 accumulated 作为 result', async () => {
     const onComplete = vi.fn();
     const callbacks = {

@@ -193,9 +193,12 @@ export function runClaude(
       if (exitCode !== null && exitCode !== 0) {
         // 组合首尾 stderr 信息
         let stderrData = '';
-        if (stderrTotal <= MAX_HEAD_LEN + MAX_TAIL_LEN) {
-          // 内容未超限，直接使用
-          stderrData = stderrHead + (headFull ? stderrTail : '');
+        if (!headFull) {
+          // head 未满，stderrHead 包含全部内容
+          stderrData = stderrHead;
+        } else if (stderrTotal <= MAX_HEAD_LEN + MAX_TAIL_LEN) {
+          // head 已满但总量未超限，去掉 tail 中与 head 重叠的部分
+          stderrData = stderrHead + stderrTail.slice(stderrTail.length - (stderrTotal - MAX_HEAD_LEN));
         } else {
           // 内容超限，显示首尾部分
           stderrData = stderrHead + `\n\n... (省略 ${stderrTotal - MAX_HEAD_LEN - MAX_TAIL_LEN} 字节) ...\n\n` + stderrTail;
