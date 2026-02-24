@@ -6,6 +6,7 @@ import { sendTextReply as feishuSendText } from './feishu/message-sender.js';
 import { setupTelegramHandlers, type TelegramEventHandlerHandle } from './telegram/event-handler.js';
 import { sendTextReply as telegramSendText } from './telegram/message-sender.js';
 import { startPermissionServer } from './hook/permission-server.js';
+import { ensureHookConfigured } from './hook/ensure-hook.js';
 import { SessionManager } from './session/session-manager.js';
 import { loadActiveChats, getActiveChatId } from './shared/active-chats.js';
 import { cleanOldImages } from './shared/utils.js';
@@ -47,6 +48,7 @@ export async function main() {
 
   let permissionServer: { close: () => void } | null = null;
   if (!config.claudeSkipPermissions) {
+    ensureHookConfigured();
     permissionServer = await startPermissionServer(config.hookPort);
     log.info(`Permission hook server started on port ${config.hookPort}`);
   }

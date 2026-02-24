@@ -121,20 +121,10 @@ cc-im stop
 | `/model [name]` | 查看或切换模型（按用户/话题粒度） |
 | `/doctor` | 运行 Claude 诊断 |
 | `/compact [topic]` | 压缩当前对话上下文 |
-| `/todos` | 查看待办事项 |
 | `/history [page]` | 查看当前会话的对话历史 |
 | `/threads` | 列出所有话题会话（飞书） |
-
-### 权限相关命令
-
-当 `CLAUDE_SKIP_PERMISSIONS=false`（默认）时，Claude Code 执行敏感操作（如 Bash 命令、写文件）会弹出权限确认卡片：
-
-| 命令 | 说明 |
-|------|------|
-| `/allow` 或 `/y` | 允许当前待确认的操作 |
-| `/deny` 或 `/n` | 拒绝当前待确认的操作 |
-| `/allowall` | 允许所有待确认的操作 |
-| `/pending` | 查看当前待确认的操作列表 |
+| `/allow` 或 `/y` | 允许权限请求（按钮不可用时的备选） |
+| `/deny` 或 `/n` | 拒绝权限请求（按钮不可用时的备选） |
 
 ## 环境变量
 
@@ -175,6 +165,7 @@ cc-im stop
   "claudeSkipPermissions": false,
   "claudeTimeoutMs": 600000,
   "claudeModel": "sonnet",
+  "hookPort": 18900,
   "logDir": "/var/log/cc-im",
   "logLevel": "INFO"
 }
@@ -275,7 +266,9 @@ src/
 │   ├── active-chats.ts          # 活跃聊天记录（生命周期通知）
 │   ├── claude-task.ts           # 共享 Claude 任务执行层（节流、统计、竞态保护）
 │   ├── history.ts               # 会话历史读取与分页
+│   ├── message-dedup.ts         # 消息去重（飞书重复事件过滤）
 │   ├── retry.ts                 # 通用重试工具
+│   ├── task-cleanup.ts          # 超时任务自动清理
 │   ├── types.ts                 # 共享类型定义
 │   └── utils.ts                 # 共享工具函数
 ├── session/

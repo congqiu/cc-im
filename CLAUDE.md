@@ -94,15 +94,16 @@ pnpm test:watch
 **工作流程**：
 1. Claude Code 执行敏感工具前调用 PreToolUse Hook（`hook-script.ts`）
 2. Hook 脚本向本地 HTTP 服务器（默认端口 18900）发送权限请求
-3. 服务器通过 `PermissionSender` 接口向用户发送权限确认卡片/消息
-4. 用户回复 `/allow` 或 `/deny`
+3. 服务器通过 `PermissionSender` 接口向用户发送权限确认卡片（含允许/拒绝按钮）
+4. 用户点击按钮，或使用 `/allow` `/deny` 命令（按钮不可用时的 fallback）
 5. 决定返回给 Hook 脚本，Hook 脚本返回给 Claude Code
 
 **关键设计**：
 - 权限请求存储在 `pendingRequests` Map 中
 - 超时时间：5 分钟（`PERMISSION_REQUEST_TIMEOUT_MS`）
 - 只读工具自动放行：`Read`、`Glob`、`Grep`、`WebFetch`、`WebSearch`、`Task`、`TodoRead`
-- 使用 `resolveLatestPermission()` 解决最早的待确认请求（FIFO）
+- `resolvePermissionById()` 按 requestId 精确解析（按钮点击使用）
+- `resolveLatestPermission()` 解决最早的待确认请求（FIFO，`/allow` `/deny` 命令使用）
 
 ### 5. 共享任务执行层（ClaudeTask）
 
@@ -172,7 +173,7 @@ claude -p \
 - 会话管理：`/new`、`/compact`
 - 工作目录：`/cd`、`/pwd`、`/list`
 - 状态查询：`/status`、`/cost`、`/doctor`、`/history`
-- 权限管理：`/allow`、`/deny`、`/allowall`、`/pending`
+- 权限管理：`/allow`、`/deny`（按钮不可用时的 fallback）
 - 模型切换：`/model`（按用户/话题粒度，存储在 SessionManager 中，不修改全局配置）
 - 平台特有：`/threads`（飞书，列出话题会话）、`/start`（Telegram）
 
