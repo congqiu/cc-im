@@ -6,8 +6,12 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-02-25
+
 ### 新功能
 
+- 权限确认改为卡片按钮交互（含允许/拒绝按钮），`/allow` `/deny` 作为按钮不可用时的 fallback
+- 启动时自动检测并配置 Claude CLI PreToolUse hook（`~/.claude/settings.json`）
 - `hookPort` 支持通过配置文件设置（与环境变量 `HOOK_SERVER_PORT` 优先级一致）
 - 添加 /history 命令和 /pwd 子目录列表
 - CardKit API 添加重试机制
