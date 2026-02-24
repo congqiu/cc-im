@@ -13,6 +13,11 @@ const TYPING_INTERVAL_MS = 4000; // Telegram typing status expires after ~5s
 // Per-chat rate limit cooldown tracking
 const chatCooldownUntil = new Map<string, number>();
 
+/** @internal Test-only: clear all cooldown entries */
+export function _resetCooldowns() {
+  chatCooldownUntil.clear();
+}
+
 // Periodic cleanup of expired cooldown entries to prevent memory leak
 const cooldownCleanupTimer = setInterval(() => {
   const now = Date.now();
@@ -50,6 +55,17 @@ function setCooldown(chatId: string, retryAfterSec: number) {
  * 带 429 重试的 API 调用包装器，用于必须送达的关键消息
  */
 async function callWithRetry<T>(chatId: string, label: string, fn: () => Promise<T>): Promise<T> {
+  // Wait for any existing cooldown before first attempt (e.g. from streaming 429)
+  const cooldownUntil = chatCooldownUntil.get(chatId);
+  if (cooldownUntil) {
+    const waitMs = cooldownUntil - Date.now();
+    if (waitMs > 0) {
+      log.info(`${label}: waiting ${Math.ceil(waitMs / 1000)}s for existing cooldown`);
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+    chatCooldownUntil.delete(chatId);
+  }
+
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       const result = await fn();
@@ -246,11 +262,16 @@ export async function sendPermissionMessage(
   const bot = getBot();
 
   const inputSummary = buildInputSummary(toolName, toolInput);
-
-  const text = `🔐 权限确认 - ${toolName}\n\n${truncateForMessage(inputSummary)}\n\n─────────\nID: ${requestId} | 回复 /allow 允许 · /deny 拒绝`;
+  const text = `🔐 权限确认 - ${toolName}\n\n${truncateForMessage(inputSummary)}`;
+  const reply_markup = {
+    inline_keyboard: [[
+      { text: '✅ 允许', callback_data: `perm_allow_${requestId}` },
+      { text: '❌ 拒绝', callback_data: `perm_deny_${requestId}` },
+    ]],
+  };
 
   const msg = await callWithRetry(chatId, 'sendPermissionMessage', () =>
-    bot.telegram.sendMessage(Number(chatId), text),
+    bot.telegram.sendMessage(Number(chatId), text, { reply_markup }),
   );
   return String(msg.message_id);
 }

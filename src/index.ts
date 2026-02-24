@@ -45,8 +45,9 @@ export async function main() {
   log.info(`Timeout: ${config.claudeTimeoutMs}ms`);
   log.info(`Allowed base dirs: ${config.allowedBaseDirs.length} dirs configured`);
 
+  let permissionServer: { close: () => void } | null = null;
   if (!config.claudeSkipPermissions) {
-    await startPermissionServer(config.hookPort);
+    permissionServer = await startPermissionServer(config.hookPort);
     log.info(`Permission hook server started on port ${config.hookPort}`);
   }
 
@@ -86,9 +87,9 @@ export async function main() {
   if (config.enabledPlatforms.includes('feishu')) {
     initTasks.push(
       Promise.resolve()
-        .then(() => {
+        .then(async () => {
           feishuHandle = createEventDispatcher(config, sessionManager);
-          initFeishu(config, feishuHandle.dispatcher);
+          await initFeishu(config, feishuHandle.dispatcher);
           log.info('Feishu bot initialized');
           return { platform: 'Feishu', success: true };
         })
@@ -157,6 +158,7 @@ export async function main() {
     if (config.enabledPlatforms.includes('feishu')) {
       stopFeishu();
     }
+    permissionServer?.close();
 
     // 等待运行中的任务完成（最多 30 秒）
     const maxWait = 30_000;

@@ -14,7 +14,6 @@ vi.mock('../../../src/logger.js', () => ({
 vi.mock('../../../src/hook/permission-server.js', () => ({
   resolveLatestPermission: vi.fn(),
   getPendingCount: vi.fn(() => 0),
-  listPending: vi.fn(() => []),
 }));
 
 vi.mock('../../../src/constants.js', () => ({
@@ -51,7 +50,7 @@ import { CommandHandler } from '../../../src/commands/handler.js';
 import type { CommandHandlerDeps, ClaudeRequestHandler, MessageSender } from '../../../src/commands/handler.js';
 import type { Config } from '../../../src/config.js';
 import type { CostRecord, ThreadContext } from '../../../src/shared/types.js';
-import { resolveLatestPermission, getPendingCount, listPending } from '../../../src/hook/permission-server.js';
+import { resolveLatestPermission, getPendingCount } from '../../../src/hook/permission-server.js';
 import { readFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
@@ -224,6 +223,18 @@ describe('CommandHandler', () => {
       expect(result).toBe(true);
     });
 
+    it('should route /history to handleHistory and return true', async () => {
+      vi.mocked(getHistory).mockResolvedValue({ ok: false, error: 'no history' });
+      const result = await handler.dispatch('/history', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      expect(result).toBe(true);
+    });
+
+    it('should route /history with page number', async () => {
+      vi.mocked(getHistory).mockResolvedValue({ ok: false, error: 'no history' });
+      const result = await handler.dispatch('/history 2', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      expect(result).toBe(true);
+    });
+
     it('should route /allow to handleAllow and return true', async () => {
       const result = await handler.dispatch('/allow', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
       expect(result).toBe(true);
@@ -241,28 +252,6 @@ describe('CommandHandler', () => {
 
     it('should route /n to handleDeny and return true', async () => {
       const result = await handler.dispatch('/n', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
-      expect(result).toBe(true);
-    });
-
-    it('should route /allowall to handleAllowAll and return true', async () => {
-      const result = await handler.dispatch('/allowall', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
-      expect(result).toBe(true);
-    });
-
-    it('should route /pending to handlePending and return true', async () => {
-      const result = await handler.dispatch('/pending', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
-      expect(result).toBe(true);
-    });
-
-    it('should route /history to handleHistory and return true', async () => {
-      vi.mocked(getHistory).mockResolvedValue({ ok: false, error: 'no history' });
-      const result = await handler.dispatch('/history', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
-      expect(result).toBe(true);
-    });
-
-    it('should route /history with page number', async () => {
-      vi.mocked(getHistory).mockResolvedValue({ ok: false, error: 'no history' });
-      const result = await handler.dispatch('/history 2', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
       expect(result).toBe(true);
     });
 
@@ -367,11 +356,10 @@ describe('CommandHandler', () => {
       expect(text).toContain('/model');
       expect(text).toContain('/cost');
       expect(text).toContain('/status');
-      expect(text).toContain('/allow');
-      expect(text).toContain('/deny');
-      expect(text).toContain('/pending');
       expect(text).toContain('/compact');
       expect(text).toContain('/history');
+      expect(text).toContain('/allow');
+      expect(text).toContain('/deny');
     });
   });
 
@@ -667,7 +655,7 @@ describe('CommandHandler', () => {
     });
   });
 
-  // ─── /allow, /deny, /allowall, /pending ───
+  // ─── /allow, /deny ───
 
   describe('handleAllow', () => {
     it('should resolve permission and send success message', async () => {
@@ -734,57 +722,6 @@ describe('CommandHandler', () => {
       vi.mocked(getPendingCount).mockReturnValue(0);
       await handler.dispatch('/n', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
       expect(resolveLatestPermission).toHaveBeenCalledWith(CHAT_ID, 'deny');
-    });
-  });
-
-  describe('handleAllowAll', () => {
-    it('should allow all pending permissions', async () => {
-      vi.mocked(resolveLatestPermission)
-        .mockReturnValueOnce('req-1')
-        .mockReturnValueOnce('req-2')
-        .mockReturnValueOnce(null);
-      await handler.dispatch('/allowall', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
-      expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
-        CHAT_ID,
-        expect.stringContaining('已批量允许 2 个权限请求'),
-        undefined,
-      );
-    });
-
-    it('should show no pending message when nothing to allow', async () => {
-      vi.mocked(resolveLatestPermission).mockReturnValue(null);
-      await handler.dispatch('/allowall', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
-      expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
-        CHAT_ID,
-        expect.stringContaining('没有待确认的权限请求'),
-        undefined,
-      );
-    });
-  });
-
-  describe('handlePending', () => {
-    it('should list pending permissions', async () => {
-      vi.mocked(listPending).mockReturnValue([
-        { toolName: 'Write', id: 'req-1' },
-        { toolName: 'Bash', id: 'req-2' },
-      ] as any);
-      await handler.dispatch('/pending', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
-      const text = vi.mocked(deps.sender.sendTextReply).mock.calls[0][1];
-      expect(text).toContain('待确认权限列表');
-      expect(text).toContain('Write');
-      expect(text).toContain('Bash');
-      expect(text).toContain('req-1');
-      expect(text).toContain('req-2');
-    });
-
-    it('should show no pending message when list is empty', async () => {
-      vi.mocked(listPending).mockReturnValue([]);
-      await handler.dispatch('/pending', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
-      expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
-        CHAT_ID,
-        expect.stringContaining('没有待确认的权限请求'),
-        undefined,
-      );
     });
   });
 

@@ -103,9 +103,6 @@ vi.mock('node:child_process', () => ({
 
 vi.mock('../../../src/hook/permission-server.js', () => ({
   registerPermissionSender: vi.fn(),
-  resolveLatestPermission: vi.fn(),
-  getPendingCount: vi.fn(() => 0),
-  listPending: vi.fn(() => []),
 }));
 
 vi.mock('../../../src/shared/active-chats.js', () => ({

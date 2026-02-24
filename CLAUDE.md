@@ -278,6 +278,44 @@ pnpm test -- tests/unit/queue/request-queue.test.ts
 - 活跃聊天：`~/.cc-im/data/active-chats.json`
 - 日志文件：`~/.cc-im/logs/` 或 `$LOG_DIR`
 
+## 权限系统配置
+
+### 1. Claude CLI Hook 配置
+
+**必须**：在 Claude CLI 配置文件中添加 PreToolUse hook，使权限确认功能正常工作。
+
+编辑 `~/.claude/settings.json`，在 `hooks` 中添加 `PreToolUse` 配置：
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<your-project-path>/dist/hook/hook-script.js"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**注意**：
+- 将 `<your-project-path>` 替换为实际的项目路径（使用绝对路径）
+- hook 脚本文件需要有执行权限（`chmod +x dist/hook/hook-script.js`）
+- 配置修改后需要完全退出 Claude Code 会话（`exit`）并重新启动才能生效
+
+### 2. 权限服务器
+
+当 `CLAUDE_SKIP_PERMISSIONS=false`（默认）时：
+- 权限服务器自动启动（默认端口 18900）
+- 用户发送消息触发敏感工具时，会收到权限确认卡片
+- 用户收到权限确认卡片后，可直接点击"允许"或"拒绝"按钮，也可使用 `/allow` / `/deny` 命令
+
 ## 日志系统
 
 位置：`src/logger.ts` + `src/sanitize.ts`

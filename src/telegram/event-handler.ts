@@ -7,7 +7,7 @@ import { AccessControl } from '../access/access-control.js';
 import type { SessionManager } from '../session/session-manager.js';
 import { RequestQueue } from '../queue/request-queue.js';
 import { sendThinkingMessage, updateMessage, sendFinalMessages, sendTextReply, sendPermissionMessage, updatePermissionMessage, startTypingLoop } from './message-sender.js';
-import { registerPermissionSender } from '../hook/permission-server.js';
+import { registerPermissionSender, resolvePermissionById } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord } from '../commands/handler.js';
 import { runClaudeTask, type TaskRunState } from '../shared/claude-task.js';
 import { startTaskCleanup } from '../shared/task-cleanup.js';
@@ -57,7 +57,8 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config, sessionMana
   // Register telegram permission sender
   registerPermissionSender('telegram', {
     sendPermissionCard: sendPermissionMessage,
-    updatePermissionCard: updatePermissionMessage,
+    updatePermissionCard: ({ messageId, chatId, toolName, decision }) =>
+      updatePermissionMessage(chatId, messageId, toolName, decision),
   });
 
   async function handleClaudeRequest(
@@ -159,6 +160,16 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config, sessionMana
         await ctx.answerCbQuery('已停止执行');
       } else {
         await ctx.answerCbQuery('任务已完成或不存在');
+      }
+    } else if (data.startsWith('perm_allow_') || data.startsWith('perm_deny_')) {
+      const isAllow = data.startsWith('perm_allow_');
+      const requestId = data.replace(/^perm_(allow|deny)_/, '');
+      const decision = isAllow ? 'allow' : 'deny';
+      const resolved = resolvePermissionById(requestId, decision);
+      if (resolved) {
+        await ctx.answerCbQuery(isAllow ? '✅ 已允许' : '❌ 已拒绝');
+      } else {
+        await ctx.answerCbQuery('请求已过期或不存在');
       }
     }
   });

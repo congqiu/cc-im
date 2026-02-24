@@ -1,7 +1,7 @@
 import type { Config } from '../config.js';
 import type { SessionManager } from '../session/session-manager.js';
 import type { RequestQueue } from '../queue/request-queue.js';
-import { resolveLatestPermission, getPendingCount, listPending } from '../hook/permission-server.js';
+import { resolveLatestPermission, getPendingCount } from '../hook/permission-server.js';
 import { TERMINAL_ONLY_COMMANDS } from '../constants.js';
 import { readFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
@@ -82,9 +82,6 @@ export class CommandHandler {
     if (trimmed === '/doctor') return this.handleDoctor(chatId, userId, threadCtx);
     if (trimmed === '/allow' || trimmed === '/y') return this.handleAllow(chatId, threadCtx);
     if (trimmed === '/deny' || trimmed === '/n') return this.handleDeny(chatId, threadCtx);
-    if (trimmed === '/allowall') return this.handleAllowAll(chatId, threadCtx);
-    if (trimmed === '/pending') return this.handlePending(chatId, threadCtx);
-
     // 带可选参数的命令
     if (trimmed === '/cd' || trimmed.startsWith('/cd ')) {
       return this.handleCd(chatId, userId, trimmed.slice(3).trim(), threadCtx);
@@ -135,10 +132,8 @@ export class CommandHandler {
       '/list           - 列出所有工作区',
       '/history [页码]  - 浏览会话历史记录',
       threadsCmd,
-      '/allow (/y)     - 允许权限请求',
-      '/deny (/n)      - 拒绝权限请求',
-      '/allowall       - 批量允许所有待确认权限',
-      '/pending        - 查看待确认权限列表',
+      '/allow (/y)     - 允许权限请求（按钮不可用时的备选）',
+      '/deny (/n)      - 拒绝权限请求（按钮不可用时的备选）',
     ].filter(Boolean).join('\n');
 
     await this.deps.sender.sendTextReply(chatId, helpText, threadCtx);
@@ -374,7 +369,7 @@ export class CommandHandler {
 
 
   /**
-   * 处理 /allow 或 /y 命令
+   * 处理 /allow 或 /y 命令（按钮不可用时的 fallback）
    */
   async handleAllow(chatId: string, threadCtx?: ThreadContext): Promise<boolean> {
     const reqId = resolveLatestPermission(chatId, 'allow');
@@ -388,7 +383,7 @@ export class CommandHandler {
   }
 
   /**
-   * 处理 /deny 或 /n 命令
+   * 处理 /deny 或 /n 命令（按钮不可用时的 fallback）
    */
   async handleDeny(chatId: string, threadCtx?: ThreadContext): Promise<boolean> {
     const reqId = resolveLatestPermission(chatId, 'deny');
@@ -397,36 +392,6 @@ export class CommandHandler {
       await this.deps.sender.sendTextReply(chatId, `❌ 权限已拒绝${remaining > 0 ? `（还有 ${remaining} 个待确认）` : ''}`, threadCtx);
     } else {
       await this.deps.sender.sendTextReply(chatId, 'ℹ️ 没有待确认的权限请求', threadCtx);
-    }
-    return true;
-  }
-
-  /**
-   * 处理 /allowall 命令
-   */
-  async handleAllowAll(chatId: string, threadCtx?: ThreadContext): Promise<boolean> {
-    let count = 0;
-    while (resolveLatestPermission(chatId, 'allow')) {
-      count++;
-    }
-    if (count > 0) {
-      await this.deps.sender.sendTextReply(chatId, `✅ 已批量允许 ${count} 个权限请求`, threadCtx);
-    } else {
-      await this.deps.sender.sendTextReply(chatId, 'ℹ️ 没有待确认的权限请求', threadCtx);
-    }
-    return true;
-  }
-
-  /**
-   * 处理 /pending 命令
-   */
-  async handlePending(chatId: string, threadCtx?: ThreadContext): Promise<boolean> {
-    const pending = listPending(chatId);
-    if (pending.length === 0) {
-      await this.deps.sender.sendTextReply(chatId, 'ℹ️ 没有待确认的权限请求', threadCtx);
-    } else {
-      const list = pending.map((p: { toolName: string; id: string }, i: number) => `${i + 1}. ${p.toolName} (ID: ${p.id})`).join('\n');
-      await this.deps.sender.sendTextReply(chatId, `🔐 待确认权限列表:\n\n${list}\n\n使用 /allow 允许最早的请求`, threadCtx);
     }
     return true;
   }

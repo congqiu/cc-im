@@ -16,8 +16,8 @@ export function startTaskCleanup<T extends TaskRunState>(runningTasks: Map<strin
     for (const [key, task] of runningTasks) {
       if (now - task.startedAt > TASK_TIMEOUT_MS) {
         log.warn(`Auto-cleaning timeout task: ${key}`);
-        task.handle.abort();
         task.settle();
+        task.handle.abort();
         runningTasks.delete(key);
       }
     }

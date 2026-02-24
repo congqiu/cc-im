@@ -28,7 +28,6 @@ export interface Config {
 }
 
 interface FileConfig {
-  platform?: Platform;
   feishuAppId?: string;
   feishuAppSecret?: string;
   telegramBotToken?: string;
@@ -39,6 +38,7 @@ interface FileConfig {
   claudeSkipPermissions?: boolean;
   claudeTimeoutMs?: number;
   claudeModel?: string;
+  hookPort?: number;
   logDir?: string;
   logLevel?: LogLevel;
 }
@@ -164,7 +164,7 @@ export function loadConfig(): Config {
   const hookPort =
     process.env.HOOK_SERVER_PORT !== undefined
       ? parseInt(process.env.HOOK_SERVER_PORT, 10) || 18900
-      : 18900;
+      : file.hookPort ?? 18900;
 
   const logDir = process.env.LOG_DIR ?? file.logDir ?? join(APP_HOME, 'logs');
   const logLevel = (process.env.LOG_LEVEL?.toUpperCase() ?? file.logLevel ?? 'DEBUG') as LogLevel;

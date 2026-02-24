@@ -9,7 +9,7 @@ const log = createLogger('PermissionServer');
 
 export interface PermissionSender {
   sendPermissionCard(chatId: string, requestId: string, toolName: string, toolInput: Record<string, unknown>, threadCtx?: ThreadContext): Promise<string>;
-  updatePermissionCard(chatId: string, messageId: string, toolName: string, decision: 'allow' | 'deny'): Promise<void>;
+  updatePermissionCard(params: { messageId: string; chatId: string; toolName: string; decision: 'allow' | 'deny' }): Promise<void>;
 }
 
 const senders = new Map<string, PermissionSender>();
@@ -47,7 +47,20 @@ function removeFromIndex(chatId: string, id: string) {
   }
 }
 
-// Resolve the latest pending request for a given chatId
+// Resolve a specific pending request by its ID
+export function resolvePermissionById(requestId: string, decision: 'allow' | 'deny'): string | null {
+  const pending = pendingRequests.get(requestId);
+  if (!pending) return null;
+
+  pending.resolve(decision);
+  const platformSender = senders.get(pending.platform);
+  platformSender?.updatePermissionCard({ messageId: pending.messageId, chatId: pending.chatId, toolName: pending.toolName, decision }).catch(() => {});
+  pendingRequests.delete(requestId);
+  removeFromIndex(pending.chatId, requestId);
+  return requestId;
+}
+
+// Resolve the oldest pending request for a given chatId (fallback for /allow, /deny commands)
 export function resolveLatestPermission(chatId: string, decision: 'allow' | 'deny'): string | null {
   const ids = chatIdIndex.get(chatId);
   if (!ids || ids.size === 0) return null;
@@ -61,28 +74,13 @@ export function resolveLatestPermission(chatId: string, decision: 'allow' | 'den
   }
   if (!oldest) return null;
 
-  oldest.resolve(decision);
-  const platformSender = senders.get(oldest.platform);
-  platformSender?.updatePermissionCard(oldest.chatId, oldest.messageId, oldest.toolName, decision).catch(() => {});
-  pendingRequests.delete(oldest.id);
-  removeFromIndex(chatId, oldest.id);
-  return oldest.id;
+  return resolvePermissionById(oldest.id, decision);
 }
 
 export function getPendingCount(chatId: string): number {
   return chatIdIndex.get(chatId)?.size ?? 0;
 }
 
-export function listPending(chatId: string): PendingRequest[] {
-  const ids = chatIdIndex.get(chatId);
-  if (!ids) return [];
-  const result: PendingRequest[] = [];
-  for (const id of ids) {
-    const req = pendingRequests.get(id);
-    if (req) result.push(req);
-  }
-  return result.sort((a, b) => a.createdAt - b.createdAt);
-}
 
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -179,7 +177,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
             removeFromIndex(chatId, id);
             log.warn(`Permission request ${id} timed out`);
             if (savedMessageId) {
-              platformSender.updatePermissionCard(chatId, savedMessageId, toolName, 'deny').catch(() => {});
+              platformSender.updatePermissionCard({ messageId: savedMessageId, chatId, toolName, decision: 'deny' }).catch(() => {});
             }
           }
           safeResolve('deny');
@@ -226,7 +224,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
   sendJson(res, 404, { error: 'Not found' });
 }
 
-export function startPermissionServer(port: number): Promise<void> {
+export function startPermissionServer(port: number): Promise<{ close: () => void }> {
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
       handleRequest(req, res).catch((err) => {
@@ -244,7 +242,7 @@ export function startPermissionServer(port: number): Promise<void> {
 
     server.listen(port, '127.0.0.1', () => {
       log.info(`Permission server listening on 127.0.0.1:${port}`);
-      resolve();
+      resolve({ close: () => server.close() });
     });
   });
 }

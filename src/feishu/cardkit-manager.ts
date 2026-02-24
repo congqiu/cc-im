@@ -103,7 +103,18 @@ export async function streamContent(
     });
   };
 
-  const res = await call(nextSeq(cardId));
+  let res;
+  try {
+    res = await call(nextSeq(cardId));
+  } catch (err: unknown) {
+    // Lark SDK 在 HTTP 4xx 时抛异常（如 99991400 平台级限频），而非返回 response 对象
+    // 流式更新失败不影响功能，下次节流周期会重试
+    const respData = (err as { response?: { data?: { code?: number } } })?.response?.data;
+    if (respData?.code === 99991400) return; // 平台级限频，静默忽略
+    log.warn(`streamContent exception: ${(err as Error)?.message ?? err}`);
+    return;
+  }
+
   const code = res?.code;
 
   if (!code || code === 0) return; // 成功

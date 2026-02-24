@@ -132,7 +132,6 @@ export function runClaudeTask(
 
       const now = Date.now();
       const elapsed = now - lastUpdateTime;
-      const toolNote = toolLines.length > 0 ? toolLines.slice(-3).join('\n') : undefined;
 
       if (elapsed >= adapter.throttleMs) {
         lastUpdateTime = now;
@@ -140,11 +139,13 @@ export function runClaudeTask(
           clearTimeout(pendingUpdate);
           pendingUpdate = null;
         }
+        const toolNote = toolLines.length > 0 ? toolLines.slice(-3).join('\n') : undefined;
         adapter.streamUpdate(taskState.latestContent, toolNote);
       } else if (!pendingUpdate) {
         pendingUpdate = setTimeout(() => {
           pendingUpdate = null;
           lastUpdateTime = Date.now();
+          const toolNote = toolLines.length > 0 ? toolLines.slice(-3).join('\n') : undefined;
           adapter.streamUpdate(taskState.latestContent, toolNote);
         }, adapter.throttleMs - elapsed);
       }
@@ -201,6 +202,10 @@ export function runClaudeTask(
         if (settled) return;
         settled = true;
 
+        // 先清除 pending 的节流定时器，防止它在 sendComplete 期间触发
+        // 导致 streaming 更新覆盖 done 状态
+        if (pendingUpdate) { clearTimeout(pendingUpdate); pendingUpdate = null; }
+
         const note = buildCompletionNote(result, sessionManager, ctx);
         log.info(`Claude completed for user ${ctx.userId}: success=${result.success}, cost=$${result.cost.toFixed(4)}`);
         trackCost(userCosts, ctx.userId, result.cost, result.durationMs);
@@ -217,6 +222,8 @@ export function runClaudeTask(
       onError: async (error) => {
         if (settled) return;
         settled = true;
+
+        if (pendingUpdate) { clearTimeout(pendingUpdate); pendingUpdate = null; }
 
         log.error(`Claude error for user ${ctx.userId}, sessionId=${ctx.sessionId ?? 'new'}: ${error}`);
         try {

@@ -31,11 +31,13 @@ import {
   startTypingLoop,
   sendPermissionMessage,
   updatePermissionMessage,
+  _resetCooldowns,
 } from '../../../src/telegram/message-sender.js';
 
 describe('telegram/message-sender', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    _resetCooldowns();
   });
 
   describe('sendThinkingMessage', () => {
@@ -174,6 +176,7 @@ describe('telegram/message-sender', () => {
       expect(mockSendMessage).toHaveBeenCalledWith(
         100,
         expect.stringContaining('权限确认'),
+        expect.objectContaining({ reply_markup: expect.objectContaining({ inline_keyboard: expect.any(Array) }) }),
       );
     });
   });

@@ -165,6 +165,8 @@ cc-im stop
 
 ```json
 {
+  "feishuAppId": "",
+  "feishuAppSecret": "",
   "telegramBotToken": "your_bot_token",
   "allowedUserIds": ["123456789"],
   "claudeCliPath": "/usr/local/bin/claude",
@@ -197,12 +199,42 @@ cc-im stop
 
 ## 权限确认机制
 
+### 配置 Claude CLI Hook
+
+**必须**：在 Claude CLI 配置文件中添加 PreToolUse hook，使权限确认功能正常工作。
+
+编辑 `~/.claude/settings.json`，在 `hooks` 中添加：
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<your-project-path>/dist/hook/hook-script.js"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+将 `<your-project-path>` 替换为实际的项目路径（使用绝对路径）。hook 脚本需要执行权限：`chmod +x dist/hook/hook-script.js`
+
+配置修改后需要完全退出 Claude Code 会话（`exit`）并重新启动才能生效。
+
+### 工作流程
+
 当 `CLAUDE_SKIP_PERMISSIONS=false` 时，系统会通过 PreToolUse Hook 拦截敏感操作：
 
 1. Claude Code 尝试调用工具（如执行 Bash 命令）
 2. Hook 脚本将请求发送到权限确认服务（端口由 `HOOK_SERVER_PORT` 指定）
-3. 服务向用户发送权限确认卡片/消息
-4. 用户回复 `/allow` 或 `/deny`
+3. 服务向用户发送权限确认卡片
+4. 用户点击卡片上的"允许"或"拒绝"按钮
 5. 决定结果返回给 Claude Code，继续或中止操作
 
 以下只读工具会自动放行，无需确认：

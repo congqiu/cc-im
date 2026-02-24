@@ -8,6 +8,7 @@
 
 ### 新功能
 
+- `hookPort` 支持通过配置文件设置（与环境变量 `HOOK_SERVER_PORT` 优先级一致）
 - 添加 /history 命令和 /pwd 子目录列表
 - CardKit API 添加重试机制
 - 添加日志等级配置支持
@@ -20,6 +21,15 @@
 
 ### 修复
 
+- 修复 CardKit streamContent 在 Lark SDK HTTP 4xx（如 99991400 平台级限频）时抛异常未捕获
+- 修复 addTurns/addThreadTurns 修改轮次后未持久化到 sessions.json
+- 进程退出时优雅关闭权限服务器，避免阻止进程退出
+- 修复 CLI 超时和 spawn error 路径未设 `completed` 标记导致回调可能触发两次
+- 修复节流更新中 `toolNote` 在 setTimeout 闭包内读取过时数据
+- 修复任务超时清理时先 abort 再 settle 导致用户可能收不到完成通知
+- 飞书群聊非话题消息精确校验 @mention 是否为本机器人，避免响应 @ 其他人的消息
+- Telegram `callWithRetry` 在首次尝试前检查已有 cooldown，避免流式 429 传导到关键消息
+- 修复任务完成时节流定时器竞态：pending 的 streaming 更新可能覆盖 done 状态，导致 Telegram 消息停留在"输出中"
 - 修复 stderr 在 4KB~10KB 之间时拼接产生重复内容
 - `cleanOldImages` 在目录不存在时自动创建，避免启动报错
 

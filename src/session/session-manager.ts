@@ -177,6 +177,7 @@ export class SessionManager {
     const session = this.sessions.get(userId);
     if (!session) return 0;
     session.totalTurns = (session.totalTurns ?? 0) + turns;
+    this.save();
     return session.totalTurns;
   }
 
@@ -184,6 +185,7 @@ export class SessionManager {
     const thread = this.sessions.get(userId)?.threads?.[threadId];
     if (!thread) return 0;
     thread.totalTurns = (thread.totalTurns ?? 0) + turns;
+    this.save();
     return thread.totalTurns;
   }
 

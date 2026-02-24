@@ -6,10 +6,10 @@ import { AccessControl } from '../access/access-control.js';
 import type { SessionManager } from '../session/session-manager.js';
 import { RequestQueue } from '../queue/request-queue.js';
 import { sendThinkingCard, streamContentUpdate, sendFinalCards, sendErrorCard, sendTextReply, sendPermissionCard, updatePermissionCard, fetchThreadDescription, type CardHandle, type ThreadContext } from './message-sender.js';
-import { getClient } from './client.js';
+import { getClient, getBotOpenId } from './client.js';
 import { buildCardV2 } from './card-builder.js';
 import { destroySession, updateCardFull, disableStreaming } from './cardkit-manager.js';
-import { registerPermissionSender } from '../hook/permission-server.js';
+import { registerPermissionSender, resolvePermissionById } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord } from '../commands/handler.js';
 import { safeStringify } from '../shared/utils.js';
 import { runClaudeTask, type TaskRunState } from '../shared/claude-task.js';
@@ -130,7 +130,7 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
   // Register feishu permission sender
   registerPermissionSender('feishu', {
     sendPermissionCard,
-    updatePermissionCard: (_chatId: string, messageId: string, toolName: string, decision: 'allow' | 'deny') =>
+    updatePermissionCard: ({ messageId, toolName, decision }) =>
       updatePermissionCard(messageId, toolName, decision),
   });
 
@@ -331,7 +331,7 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
         return;
       }
 
-      let actionData: { action: string; card_id?: string; message_id?: string };
+      let actionData: { action: string; card_id?: string; message_id?: string; requestId?: string };
       try {
         let parsed = action.value;
         if (typeof parsed === 'string') {
@@ -380,6 +380,22 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
           log.warn(`No running task found for key: ${taskKey}`);
           log.info(`Current running tasks: ${Array.from(runningTasks.keys()).join(', ')}`);
         }
+      } else if (actionData.action === 'allow' || actionData.action === 'deny') {
+        // 处理权限按钮点击
+        const requestId = actionData.requestId;
+        const decision = actionData.action as 'allow' | 'deny';
+
+        if (!requestId) {
+          log.warn('No requestId in permission action');
+          return;
+        }
+
+        const resolvedId = resolvePermissionById(requestId, decision);
+        if (resolvedId) {
+          log.info(`Permission ${decision} via button for request ${requestId}`);
+        } else {
+          log.warn(`No pending permission request found for requestId: ${requestId}`);
+        }
       }
     },
   });
@@ -415,6 +431,10 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
       if (isGroup && !threadId) {
         const mentions: Array<{ key: string; id: { open_id?: string }; name: string }> | undefined = message.mentions;
         if (!mentions || mentions.length === 0) {
+          return;
+        }
+        const myOpenId = getBotOpenId();
+        if (myOpenId && !mentions.some(m => m.id?.open_id === myOpenId)) {
           return;
         }
       }

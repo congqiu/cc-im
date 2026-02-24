@@ -12,9 +12,7 @@ vi.mock('../../../src/logger.js', () => ({
 
 import {
   registerPermissionSender,
-  resolveLatestPermission,
-  getPendingCount,
-  listPending,
+  resolvePermissionById,
   startPermissionServer,
   type PermissionSender,
 } from '../../../src/hook/permission-server.js';
@@ -57,39 +55,28 @@ function get(port: number, path: string): Promise<{ status: number; data: any }>
 }
 
 describe('permission-server utilities', () => {
-  const chatId = 'chat-1';
-
-  beforeEach(() => {
-    // Clean state: resolve any leftover pending requests
-    while (resolveLatestPermission(chatId, 'deny')) { /* drain */ }
-  });
-
-  it('getPendingCount 无请求时返回 0', () => {
-    expect(getPendingCount('nonexistent-chat')).toBe(0);
-  });
-
-  it('listPending 无请求时返回空数组', () => {
-    expect(listPending('nonexistent-chat')).toEqual([]);
-  });
-
-  it('resolveLatestPermission 无请求时返回 null', () => {
-    expect(resolveLatestPermission('nonexistent-chat', 'allow')).toBeNull();
+  it('resolvePermissionById 无请求时返回 null', () => {
+    expect(resolvePermissionById('nonexistent-id', 'allow')).toBeNull();
   });
 });
 
 describe('permission-server HTTP', () => {
   let port: number;
-  let server: http.Server;
+  let serverHandle: { close: () => void };
 
   beforeEach(async () => {
     port = 18950 + Math.floor(Math.random() * 100);
     try {
-      await startPermissionServer(port);
+      serverHandle = await startPermissionServer(port);
     } catch {
       // Port might be taken, try another
       port = 18950 + Math.floor(Math.random() * 100);
-      await startPermissionServer(port);
+      serverHandle = await startPermissionServer(port);
     }
+  });
+
+  afterEach(() => {
+    serverHandle?.close();
   });
 
   it('GET /health 返回 ok', async () => {
@@ -191,8 +178,9 @@ describe('permission-server HTTP', () => {
       expect(sender.sendPermissionCard).toHaveBeenCalled();
     });
 
-    // Resolve the permission
-    const resolved = resolveLatestPermission('chat-resolve', 'allow');
+    // Resolve the permission using requestId from the mock call
+    const requestId = vi.mocked(sender.sendPermissionCard).mock.calls[0][1];
+    const resolved = resolvePermissionById(requestId, 'allow');
     expect(resolved).not.toBeNull();
 
     const res = await requestPromise;

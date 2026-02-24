@@ -81,6 +81,7 @@ export function runClaude(
   if (options?.timeoutMs && options.timeoutMs > 0) {
     timeoutHandle = setTimeout(() => {
       if (!completed && !child.killed) {
+        completed = true;
         child.kill('SIGTERM');
         callbacks.onError(`执行超时（${options.timeoutMs}ms），已终止进程`);
       }
@@ -237,6 +238,7 @@ export function runClaude(
       clearTimeout(timeoutHandle);
     }
     if (!completed) {
+      completed = true;
       callbacks.onError(`Failed to start Claude CLI: ${err.message}`);
     }
     // spawn 失败时可能不触发 close 事件，手动标记以确保 finalize 执行

@@ -98,7 +98,24 @@ export function buildPermissionCard(requestId: string, toolName: string, toolInp
     },
     elements: [
       { tag: 'markdown', content: truncateForCard(inputSummary) },
-      { tag: 'note', elements: [{ tag: 'plain_text', content: `ID: ${requestId} | 回复 /allow 允许 · /deny 拒绝` }] },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '✅ 允许' },
+            type: 'primary',
+            value: JSON.stringify({ action: 'allow', requestId }),
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '❌ 拒绝' },
+            type: 'danger',
+            value: JSON.stringify({ action: 'deny', requestId }),
+          },
+        ],
+      },
+      { tag: 'note', elements: [{ tag: 'plain_text', content: `ID: ${requestId}` }] },
     ],
   };
   return JSON.stringify(card);
