@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { withRetry } from '../../../src/shared/retry.js';
+import { withRetry, NonRetryableError } from '../../../src/shared/retry.js';
 
 vi.mock('../../../src/logger.js', () => ({
   createLogger: () => ({
@@ -79,5 +79,21 @@ describe('withRetry', () => {
 
     const result = await promise;
     expect(result).toBe('ok');
+  });
+
+  it('NonRetryableError 直接抛出不重试', async () => {
+    const fn = vi.fn().mockRejectedValue(new NonRetryableError('rate limited'));
+
+    await expect(
+      withRetry(fn, { maxRetries: 3, baseDelayMs: 10, maxDelayMs: 20 }),
+    ).rejects.toThrow('rate limited');
+    expect(fn).toHaveBeenCalledTimes(1); // 不重试，只调用 1 次
+  });
+
+  it('NonRetryableError 保留 instanceof 检查', () => {
+    const err = new NonRetryableError('test');
+    expect(err).toBeInstanceOf(NonRetryableError);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe('NonRetryableError');
   });
 });

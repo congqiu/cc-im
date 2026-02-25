@@ -1,7 +1,7 @@
 import { getClient } from './client.js';
 import { createLogger } from '../logger.js';
 import { safeStringify } from '../shared/utils.js';
-import { withRetry } from '../shared/retry.js';
+import { withRetry, NonRetryableError } from '../shared/retry.js';
 
 const log = createLogger('CardKit');
 
@@ -69,6 +69,10 @@ export async function createCard(cardJson: string): Promise<string> {
  */
 export async function enableStreaming(cardId: string): Promise<void> {
   return withRetry(async () => {
+    // 限频错误不再重试，避免重试风暴
+    const s = sessions.get(cardId);
+    if (s?.completed) return;
+
     const client = getClient();
     const res = await client.cardkit.v1.card.settings({
       path: { card_id: cardId },
@@ -78,10 +82,14 @@ export async function enableStreaming(cardId: string): Promise<void> {
       },
     });
     if (res?.code && res.code !== 0) {
+      // 限频错误不可重试，直接穿透
+      if (res.code === 200400) {
+        log.warn(`enableStreaming rate limited: ${res.msg}`);
+        throw new NonRetryableError(`enableStreaming rate limited: code=${res.code}, msg=${res.msg}`);
+      }
       log.error(`enableStreaming failed: code=${res.code}, msg=${res.msg}`);
       throw new Error(`enableStreaming error: code=${res.code}, msg=${res.msg}`);
     }
-    const s = sessions.get(cardId);
     if (s) s.streamingEnabled = true;
     log.debug(`Streaming enabled for card ${cardId}`);
   });
@@ -122,6 +130,7 @@ export async function streamContent(
   if (code === 300317) return;     // sequence 冲突，下次会修正
   if (code === 200400) return;     // 限频，等下次节流重试
   if (code === 200937) return;     // 更新过于频繁，等下次节流重试
+  if (code === 200740) return;     // 查询结果为空（卡片已失效），静默忽略
 
   // 200850 / 300309: 流式超时或已关闭 → 重新启用后重试一次
   if (code === 200850 || code === 300309) {
@@ -130,6 +139,9 @@ export async function streamContent(
     log.warn(`Streaming closed/timeout (${code}) for card ${cardId}, re-enabling...`);
     try {
       await enableStreaming(cardId);
+      // 启用后再次检查是否已完成
+      const s2 = sessions.get(cardId);
+      if (!s2 || s2.completed) return;
       const retryRes = await call(nextSeq(cardId));
       if (retryRes?.code && retryRes.code !== 0) {
         log.warn(`Retry still failed: code=${retryRes.code}, skipping`);
@@ -215,6 +227,11 @@ export async function replyCardMessage(
 export async function disableStreaming(cardId: string): Promise<void> {
   const s = sessions.get(cardId);
   if (!s || !s.streamingEnabled) return;
+
+  // 标记已完成，防止并发调用
+  s.completed = true;
+  s.streamingEnabled = false;
+
   const client = getClient();
   try {
     const res = await client.cardkit.v1.card.settings({
@@ -227,7 +244,6 @@ export async function disableStreaming(cardId: string): Promise<void> {
     if (res?.code && res.code !== 0) {
       log.warn(`disableStreaming failed: code=${res.code}, msg=${res.msg}`);
     } else {
-      s.streamingEnabled = false;
       log.debug(`Streaming disabled for card ${cardId}`);
     }
   } catch (err) {

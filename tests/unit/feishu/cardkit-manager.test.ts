@@ -86,6 +86,32 @@ describe('cardkit-manager', () => {
       mockCardSettings.mockResolvedValue({ code: 500, msg: 'error' });
       await expect(enableStreaming('card-s2')).rejects.toThrow('enableStreaming error');
     });
+
+    it('200400 限频时不重试直接抛出', async () => {
+      mockCardCreate.mockResolvedValue({ code: 0, data: { card_id: 'card-s3' } });
+      await createCard('{}');
+
+      mockCardSettings.mockResolvedValue({ code: 200400, msg: 'rate limited' });
+      await expect(enableStreaming('card-s3')).rejects.toThrow('rate limited');
+      // NonRetryableError 不重试，settings 只调用 1 次
+      expect(mockCardSettings).toHaveBeenCalledTimes(1);
+    });
+
+    it('已完成的卡片跳过 enableStreaming', async () => {
+      mockCardCreate.mockResolvedValue({ code: 0, data: { card_id: 'card-s4' } });
+      await createCard('{}');
+      mockCardSettings.mockResolvedValue({ code: 0 });
+      await enableStreaming('card-s4');
+      mockCardSettings.mockClear();
+
+      // disableStreaming 会标记 completed
+      await disableStreaming('card-s4');
+      mockCardSettings.mockClear();
+
+      // 再次 enableStreaming 应该直接返回
+      await enableStreaming('card-s4');
+      expect(mockCardSettings).not.toHaveBeenCalled();
+    });
   });
 
   describe('streamContent', () => {
@@ -128,6 +154,14 @@ describe('cardkit-manager', () => {
 
       mockElementContent.mockResolvedValue({ code: 200937 });
       await streamContent('card-sc4b', 'el-1', 'hello');
+    });
+
+    it('忽略 200740 卡片已失效', async () => {
+      mockCardCreate.mockResolvedValue({ code: 0, data: { card_id: 'card-sc4c' } });
+      await createCard('{}');
+
+      mockElementContent.mockResolvedValue({ code: 200740 });
+      await streamContent('card-sc4c', 'el-1', 'hello');
     });
 
     it('200850 流式超时时重新启用并重试', async () => {
@@ -175,6 +209,22 @@ describe('cardkit-manager', () => {
       mockCardSettings.mockRejectedValue(new Error('fail'));
 
       await streamContent('card-sc7', 'el-1', 'hello'); // should not throw
+    });
+
+    it('200850 重启流式后发现已完成则跳过重试', async () => {
+      mockCardCreate.mockResolvedValue({ code: 0, data: { card_id: 'card-sc9' } });
+      await createCard('{}');
+
+      mockElementContent.mockResolvedValueOnce({ code: 200850 });
+      // enableStreaming 成功，但在 enableStreaming 调用过程中标记 completed
+      mockCardSettings.mockImplementation(async () => {
+        markCompleted('card-sc9');
+        return { code: 0 };
+      });
+
+      await streamContent('card-sc9', 'el-1', 'hello');
+      // enableStreaming 被调用，但后续不应再次调用 elementContent（因为已完成）
+      expect(mockElementContent).toHaveBeenCalledTimes(1);
     });
 
     it('其他错误码不抛出', async () => {
@@ -284,6 +334,23 @@ describe('cardkit-manager', () => {
 
       mockCardSettings.mockResolvedValue({ code: 500, msg: 'err' });
       await expect(disableStreaming('card-ds4')).resolves.toBeUndefined();
+    });
+
+    it('并发调用只执行一次 API', async () => {
+      mockCardCreate.mockResolvedValue({ code: 0, data: { card_id: 'card-ds5' } });
+      await createCard('{}');
+      mockCardSettings.mockResolvedValue({ code: 0 });
+      await enableStreaming('card-ds5');
+      mockCardSettings.mockClear();
+
+      mockCardSettings.mockResolvedValue({ code: 0 });
+      // 并发调用两次
+      await Promise.all([
+        disableStreaming('card-ds5'),
+        disableStreaming('card-ds5'),
+      ]);
+      // 第二次调用因 streamingEnabled=false 提前返回，API 只调用 1 次
+      expect(mockCardSettings).toHaveBeenCalledTimes(1);
     });
   });
 
