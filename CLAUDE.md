@@ -177,7 +177,17 @@ claude -p \
 - 模型切换：`/model`（按用户/话题粒度，存储在 SessionManager 中，不修改全局配置）
 - 平台特有：`/threads`（飞书，列出话题会话）、`/start`（Telegram）
 
-### 8. 飞书 CardKit 流式架构
+### 8. 版本更新检查
+
+位置：`src/shared/update-check.ts`
+
+启动时异步查询 npm registry（`https://registry.npmjs.org/cc-im/latest`），比较当前版本与最新版本，有新版本时打印提示日志。
+
+- 使用 `node:https` 原生模块，无额外依赖
+- 5 秒超时，网络不可达时静默跳过，不阻塞启动流程
+- 语义化版本比较（major.minor.patch）
+
+### 9. 飞书 CardKit 流式架构
 
 飞书端的流式输出使用 CardKit v1 API 实现打字机效果，相关模块：
 

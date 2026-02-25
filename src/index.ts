@@ -10,6 +10,7 @@ import { ensureHookConfigured } from './hook/ensure-hook.js';
 import { SessionManager } from './session/session-manager.js';
 import { loadActiveChats, getActiveChatId } from './shared/active-chats.js';
 import { cleanOldImages } from './shared/utils.js';
+import { checkForUpdate } from './shared/update-check.js';
 import { initLogger, createLogger, closeLogger } from './logger.js';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -135,6 +136,7 @@ export async function main() {
     `Node: ${process.version}`,
   ].filter(Boolean).join('\n');
   sendLifecycleNotification(activeBots, startupMsg).catch(() => {});
+  checkForUpdate(APP_VERSION).catch(() => {});
 
   const imageCleanupTimer = setInterval(() => {
     cleanOldImages().then((n) => { if (n > 0) log.info(`Cleaned ${n} old image(s)`); }).catch(() => {});
@@ -147,6 +149,7 @@ export async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     log.info('Shutting down...');
+    clearInterval(imageCleanupTimer);
 
     // 发送关闭通知
     const uptimeSec = Math.floor((Date.now() - startedAt) / 1000);

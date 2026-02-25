@@ -224,7 +224,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
   sendJson(res, 404, { error: 'Not found' });
 }
 
-export function startPermissionServer(port: number): Promise<{ close: () => void }> {
+export function startPermissionServer(port: number): Promise<{ close: () => Promise<void> }> {
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
       handleRequest(req, res).catch((err) => {
@@ -242,7 +242,7 @@ export function startPermissionServer(port: number): Promise<{ close: () => void
 
     server.listen(port, '127.0.0.1', () => {
       log.info(`Permission server listening on 127.0.0.1:${port}`);
-      resolve({ close: () => server.close() });
+      resolve({ close: () => new Promise<void>((r) => server.close(() => r())) });
     });
   });
 }

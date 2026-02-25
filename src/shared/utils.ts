@@ -2,12 +2,11 @@
  * 共享工具函数
  */
 
-import { readdir, stat, unlink } from 'node:fs/promises';
+import { readdir, stat, unlink, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CostRecord } from './types.js';
 import { IMAGE_DIR } from '../constants.js';
 import { createLogger } from '../logger.js';
-import { mkdir } from 'node:fs/promises';
 
 const log = createLogger('Utils');
 

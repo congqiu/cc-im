@@ -309,10 +309,10 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
     // @ts-ignore - defaultCallback 是自定义选项
     defaultCallback: async (data: LarkEventData) => {
       const eventType = data?.header?.event_type || data?.type || 'unknown';
-      log.info(`Received event: ${eventType}`, safeStringify(data).slice(0, 500));
+      log.info(`Received event: ${eventType}`);
 
       if (eventType.includes('card') || eventType.includes('action')) {
-        log.info('Card/Action event data:', safeStringify(data, 2));
+        log.debug('Card/Action event data:', safeStringify(data, 2));
       }
     },
   });

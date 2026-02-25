@@ -1,6 +1,5 @@
 import { MAX_STREAMING_CONTENT_LENGTH, MAX_CARD_CONTENT_LENGTH } from '../constants.js';
-import { splitLongContent as sharedSplitLongContent, truncateText } from '../shared/utils.js';
-import { buildInputSummary } from '../shared/utils.js';
+import { splitLongContent as sharedSplitLongContent, truncateText, buildInputSummary } from '../shared/utils.js';
 
 export type CardStatus = 'processing' | 'thinking' | 'streaming' | 'done' | 'error';
 

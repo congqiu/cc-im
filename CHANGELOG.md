@@ -6,9 +6,25 @@
 
 ## [Unreleased]
 
+### 新功能
+
+- 启动时异步检查 npm 最新版本，有新版本时打印更新提示
+
+### 修复
+
+- CardKit 流式竞态保护：限频错误（200400）不再重试，已完成卡片跳过 enableStreaming，disableStreaming 防并发
+
+### 重构
+
+- 合并 `card-builder.ts` 和 `utils.ts` 中的重复导入
+- `cli-runner.ts` abort 时显式关闭 readline，防止事件监听器泄漏
+- 优雅关闭时清理 imageCleanupTimer
+- 飞书 defaultCallback 避免对未注册事件做不必要的 JSON 序列化
+
 ### 其他
 
 - 更新依赖：@larksuiteoapi/node-sdk 1.59.0、dotenv 17.3.1、@types/node 25.3.0、tsx 4.21.0、typescript 5.9.3
+- 启动消息显示版本号
 
 ## [1.1.0] - 2026-02-25
 

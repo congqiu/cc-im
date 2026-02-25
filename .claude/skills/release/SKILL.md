@@ -60,18 +60,21 @@ pnpm build
 
 **如果测试或构建失败，必须修复后才能发布。**
 
-### 5. 更新 CHANGELOG.md
+### 5. 更新 CHANGELOG.md 和版本号，创建 tag
 
-在更新版本号之前，更新 `CHANGELOG.md`：
+将 CHANGELOG 更新和版本号变更合并为一个 commit：
 
 1. 读取 `CHANGELOG.md` 当前内容
 2. 将 `## [Unreleased]` 部分重命名为 `## [<新版本号>] - <今天日期 YYYY-MM-DD>`
 3. 在其上方插入新的空 `## [Unreleased]` 部分
-4. 提交 CHANGELOG 变更：
+4. 更新 `package.json` 中的版本号（使用 `npm version <版本号> --no-git-tag-version`，仅修改文件不创建 commit 和 tag）
+5. 一次性提交并打 tag：
 
 ```bash
-git add CHANGELOG.md
-git commit -m "docs: 更新 CHANGELOG for v<新版本号>"
+npm version <版本号> --no-git-tag-version
+git add CHANGELOG.md package.json
+git commit -m "chore: release v<新版本号>"
+git tag v<新版本号>
 ```
 
 **CHANGELOG 格式规范**：
@@ -79,18 +82,7 @@ git commit -m "docs: 更新 CHANGELOG for v<新版本号>"
 - 对应 commit 前缀：`feat:` → 新功能、`fix:` → 修复、`refactor:` → 重构、`perf:` → 性能、其余 → 其他
 - 如果 Unreleased 部分为空，根据自上次发布以来的 commit 自动生成条目
 
-### 6. 更新版本号并创建 tag
-
-```bash
-# 使用版本类型
-npm version patch -m "chore: release v%s"
-# 或使用具体版本号
-npm version 2.0.0 -m "chore: release v%s"
-```
-
-这会自动更新 package.json、创建 commit 和 git tag。
-
-### 7. 推送到 GitHub 触发发布
+### 6. 推送到 GitHub 触发发布
 
 ```bash
 git push
@@ -101,7 +93,7 @@ git push --tags
 - 运行 CI（构建 + 测试）
 - 通过后使用 `NPM_TOKEN` secret 发布到 npm
 
-### 8. 验证发布结果
+### 7. 验证发布结果
 
 ```bash
 git log --oneline -3

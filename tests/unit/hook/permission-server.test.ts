@@ -75,8 +75,8 @@ describe('permission-server HTTP', () => {
     }
   });
 
-  afterEach(() => {
-    serverHandle?.close();
+  afterEach(async () => {
+    await serverHandle?.close();
   });
 
   it('GET /health 返回 ok', async () => {

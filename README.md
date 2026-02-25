@@ -23,6 +23,7 @@
 - **轮次追踪**：累计对话轮次，上下文过长时自动提醒压缩
 - **生命周期通知**：服务启动/关闭时通知活跃用户（含版本信息和运行时长）
 - **守护进程模式**：支持 `-d` 后台运行和 `stop` 停止
+- **版本更新检查**：启动时自动检查 npm 最新版本，有更新时提示
 - **日志等级配置**：支持 DEBUG/INFO/WARN/ERROR 四级日志
 
 ## 快速开始
@@ -37,7 +38,7 @@
 export FEISHU_APP_ID=your_app_id
 export FEISHU_APP_SECRET=your_app_secret
 export TELEGRAM_BOT_TOKEN=your_bot_token
-npx cc-im
+npx cc-im@latest
 ```
 
 服务会自动检测已配置的平台并启动对应的 bot。
@@ -50,7 +51,7 @@ npx cc-im
 ```bash
 # 方式一：环境变量
 export TELEGRAM_BOT_TOKEN=your_bot_token
-npx cc-im
+npx cc-im@latest
 
 # 方式二：从源码运行
 pnpm install
@@ -77,7 +78,7 @@ pnpm dev
 ```bash
 export FEISHU_APP_ID=your_app_id
 export FEISHU_APP_SECRET=your_app_secret
-npx cc-im
+npx cc-im@latest
 ```
 
 ### 从源码构建
@@ -270,6 +271,7 @@ src/
 │   ├── retry.ts                 # 通用重试工具
 │   ├── task-cleanup.ts          # 超时任务自动清理
 │   ├── types.ts                 # 共享类型定义
+│   ├── update-check.ts          # 启动时版本更新检查
 │   └── utils.ts                 # 共享工具函数
 ├── session/
 │   └── session-manager.ts    # 会话管理（持久化到 data/sessions.json）

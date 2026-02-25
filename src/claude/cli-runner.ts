@@ -252,6 +252,7 @@ export function runClaude(
       if (timeoutHandle) {
         clearTimeout(timeoutHandle);
       }
+      rl.close();
       if (!child.killed) {
         child.kill('SIGTERM');
       }
