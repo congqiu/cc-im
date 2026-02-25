@@ -12,6 +12,10 @@ import { loadActiveChats, getActiveChatId } from './shared/active-chats.js';
 import { cleanOldImages } from './shared/utils.js';
 import { initLogger, createLogger, closeLogger } from './logger.js';
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const { version: APP_VERSION } = require('../package.json');
 
 const log = createLogger('Main');
 
@@ -121,7 +125,7 @@ export async function main() {
   const startedAt = Date.now();
   const claudeVer = getClaudeVersion(config.claudeCliPath);
   const startupMsg = [
-    '🟢 cc-im 服务已启动',
+    `🟢 cc-im v${APP_VERSION} 服务已启动`,
     '',
     `平台: ${activeBots.join(' + ')}`,
     `工作目录: ${config.claudeWorkDir}`,

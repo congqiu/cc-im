@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### 其他
+
+- 更新依赖：@larksuiteoapi/node-sdk 1.59.0、dotenv 17.3.1、@types/node 25.3.0、tsx 4.21.0、typescript 5.9.3
+
 ## [1.1.0] - 2026-02-25
 
 ### 新功能
