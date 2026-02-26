@@ -9,7 +9,7 @@ import { RequestQueue } from '../queue/request-queue.js';
 import { sendThinkingMessage, updateMessage, sendFinalMessages, sendTextReply, sendPermissionMessage, updatePermissionMessage, startTypingLoop } from './message-sender.js';
 import { registerPermissionSender, resolvePermissionById } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord } from '../commands/handler.js';
-import { runClaudeTask, type TaskRunState } from '../shared/claude-task.js';
+import { runClaudeTask, type TaskRunState, type TaskDeps } from '../shared/claude-task.js';
 import { startTaskCleanup } from '../shared/task-cleanup.js';
 import { MessageDedup } from '../shared/message-dedup.js';
 import { THROTTLE_MS, IMAGE_DIR } from '../constants.js';
@@ -89,8 +89,7 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config, sessionMana
     const taskKey = `${userId}:${msgId}`;
 
     await runClaudeTask(
-      config,
-      sessionManager,
+      { config, sessionManager, userCosts },
       {
         userId,
         chatId,
@@ -127,10 +126,9 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config, sessionMana
           stopTyping();
           runningTasks.delete(taskKey);
         },
-      },
-      userCosts,
-      (state) => {
-        runningTasks.set(taskKey, state);
+        onTaskReady: (state) => {
+          runningTasks.set(taskKey, state);
+        },
       },
     );
   }

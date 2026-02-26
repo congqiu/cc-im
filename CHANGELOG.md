@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+### 重构
+
+- `runClaudeTask` 签名简化：依赖项合并为 `TaskDeps`，回调移入 `TaskAdapter` 接口
+- 提取 `ClaudeRunOptions` 具名接口，替代 `runClaude` 的内联类型
+- Telegram `MAX_MESSAGE_LENGTH` 常量统一使用 `constants.ts` 中的定义
+
+### 修复
+
+- `closeLogger()` 清除日志轮转定时器，防止关闭后定时器仍触发
+
 ## [1.1.1] - 2026-02-26
 
 ### 新功能
@@ -147,4 +157,3 @@
 - 初始化飞书-Claude Code 桥接服务
 - 添加日志文件系统，替换所有 console 调用
 - 优化流式消息更新体验
-

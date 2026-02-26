@@ -17,13 +17,24 @@ export interface ClaudeRunHandle {
   abort: () => void;
 }
 
+export interface ClaudeRunOptions {
+  skipPermissions?: boolean;
+  timeoutMs?: number;
+  model?: string;
+  chatId?: string;
+  hookPort?: number;
+  threadRootMsgId?: string;
+  threadId?: string;
+  platform?: string;
+}
+
 export function runClaude(
   cliPath: string,
   prompt: string,
   sessionId: string | undefined,
   workDir: string,
   callbacks: ClaudeRunCallbacks,
-  options?: { skipPermissions?: boolean; timeoutMs?: number; model?: string; chatId?: string; hookPort?: number; threadRootMsgId?: string; threadId?: string; platform?: string },
+  options?: ClaudeRunOptions,
 ): ClaudeRunHandle {
   const args = [
     '-p',

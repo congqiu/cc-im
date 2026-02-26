@@ -1,10 +1,10 @@
 import { getBot } from './client.js';
 import { createLogger } from '../logger.js';
 import { splitLongContent, buildInputSummary, truncateText } from '../shared/utils.js';
+import { MAX_TELEGRAM_MESSAGE_LENGTH } from '../constants.js';
 
 const log = createLogger('TgSender');
 
-const MAX_MESSAGE_LENGTH = 4000; // Telegram limit is 4096, leave room for formatting
 const MAX_RETRIES = 3;
 const RATE_LIMIT_MAX_WAIT_SEC = 60; // Cap retry wait time to avoid excessive blocking
 const COOLDOWN_CLEANUP_INTERVAL_MS = 3600000; // Clean up cooldown map every hour
@@ -112,7 +112,7 @@ function formatMessage(content: string, status: MessageStatus, note?: string): s
 }
 
 function truncateForMessage(text: string): string {
-  return truncateText(text, MAX_MESSAGE_LENGTH);
+  return truncateText(text, MAX_TELEGRAM_MESSAGE_LENGTH);
 }
 
 function buildStopKeyboard(messageId: number) {
@@ -199,7 +199,7 @@ export async function updateMessage(chatId: string, messageId: string, content: 
 }
 
 export async function sendFinalMessages(chatId: string, messageId: string, fullContent: string, note: string) {
-  const parts = splitLongContent(fullContent, MAX_MESSAGE_LENGTH);
+  const parts = splitLongContent(fullContent, MAX_TELEGRAM_MESSAGE_LENGTH);
 
   // Update the original message with the first part
   await updateMessage(chatId, messageId, parts[0], 'done', note);

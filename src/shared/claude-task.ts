@@ -14,6 +14,15 @@ import { createLogger } from '../logger.js';
 const log = createLogger('ClaudeTask');
 
 /**
+ * 任务执行器依赖项 — 服务级单例，由调用方注入
+ */
+export interface TaskDeps {
+  config: Config;
+  sessionManager: SessionManager;
+  userCosts: Map<string, CostRecord>;
+}
+
+/**
  * 平台适配器 — 由各平台提供具体的消息发送实现
  */
 export interface TaskAdapter {
@@ -29,6 +38,10 @@ export interface TaskAdapter {
   extraCleanup?(): void;
   /** 节流间隔（飞书 80ms，Telegram 200ms） */
   throttleMs: number;
+  /** 任务启动后的回调，传入可变的 TaskRunState 对象供调用方存入 runningTasks */
+  onTaskReady(state: TaskRunState): void;
+  /** 首次收到内容时的回调（可选，飞书用来���除 waitingTimer） */
+  onFirstContent?(): void;
 }
 
 /**
@@ -88,20 +101,14 @@ function buildCompletionNote(
 
 /**
  * 执行 Claude 任务的共享逻辑
- *
- * @param onTaskReady - 任务启动后的回调，传入可变的 TaskRunState 对象供调用方存入 runningTasks
- * @param onFirstContent - 首次收到内容时的回调（可选，飞书用来清除 waitingTimer）
  */
 export function runClaudeTask(
-  config: Config,
-  sessionManager: SessionManager,
+  deps: TaskDeps,
   ctx: TaskContext,
   prompt: string,
   adapter: TaskAdapter,
-  userCosts: Map<string, CostRecord>,
-  onTaskReady: (state: TaskRunState) => void,
-  onFirstContent?: () => void,
 ): Promise<void> {
+  const { config, sessionManager, userCosts } = deps;
   return new Promise<void>((resolve) => {
     let lastUpdateTime = 0;
     let pendingUpdate: ReturnType<typeof setTimeout> | null = null;
@@ -165,7 +172,7 @@ export function runClaudeTask(
         if (!firstContentLogged) {
           firstContentLogged = true;
           log.debug(`First content (thinking) for user ${ctx.userId} after ${Date.now() - startTime}ms`);
-          onFirstContent?.();
+          adapter.onFirstContent?.();
         }
         wasThinking = true;
         thinkingText = thinking;
@@ -176,7 +183,7 @@ export function runClaudeTask(
         if (!firstContentLogged) {
           firstContentLogged = true;
           log.debug(`First content (text) for user ${ctx.userId} after ${Date.now() - startTime}ms`);
-          onFirstContent?.();
+          adapter.onFirstContent?.();
         }
         if (wasThinking && adapter.onThinkingToText) {
           wasThinking = false;
@@ -246,6 +253,6 @@ export function runClaudeTask(
     });
 
     taskState = { handle, latestContent: '', settle, startedAt: Date.now() };
-    onTaskReady(taskState);
+    adapter.onTaskReady(taskState);
   });
 }

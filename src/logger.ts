@@ -13,6 +13,7 @@ let logDir = DEFAULT_LOG_DIR;
 let minLevel: number = LOG_LEVELS.DEBUG;
 
 let logStream: WriteStream;
+let reopenTimer: ReturnType<typeof setTimeout> | null = null;
 
 function pad(n: number): string {
   return String(n).padStart(2, '0');
@@ -64,12 +65,13 @@ export function initLogger(dir?: string, level?: LogLevel) {
     const now = new Date();
     const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
     const ms = tomorrow.getTime() - now.getTime() + 1000;
-    setTimeout(() => {
+    reopenTimer = setTimeout(() => {
       logStream.end();
       rotateOldLogs();
       logStream = createWriteStream(join(logDir, getLogFileName()), { flags: 'a' });
       scheduleReopen();
-    }, ms).unref();
+    }, ms);
+    reopenTimer.unref();
   };
   scheduleReopen();
 }
@@ -100,5 +102,9 @@ export function createLogger(tag: string) {
 }
 
 export function closeLogger() {
+  if (reopenTimer) {
+    clearTimeout(reopenTimer);
+    reopenTimer = null;
+  }
   logStream?.end();
 }

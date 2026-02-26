@@ -12,7 +12,7 @@ import { destroySession, updateCardFull, disableStreaming } from './cardkit-mana
 import { registerPermissionSender, resolvePermissionById } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord } from '../commands/handler.js';
 import { safeStringify } from '../shared/utils.js';
-import { runClaudeTask, type TaskRunState } from '../shared/claude-task.js';
+import { runClaudeTask, type TaskRunState, type TaskDeps } from '../shared/claude-task.js';
 import { startTaskCleanup } from '../shared/task-cleanup.js';
 import { MessageDedup } from '../shared/message-dedup.js';
 import { CARDKIT_THROTTLE_MS, IMAGE_DIR } from '../constants.js';
@@ -173,8 +173,7 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
     let waitingTimer: ReturnType<typeof setInterval> | null = null;
 
     await runClaudeTask(
-      config,
-      sessionManager,
+      { config, sessionManager, userCosts },
       {
         userId,
         chatId,
@@ -215,26 +214,25 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
           if (waitingTimer) { clearInterval(waitingTimer); waitingTimer = null; }
           runningTasks.delete(taskKey);
         },
-      },
-      userCosts,
-      (state) => {
-        runningTasks.set(taskKey, { ...state, cardId, messageId });
+        onTaskReady: (state) => {
+          runningTasks.set(taskKey, { ...state, cardId, messageId });
 
-        // 等待首次内容期间，每3秒更新卡片显示已等待时间
-        const startTime = Date.now();
-        waitingTimer = setInterval(() => {
-          const taskInfo = runningTasks.get(taskKey);
-          if (!taskInfo) {
-            if (waitingTimer) { clearInterval(waitingTimer); waitingTimer = null; }
-            return;
-          }
-          const elapsed = Math.floor((Date.now() - startTime) / 1000);
-          streamContentUpdate(cardId, `等待 Claude 响应... (${elapsed}s)`).catch(() => {});
-        }, 3000);
-      },
-      () => {
-        // 首次内容到达，清除等待计时器
-        if (waitingTimer) { clearInterval(waitingTimer); waitingTimer = null; }
+          // 等待首次内容期间，每3秒更新卡片显示已等待时间
+          const startTime = Date.now();
+          waitingTimer = setInterval(() => {
+            const taskInfo = runningTasks.get(taskKey);
+            if (!taskInfo) {
+              if (waitingTimer) { clearInterval(waitingTimer); waitingTimer = null; }
+              return;
+            }
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            streamContentUpdate(cardId, `等待 Claude 响应... (${elapsed}s)`).catch(() => {});
+          }, 3000);
+        },
+        onFirstContent: () => {
+          // 首次内容到达，清除等待计时器
+          if (waitingTimer) { clearInterval(waitingTimer); waitingTimer = null; }
+        },
       },
     );
   }
