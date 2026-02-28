@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ClaudeRunCallbacks } from '../../../src/claude/cli-runner.js';
 import type { ParsedResult } from '../../../src/claude/stream-parser.js';
-import type { TaskAdapter, TaskContext, TaskRunState } from '../../../src/shared/claude-task.js';
+import type { TaskAdapter, TaskContext, TaskDeps, TaskRunState } from '../../../src/shared/claude-task.js';
 import type { CostRecord } from '../../../src/shared/types.js';
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
@@ -58,6 +58,14 @@ function makeSessionManager(overrides?: Record<string, any>) {
   } as any;
 }
 
+function makeDeps(overrides?: { config?: any; sessionManager?: any; userCosts?: Map<string, CostRecord> }): TaskDeps {
+  return {
+    config: overrides?.config ?? makeConfig(),
+    sessionManager: overrides?.sessionManager ?? makeSessionManager(),
+    userCosts: overrides?.userCosts ?? new Map<string, CostRecord>(),
+  };
+}
+
 function makeCtx(overrides?: Partial<TaskContext>): TaskContext {
   return {
     userId: 'user-1',
@@ -79,6 +87,7 @@ function makeAdapter(overrides?: Partial<TaskAdapter>): TaskAdapter {
     onThinkingToText: vi.fn(),
     extraCleanup: vi.fn(),
     throttleMs: 80,
+    onTaskReady: vi.fn(),
     ...overrides,
   };
 }
@@ -115,13 +124,8 @@ describe('runClaudeTask', () => {
     it('应该调用 adapter.sendComplete 并传入内容和 note', async () => {
       const adapter = makeAdapter();
       const ctx = makeCtx();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), ctx,
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), ctx, 'hello', adapter);
 
       // Simulate completion
       const result = makeResult();
@@ -138,13 +142,8 @@ describe('runClaudeTask', () => {
 
     it('无输出时应该使用 "(无输出)" 作为内容', async () => {
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       await capturedCallbacks.onComplete!(makeResult({ accumulated: '', result: '' }));
       await promise;
@@ -158,13 +157,8 @@ describe('runClaudeTask', () => {
 
     it('cost 为 0 时 note 应该显示"完成"', async () => {
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       await capturedCallbacks.onComplete!(makeResult({ cost: 0, durationMs: 0 }));
       await promise;
@@ -180,13 +174,8 @@ describe('runClaudeTask', () => {
       const adapter = makeAdapter({
         sendComplete: vi.fn().mockRejectedValue(new Error('network error')),
       });
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       await capturedCallbacks.onComplete!(makeResult());
 
@@ -196,13 +185,8 @@ describe('runClaudeTask', () => {
 
     it('应该传递 thinkingText 给 sendComplete', async () => {
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       // Simulate thinking then completion
       capturedCallbacks.onThinking!('Let me think...');
@@ -223,13 +207,8 @@ describe('runClaudeTask', () => {
   describe('错误处理', () => {
     it('应该调用 adapter.sendError', async () => {
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       await capturedCallbacks.onError!('Something went wrong');
       await promise;
@@ -241,13 +220,8 @@ describe('runClaudeTask', () => {
       const adapter = makeAdapter({
         sendError: vi.fn().mockRejectedValue(new Error('network error')),
       });
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       await capturedCallbacks.onError!('Something went wrong');
 
@@ -262,12 +236,9 @@ describe('runClaudeTask', () => {
       const sm = makeSessionManager();
       const ctx = makeCtx({ convId: 'conv-42' });
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
       const promise = runClaudeTask(
-        makeConfig(), sm, ctx,
-        'hello', adapter, userCosts, onTaskReady,
+        makeDeps({ sessionManager: sm }), ctx, 'hello', adapter,
       );
 
       capturedCallbacks.onSessionId!('session-abc');
@@ -283,12 +254,9 @@ describe('runClaudeTask', () => {
       const sm = makeSessionManager();
       const ctx = makeCtx({ threadId: 'thread-1', convId: 'conv-1' });
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
       const promise = runClaudeTask(
-        makeConfig(), sm, ctx,
-        'hello', adapter, userCosts, onTaskReady,
+        makeDeps({ sessionManager: sm }), ctx, 'hello', adapter,
       );
 
       capturedCallbacks.onSessionId!('session-xyz');
@@ -305,12 +273,9 @@ describe('runClaudeTask', () => {
       const sm = makeSessionManager();
       const ctx = makeCtx({ convId: undefined, threadId: undefined });
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
       const promise = runClaudeTask(
-        makeConfig(), sm, ctx,
-        'hello', adapter, userCosts, onTaskReady,
+        makeDeps({ sessionManager: sm }), ctx, 'hello', adapter,
       );
 
       capturedCallbacks.onSessionId!('session-noop');
@@ -328,13 +293,8 @@ describe('runClaudeTask', () => {
   describe('节流更新', () => {
     it('首次调用应该立即发送', async () => {
       const adapter = makeAdapter({ throttleMs: 100 });
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       capturedCallbacks.onText!('Hello');
 
@@ -347,13 +307,8 @@ describe('runClaudeTask', () => {
 
     it('节流间隔内的第二次调用应该延迟', async () => {
       const adapter = makeAdapter({ throttleMs: 100 });
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       // First call - immediate
       capturedCallbacks.onText!('Hello');
@@ -375,13 +330,8 @@ describe('runClaudeTask', () => {
 
     it('节流间隔后的调用应该立即发送', async () => {
       const adapter = makeAdapter({ throttleMs: 100 });
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       capturedCallbacks.onText!('A');
       expect(adapter.streamUpdate).toHaveBeenCalledTimes(1);
@@ -402,13 +352,8 @@ describe('runClaudeTask', () => {
   describe('思考模式', () => {
     it('思考内容应该带有 💭 前缀', async () => {
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       capturedCallbacks.onThinking!('Analyzing the problem');
 
@@ -423,13 +368,8 @@ describe('runClaudeTask', () => {
 
     it('从思考切换到文本时应该调用 onThinkingToText', async () => {
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       // First thinking
       capturedCallbacks.onThinking!('Let me think');
@@ -444,15 +384,13 @@ describe('runClaudeTask', () => {
     });
 
     it('切换到文本时应该清除 pending update 并更新 latestContent', async () => {
-      const adapter = makeAdapter({ throttleMs: 100 });
-      const userCosts = new Map<string, CostRecord>();
       let taskState: TaskRunState | undefined;
-      const onTaskReady = vi.fn((state: TaskRunState) => { taskState = state; });
+      const adapter = makeAdapter({
+        throttleMs: 100,
+        onTaskReady: vi.fn((state: TaskRunState) => { taskState = state; }),
+      });
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       // Trigger thinking (immediate)
       capturedCallbacks.onThinking!('Thinking...');
@@ -478,13 +416,8 @@ describe('runClaudeTask', () => {
 
     it('没有 onThinkingToText 回调时直接走 throttledUpdate', async () => {
       const adapter = makeAdapter({ throttleMs: 100, onThinkingToText: undefined });
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       capturedCallbacks.onThinking!('Thinking');
       expect(adapter.streamUpdate).toHaveBeenCalledTimes(1);
@@ -507,13 +440,8 @@ describe('runClaudeTask', () => {
   describe('工具使用追踪', () => {
     it('工具调用应该触发带有工具通知的更新', async () => {
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       // Send initial text first
       capturedCallbacks.onText!('Working on it');
@@ -534,13 +462,8 @@ describe('runClaudeTask', () => {
 
     it('工具统计应该出现在完成 note 中', async () => {
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       await capturedCallbacks.onComplete!(makeResult({
         toolStats: { Read: 3, Bash: 2 },
@@ -556,13 +479,8 @@ describe('runClaudeTask', () => {
 
     it('超过 5 条工具记录只保留最近 5 条', async () => {
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       // First text to set latestContent
       capturedCallbacks.onText!('content');
@@ -592,11 +510,9 @@ describe('runClaudeTask', () => {
     it('完成时应该更新 userCosts map', async () => {
       const adapter = makeAdapter();
       const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
       const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
+        makeDeps({ userCosts }), makeCtx(), 'hello', adapter,
       );
 
       await capturedCallbacks.onComplete!(makeResult({ cost: 0.123, durationMs: 5000 }));
@@ -612,21 +528,15 @@ describe('runClaudeTask', () => {
     it('多次完成应该累加费用', async () => {
       const adapter = makeAdapter();
       const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
+      const deps = makeDeps({ userCosts });
 
       // First task
-      const p1 = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello1', adapter, userCosts, onTaskReady,
-      );
+      const p1 = runClaudeTask(deps, makeCtx(), 'hello1', adapter);
       await capturedCallbacks.onComplete!(makeResult({ cost: 0.1, durationMs: 1000 }));
       await p1;
 
       // Second task
-      const p2 = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello2', adapter, userCosts, onTaskReady,
-      );
+      const p2 = runClaudeTask(deps, makeCtx(), 'hello2', adapter);
       await capturedCallbacks.onComplete!(makeResult({ cost: 0.2, durationMs: 2000 }));
       await p2;
 
@@ -643,12 +553,10 @@ describe('runClaudeTask', () => {
     it('非话题任务应该调用 addTurns', async () => {
       const sm = makeSessionManager({ addTurns: vi.fn(() => 5) });
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
       const promise = runClaudeTask(
-        makeConfig(), sm, makeCtx({ threadId: undefined }),
-        'hello', adapter, userCosts, onTaskReady,
+        makeDeps({ sessionManager: sm }), makeCtx({ threadId: undefined }),
+        'hello', adapter,
       );
 
       await capturedCallbacks.onComplete!(makeResult({ numTurns: 3 }));
@@ -660,12 +568,10 @@ describe('runClaudeTask', () => {
     it('话题任务应该调用 addTurnsForThread', async () => {
       const sm = makeSessionManager({ addTurnsForThread: vi.fn(() => 7) });
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
       const promise = runClaudeTask(
-        makeConfig(), sm, makeCtx({ threadId: 'thread-42' }),
-        'hello', adapter, userCosts, onTaskReady,
+        makeDeps({ sessionManager: sm }), makeCtx({ threadId: 'thread-42' }),
+        'hello', adapter,
       );
 
       await capturedCallbacks.onComplete!(makeResult({ numTurns: 4 }));
@@ -677,12 +583,9 @@ describe('runClaudeTask', () => {
     it('累计轮次 >= 8 时 note 中应该包含上下文提示', async () => {
       const sm = makeSessionManager({ addTurns: vi.fn(() => 9) });
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
       const promise = runClaudeTask(
-        makeConfig(), sm, makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
+        makeDeps({ sessionManager: sm }), makeCtx(), 'hello', adapter,
       );
 
       await capturedCallbacks.onComplete!(makeResult());
@@ -695,12 +598,9 @@ describe('runClaudeTask', () => {
     it('累计轮次 >= 12 时 note 中应该包含强警告', async () => {
       const sm = makeSessionManager({ addTurns: vi.fn(() => 15) });
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
       const promise = runClaudeTask(
-        makeConfig(), sm, makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
+        makeDeps({ sessionManager: sm }), makeCtx(), 'hello', adapter,
       );
 
       await capturedCallbacks.onComplete!(makeResult());
@@ -715,15 +615,12 @@ describe('runClaudeTask', () => {
 
   describe('Settled 状态', () => {
     it('settle 后 onComplete 应该是 no-op', async () => {
-      const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
       let taskState: TaskRunState | undefined;
-      const onTaskReady = vi.fn((state: TaskRunState) => { taskState = state; });
+      const adapter = makeAdapter({
+        onTaskReady: vi.fn((state: TaskRunState) => { taskState = state; }),
+      });
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       // Call settle manually
       taskState!.settle();
@@ -737,15 +634,12 @@ describe('runClaudeTask', () => {
     });
 
     it('settle 后 onError 应该是 no-op', async () => {
-      const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
       let taskState: TaskRunState | undefined;
-      const onTaskReady = vi.fn((state: TaskRunState) => { taskState = state; });
+      const adapter = makeAdapter({
+        onTaskReady: vi.fn((state: TaskRunState) => { taskState = state; }),
+      });
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       taskState!.settle();
 
@@ -757,15 +651,12 @@ describe('runClaudeTask', () => {
     });
 
     it('重复调用 settle 不应该报错', async () => {
-      const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
       let taskState: TaskRunState | undefined;
-      const onTaskReady = vi.fn((state: TaskRunState) => { taskState = state; });
+      const adapter = makeAdapter({
+        onTaskReady: vi.fn((state: TaskRunState) => { taskState = state; }),
+      });
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       taskState!.settle();
       taskState!.settle(); // Should not throw
@@ -780,17 +671,14 @@ describe('runClaudeTask', () => {
 
   describe('onTaskReady 回调', () => {
     it('应该接收包含 handle、latestContent、settle、startedAt 的 TaskRunState', async () => {
-      const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
       let taskState: TaskRunState | undefined;
-      const onTaskReady = vi.fn((state: TaskRunState) => { taskState = state; });
+      const adapter = makeAdapter({
+        onTaskReady: vi.fn((state: TaskRunState) => { taskState = state; }),
+      });
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
-      expect(onTaskReady).toHaveBeenCalledTimes(1);
+      expect(adapter.onTaskReady).toHaveBeenCalledTimes(1);
       expect(taskState).toBeDefined();
       expect(taskState!.handle).toBeDefined();
       expect(taskState!.handle.abort).toBe(mockAbort);
@@ -803,15 +691,12 @@ describe('runClaudeTask', () => {
     });
 
     it('latestContent 应该在流式更新中持续更新', async () => {
-      const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
       let taskState: TaskRunState | undefined;
-      const onTaskReady = vi.fn((state: TaskRunState) => { taskState = state; });
+      const adapter = makeAdapter({
+        onTaskReady: vi.fn((state: TaskRunState) => { taskState = state; }),
+      });
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       capturedCallbacks.onText!('Hello');
       expect(taskState!.latestContent).toBe('Hello');
@@ -829,15 +714,10 @@ describe('runClaudeTask', () => {
 
   describe('onFirstContent 回调', () => {
     it('首次收到文本内容时应该调用 onFirstContent', async () => {
-      const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
       const onFirstContent = vi.fn();
+      const adapter = makeAdapter({ onFirstContent });
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady, onFirstContent,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       capturedCallbacks.onText!('Hello');
 
@@ -853,15 +733,10 @@ describe('runClaudeTask', () => {
     });
 
     it('首次收到思考内容时也应该调用 onFirstContent', async () => {
-      const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
       const onFirstContent = vi.fn();
+      const adapter = makeAdapter({ onFirstContent });
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady, onFirstContent,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       capturedCallbacks.onThinking!('Let me think');
 
@@ -876,15 +751,9 @@ describe('runClaudeTask', () => {
     });
 
     it('不提供 onFirstContent 不应该报错', async () => {
-      const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
+      const adapter = makeAdapter({ onFirstContent: undefined });
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-        // no onFirstContent
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       // Should not throw
       capturedCallbacks.onText!('Hello');
@@ -900,13 +769,8 @@ describe('runClaudeTask', () => {
   describe('extraCleanup', () => {
     it('完成时应该调用 extraCleanup', async () => {
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       await capturedCallbacks.onComplete!(makeResult());
       await promise;
@@ -916,13 +780,8 @@ describe('runClaudeTask', () => {
 
     it('错误时应该调用 extraCleanup', async () => {
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       await capturedCallbacks.onError!('boom');
       await promise;
@@ -931,15 +790,12 @@ describe('runClaudeTask', () => {
     });
 
     it('settle 时应该调用 extraCleanup', async () => {
-      const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
       let taskState: TaskRunState | undefined;
-      const onTaskReady = vi.fn((state: TaskRunState) => { taskState = state; });
+      const adapter = makeAdapter({
+        onTaskReady: vi.fn((state: TaskRunState) => { taskState = state; }),
+      });
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       taskState!.settle();
       await promise;
@@ -949,13 +805,8 @@ describe('runClaudeTask', () => {
 
     it('没有 extraCleanup 也不应该报错', async () => {
       const adapter = makeAdapter({ extraCleanup: undefined });
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       await capturedCallbacks.onComplete!(makeResult());
 
@@ -968,14 +819,11 @@ describe('runClaudeTask', () => {
   describe('runClaude 参数传递', () => {
     it('应该传递正确的 CLI 路径、prompt 和工作目录', async () => {
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
       const ctx = makeCtx({ sessionId: 'sess-1', workDir: '/my/project' });
 
       const promise = runClaudeTask(
-        makeConfig({ claudeCliPath: '/custom/claude' }),
-        makeSessionManager(), ctx,
-        'write code', adapter, userCosts, onTaskReady,
+        makeDeps({ config: makeConfig({ claudeCliPath: '/custom/claude' }) }),
+        ctx, 'write code', adapter,
       );
 
       expect(runClaude).toHaveBeenCalledWith(
@@ -1000,13 +848,10 @@ describe('runClaudeTask', () => {
     it('用户设置的模型应该优先于默认模型', async () => {
       const sm = makeSessionManager({ getModel: vi.fn(() => 'opus') });
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
       const promise = runClaudeTask(
-        makeConfig({ claudeModel: 'sonnet' }),
-        sm, makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
+        makeDeps({ config: makeConfig({ claudeModel: 'sonnet' }), sessionManager: sm }),
+        makeCtx(), 'hello', adapter,
       );
 
       expect(capturedOptions.model).toBe('opus');
@@ -1018,13 +863,10 @@ describe('runClaudeTask', () => {
     it('用户未设置模型时应该使用配置默认模型', async () => {
       const sm = makeSessionManager({ getModel: vi.fn(() => undefined) });
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
       const promise = runClaudeTask(
-        makeConfig({ claudeModel: 'haiku' }),
-        sm, makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
+        makeDeps({ config: makeConfig({ claudeModel: 'haiku' }), sessionManager: sm }),
+        makeCtx(), 'hello', adapter,
       );
 
       expect(capturedOptions.model).toBe('haiku');
@@ -1035,17 +877,12 @@ describe('runClaudeTask', () => {
 
     it('应该传递 thread 相关参数', async () => {
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
       const ctx = makeCtx({
         threadId: 'thread-abc',
         threadRootMsgId: 'root-msg-123',
       });
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), ctx,
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), ctx, 'hello', adapter);
 
       expect(capturedOptions.threadId).toBe('thread-abc');
       expect(capturedOptions.threadRootMsgId).toBe('root-msg-123');
@@ -1056,13 +893,10 @@ describe('runClaudeTask', () => {
 
     it('skipPermissions 为 true 时应该传递', async () => {
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
       const promise = runClaudeTask(
-        makeConfig({ claudeSkipPermissions: true }),
-        makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
+        makeDeps({ config: makeConfig({ claudeSkipPermissions: true }) }),
+        makeCtx(), 'hello', adapter,
       );
 
       expect(capturedOptions.skipPermissions).toBe(true);
@@ -1077,13 +911,8 @@ describe('runClaudeTask', () => {
   describe('完成 note 格式', () => {
     it('note 应该包含耗时、费用、模型', async () => {
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       await capturedCallbacks.onComplete!(makeResult({
         cost: 0.1234,
@@ -1100,13 +929,8 @@ describe('runClaudeTask', () => {
 
     it('使用 result 字段作为 fallback', async () => {
       const adapter = makeAdapter();
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       await capturedCallbacks.onComplete!(makeResult({ accumulated: '', result: 'fallback content' }));
       await promise;
@@ -1124,13 +948,8 @@ describe('runClaudeTask', () => {
   describe('Pending timer 清理', () => {
     it('完成时应该清除 pending timer', async () => {
       const adapter = makeAdapter({ throttleMs: 100 });
-      const userCosts = new Map<string, CostRecord>();
-      const onTaskReady = vi.fn();
 
-      const promise = runClaudeTask(
-        makeConfig(), makeSessionManager(), makeCtx(),
-        'hello', adapter, userCosts, onTaskReady,
-      );
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
 
       // Create a pending update
       capturedCallbacks.onText!('A');

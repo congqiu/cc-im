@@ -790,8 +790,11 @@ describe('Event Handler', () => {
       });
 
       expect(mockRunClaudeTask).toHaveBeenCalledWith(
-        mockConfig,
-        expect.any(Object), // sessionManager
+        expect.objectContaining({
+          config: mockConfig,
+          sessionManager: expect.any(Object),
+          userCosts: expect.any(Map),
+        }),
         expect.objectContaining({
           userId: 'user-123',
           chatId: 'chat-123',
@@ -804,15 +807,14 @@ describe('Event Handler', () => {
           sendError: expect.any(Function),
           onThinkingToText: expect.any(Function),
           extraCleanup: expect.any(Function),
+          onTaskReady: expect.any(Function),
+          onFirstContent: expect.any(Function),
         }),
-        expect.any(Map), // userCosts
-        expect.any(Function), // onRegister
-        expect.any(Function), // onFirstContent
       );
     });
 
     it('adapter.sendComplete 调用 sendFinalCards', async () => {
-      mockRunClaudeTask.mockImplementationOnce(async (_cfg: any, _sm: any, _ctx: any, _prompt: any, adapter: any) => {
+      mockRunClaudeTask.mockImplementationOnce(async (_deps: any, _ctx: any, _prompt: any, adapter: any) => {
         await adapter.sendComplete('final content', 'done note', 'thinking text');
       });
 
@@ -839,7 +841,7 @@ describe('Event Handler', () => {
     });
 
     it('adapter.sendError 调用 sendErrorCard', async () => {
-      mockRunClaudeTask.mockImplementationOnce(async (_cfg: any, _sm: any, _ctx: any, _prompt: any, adapter: any) => {
+      mockRunClaudeTask.mockImplementationOnce(async (_deps: any, _ctx: any, _prompt: any, adapter: any) => {
         await adapter.sendError('something went wrong');
       });
 
@@ -861,7 +863,7 @@ describe('Event Handler', () => {
     });
 
     it('adapter.streamUpdate 调用 streamContentUpdate', async () => {
-      mockRunClaudeTask.mockImplementationOnce(async (_cfg: any, _sm: any, _ctx: any, _prompt: any, adapter: any) => {
+      mockRunClaudeTask.mockImplementationOnce(async (_deps: any, _ctx: any, _prompt: any, adapter: any) => {
         adapter.streamUpdate('streaming content', 'tool note');
       });
 
@@ -883,7 +885,7 @@ describe('Event Handler', () => {
     });
 
     it('adapter.onThinkingToText 调用 updateCardFull 重置卡片', async () => {
-      mockRunClaudeTask.mockImplementationOnce(async (_cfg: any, _sm: any, _ctx: any, _prompt: any, adapter: any) => {
+      mockRunClaudeTask.mockImplementationOnce(async (_deps: any, _ctx: any, _prompt: any, adapter: any) => {
         adapter.onThinkingToText('new content');
       });
 

@@ -177,12 +177,20 @@ export function formatToolCallNotification(toolName: string, toolInput?: Record<
 /**
  * 累积用户费用统计
  */
+const MAX_COST_ENTRIES = 500;
+
 export function trackCost(userCosts: Map<string, CostRecord>, userId: string, cost: number, durationMs: number): void {
   const record = userCosts.get(userId) ?? { totalCost: 0, totalDurationMs: 0, requestCount: 0 };
   record.totalCost += cost;
   record.totalDurationMs += durationMs;
   record.requestCount += 1;
   userCosts.set(userId, record);
+
+  // 兜底：超过上限时淘汰最早的条目（Map 保持插入序）
+  if (userCosts.size > MAX_COST_ENTRIES) {
+    const firstKey = userCosts.keys().next().value;
+    if (firstKey !== undefined) userCosts.delete(firstKey);
+  }
 }
 
 /**

@@ -539,15 +539,13 @@ describe('Telegram Event Handler', () => {
       const mockAbort = vi.fn();
 
       // 让 runClaudeTask 调用 onRegister 回调来注册任务
-      vi.mocked(runClaudeTask).mockImplementation(async (_config, _sm, _ctx, _prompt, _adapter, _costs, onRegister) => {
-        if (onRegister) {
-          onRegister({
+      vi.mocked(runClaudeTask).mockImplementation(async (_deps, _ctx, _prompt, adapter) => {
+        adapter.onTaskReady({
             handle: { abort: mockAbort } as any,
             settle: mockSettle,
             startedAt: Date.now(),
             latestContent: '任务内容',
           });
-        }
         // 不 resolve，模拟任务仍在运行
       });
 
@@ -635,24 +633,26 @@ describe('Telegram Event Handler', () => {
       await handler(ctx);
 
       expect(runClaudeTask).toHaveBeenCalledWith(
-        expect.objectContaining(mockConfig),           // config
-        expect.anything(),                              // sessionManager
+        expect.objectContaining({
+          config: expect.objectContaining(mockConfig),
+          sessionManager: expect.anything(),
+          userCosts: expect.any(Map),
+        }),
         expect.objectContaining({
           userId: '456',
           chatId: '123',
           workDir: '/work',
           platform: 'telegram',
-        }),                                             // task context
-        '分析代码',                                      // prompt
+        }),
+        '分析代码',
         expect.objectContaining({
           throttleMs: 200,
           streamUpdate: expect.any(Function),
           sendComplete: expect.any(Function),
           sendError: expect.any(Function),
           extraCleanup: expect.any(Function),
-        }),                                             // adapter
-        expect.any(Map),                                // userCosts
-        expect.any(Function),                           // onRegister
+          onTaskReady: expect.any(Function),
+        }),
       );
     });
 
@@ -663,7 +663,7 @@ describe('Telegram Event Handler', () => {
       vi.mocked(messageSender.sendThinkingMessage).mockResolvedValueOnce('msg-stream-789');
 
       let capturedAdapter: any;
-      vi.mocked(runClaudeTask).mockImplementationOnce(async (_config, _sm, _ctx, _prompt, adapter, _costs, _onRegister) => {
+      vi.mocked(runClaudeTask).mockImplementationOnce(async (_deps, _ctx, _prompt, adapter) => {
         capturedAdapter = adapter;
       });
 
@@ -689,7 +689,7 @@ describe('Telegram Event Handler', () => {
       vi.mocked(messageSender.sendThinkingMessage).mockResolvedValueOnce('msg-stream-no-tool');
 
       let capturedAdapter: any;
-      vi.mocked(runClaudeTask).mockImplementationOnce(async (_config, _sm, _ctx, _prompt, adapter, _costs, _onRegister) => {
+      vi.mocked(runClaudeTask).mockImplementationOnce(async (_deps, _ctx, _prompt, adapter) => {
         capturedAdapter = adapter;
       });
 
@@ -714,7 +714,7 @@ describe('Telegram Event Handler', () => {
       vi.mocked(messageSender.sendThinkingMessage).mockResolvedValueOnce('msg-complete');
 
       let capturedAdapter: any;
-      vi.mocked(runClaudeTask).mockImplementationOnce(async (_config, _sm, _ctx, _prompt, adapter, _costs, _onRegister) => {
+      vi.mocked(runClaudeTask).mockImplementationOnce(async (_deps, _ctx, _prompt, adapter) => {
         capturedAdapter = adapter;
       });
 
@@ -738,7 +738,7 @@ describe('Telegram Event Handler', () => {
       vi.mocked(messageSender.sendThinkingMessage).mockResolvedValueOnce('msg-error');
 
       let capturedAdapter: any;
-      vi.mocked(runClaudeTask).mockImplementationOnce(async (_config, _sm, _ctx, _prompt, adapter, _costs, _onRegister) => {
+      vi.mocked(runClaudeTask).mockImplementationOnce(async (_deps, _ctx, _prompt, adapter) => {
         capturedAdapter = adapter;
       });
 
@@ -765,7 +765,7 @@ describe('Telegram Event Handler', () => {
       vi.mocked(messageSender.sendThinkingMessage).mockResolvedValueOnce('msg-cleanup');
 
       let capturedAdapter: any;
-      vi.mocked(runClaudeTask).mockImplementationOnce(async (_config, _sm, _ctx, _prompt, adapter, _costs, _onRegister) => {
+      vi.mocked(runClaudeTask).mockImplementationOnce(async (_deps, _ctx, _prompt, adapter) => {
         capturedAdapter = adapter;
       });
 

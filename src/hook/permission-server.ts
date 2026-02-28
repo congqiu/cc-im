@@ -170,21 +170,20 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
           resolve(decision);
         };
 
-        // 超时定时器在发卡片之前启动，确保总等待时间不超过上限
-        const timeout = setTimeout(() => {
-          if (pendingRequests.has(id)) {
-            pendingRequests.delete(id);
-            removeFromIndex(chatId, id);
-            log.warn(`Permission request ${id} timed out`);
-            if (savedMessageId) {
-              platformSender.updatePermissionCard({ messageId: savedMessageId, chatId, toolName, decision: 'deny' }).catch(() => {});
-            }
-          }
-          safeResolve('deny');
-        }, PERMISSION_REQUEST_TIMEOUT_MS);
-
         platformSender.sendPermissionCard(chatId, id, toolName, toolInput ?? {}, threadCtx).then((messageId) => {
           savedMessageId = messageId;
+
+          // 超时定时器在卡片发送成功后才启动，确保用户有完整的决策时间
+          const timeout = setTimeout(() => {
+            if (pendingRequests.has(id)) {
+              pendingRequests.delete(id);
+              removeFromIndex(chatId, id);
+              log.warn(`Permission request ${id} timed out`);
+              platformSender.updatePermissionCard({ messageId, chatId, toolName, decision: 'deny' }).catch(() => {});
+            }
+            safeResolve('deny');
+          }, PERMISSION_REQUEST_TIMEOUT_MS);
+
           const pending: PendingRequest = {
             id,
             chatId,
@@ -203,7 +202,6 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
           log.info(`Permission request created: ${id} tool=${toolName} platform=${resolvedPlatform}`);
         }).catch((err) => {
           log.error('Failed to send permission card:', err);
-          clearTimeout(timeout);
           safeResolve('deny');
         });
       });
