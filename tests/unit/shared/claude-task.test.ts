@@ -15,6 +15,11 @@ vi.mock('../../../src/logger.js', () => ({
   }),
 }));
 
+const mockAccess = vi.fn();
+vi.mock('node:fs/promises', () => ({
+  access: (...args: any[]) => mockAccess(...args),
+}));
+
 // Capture callbacks passed to runClaude so tests can invoke them
 let capturedCallbacks: ClaudeRunCallbacks;
 let capturedOptions: any;
@@ -966,6 +971,160 @@ describe('runClaudeTask', () => {
       vi.advanceTimersByTime(200);
 
       expect(adapter.streamUpdate).toHaveBeenCalledTimes(callCountBeforeTimer);
+    });
+  });
+
+  // ── 16. 截图自动发送 ─────────────────────────────────────────────────────
+
+  describe('截图自动发送', () => {
+    beforeEach(() => {
+      mockAccess.mockResolvedValue(undefined);
+    });
+
+    it('检测到截图工具 → 完成后调用 sendImage', async () => {
+      const sendImage = vi.fn().mockResolvedValue(undefined);
+      const adapter = makeAdapter({ sendImage });
+
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
+
+      capturedCallbacks.onToolUse!('take_screenshot', { filePath: '/tmp/screenshot.png' });
+      await capturedCallbacks.onComplete!(makeResult());
+      await promise;
+
+      expect(sendImage).toHaveBeenCalledWith('/tmp/screenshot.png');
+    });
+
+    it('绝对路径直接使用', async () => {
+      const sendImage = vi.fn().mockResolvedValue(undefined);
+      const adapter = makeAdapter({ sendImage });
+
+      const promise = runClaudeTask(makeDeps(), makeCtx({ workDir: '/project' }), 'hello', adapter);
+
+      capturedCallbacks.onToolUse!('browser_take_screenshot', { file_path: '/absolute/path.png' });
+      await capturedCallbacks.onComplete!(makeResult());
+      await promise;
+
+      expect(sendImage).toHaveBeenCalledWith('/absolute/path.png');
+    });
+
+    it('相对路径基于 workDir 解析', async () => {
+      const sendImage = vi.fn().mockResolvedValue(undefined);
+      const adapter = makeAdapter({ sendImage });
+
+      const promise = runClaudeTask(makeDeps(), makeCtx({ workDir: '/project' }), 'hello', adapter);
+
+      capturedCallbacks.onToolUse!('take_screenshot', { filename: 'output/shot.png' });
+      await capturedCallbacks.onComplete!(makeResult());
+      await promise;
+
+      expect(sendImage).toHaveBeenCalledWith('/project/output/shot.png');
+    });
+
+    it('非截图工具不触发', async () => {
+      const sendImage = vi.fn().mockResolvedValue(undefined);
+      const adapter = makeAdapter({ sendImage });
+
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
+
+      capturedCallbacks.onToolUse!('Bash', { command: 'ls' });
+      await capturedCallbacks.onComplete!(makeResult());
+      await promise;
+
+      expect(sendImage).not.toHaveBeenCalled();
+    });
+
+    it('无文件路径时跳过', async () => {
+      const sendImage = vi.fn().mockResolvedValue(undefined);
+      const adapter = makeAdapter({ sendImage });
+
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
+
+      capturedCallbacks.onToolUse!('take_screenshot', { quality: 80 });
+      await capturedCallbacks.onComplete!(makeResult());
+      await promise;
+
+      expect(sendImage).not.toHaveBeenCalled();
+    });
+
+    it('重复路径去重', async () => {
+      const sendImage = vi.fn().mockResolvedValue(undefined);
+      const adapter = makeAdapter({ sendImage });
+
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
+
+      capturedCallbacks.onToolUse!('take_screenshot', { filePath: '/tmp/shot.png' });
+      capturedCallbacks.onToolUse!('take_screenshot', { filePath: '/tmp/shot.png' });
+      await capturedCallbacks.onComplete!(makeResult());
+      await promise;
+
+      expect(sendImage).toHaveBeenCalledTimes(1);
+    });
+
+    it('文件不存在时跳过', async () => {
+      mockAccess.mockRejectedValue(new Error('ENOENT'));
+      const sendImage = vi.fn().mockResolvedValue(undefined);
+      const adapter = makeAdapter({ sendImage });
+
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
+
+      capturedCallbacks.onToolUse!('take_screenshot', { filePath: '/tmp/missing.png' });
+      await capturedCallbacks.onComplete!(makeResult());
+      await promise;
+
+      expect(sendImage).not.toHaveBeenCalled();
+    });
+
+    it('错误路径（onError）不发送', async () => {
+      const sendImage = vi.fn().mockResolvedValue(undefined);
+      const adapter = makeAdapter({ sendImage });
+
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
+
+      capturedCallbacks.onToolUse!('take_screenshot', { filePath: '/tmp/shot.png' });
+      await capturedCallbacks.onError!('boom');
+      await promise;
+
+      expect(sendImage).not.toHaveBeenCalled();
+    });
+
+    it('无 sendImage 方法时不报错', async () => {
+      const adapter = makeAdapter({ sendImage: undefined });
+
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
+
+      capturedCallbacks.onToolUse!('take_screenshot', { filePath: '/tmp/shot.png' });
+      await capturedCallbacks.onComplete!(makeResult());
+
+      await expect(promise).resolves.toBeUndefined();
+    });
+
+    it('sendImage 失败不阻塞完成', async () => {
+      const sendImage = vi.fn().mockRejectedValue(new Error('upload failed'));
+      const adapter = makeAdapter({ sendImage });
+
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
+
+      capturedCallbacks.onToolUse!('take_screenshot', { filePath: '/tmp/shot.png' });
+      await capturedCallbacks.onComplete!(makeResult());
+
+      await expect(promise).resolves.toBeUndefined();
+      expect(adapter.sendComplete).toHaveBeenCalled();
+    });
+
+    it('多张截图串行发送', async () => {
+      const sendImage = vi.fn().mockResolvedValue(undefined);
+      const adapter = makeAdapter({ sendImage });
+
+      const promise = runClaudeTask(makeDeps(), makeCtx(), 'hello', adapter);
+
+      capturedCallbacks.onToolUse!('take_screenshot', { filePath: '/tmp/a.png' });
+      capturedCallbacks.onToolUse!('take_screenshot', { filePath: '/tmp/b.png' });
+      await capturedCallbacks.onComplete!(makeResult());
+      await promise;
+
+      expect(sendImage).toHaveBeenCalledTimes(2);
+      expect(sendImage).toHaveBeenNthCalledWith(1, '/tmp/a.png');
+      expect(sendImage).toHaveBeenNthCalledWith(2, '/tmp/b.png');
     });
   });
 });

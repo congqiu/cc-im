@@ -1,4 +1,5 @@
 import { getClient } from './client.js';
+import { createReadStream } from 'node:fs';
 import {
   buildCardV2,
   buildPermissionCard,
@@ -18,6 +19,7 @@ import {
   destroySession,
 } from './cardkit-manager.js';
 import { createLogger } from '../logger.js';
+import { withRetry } from '../shared/retry.js';
 import type { ThreadContext } from '../shared/types.js';
 
 export type { ThreadContext };
@@ -251,4 +253,48 @@ export async function updatePermissionCard(messageId: string, toolName: string, 
   } catch (err) {
     log.error('Failed to update permission card:', err);
   }
+}
+
+export async function uploadAndSendImage(chatId: string, imagePath: string, threadCtx?: ThreadContext): Promise<void> {
+  const client = getClient();
+
+  // 1. 上传图片获取 image_key（带重试）
+  const uploadRes = await withRetry(
+    async () => {
+      const res = await client.im.v1.image.create({
+        data: { image_type: 'message', image: createReadStream(imagePath) },
+      });
+      const imageKey = res?.image_key;
+      if (!imageKey) throw new Error('Image upload failed: no image_key returned');
+      return imageKey;
+    },
+    { maxRetries: 3, baseDelayMs: 500 },
+  );
+
+  // 2. 发送图片消息（带重试）
+  const content = JSON.stringify({ image_key: uploadRes });
+  await withRetry(
+    async () => {
+      if (threadCtx) {
+        await client.im.v1.message.reply({
+          path: { message_id: threadCtx.rootMessageId },
+          data: {
+            content,
+            msg_type: 'image',
+            reply_in_thread: true,
+          },
+        });
+      } else {
+        await client.im.v1.message.create({
+          params: { receive_id_type: 'chat_id' },
+          data: {
+            receive_id: chatId,
+            content,
+            msg_type: 'image',
+          },
+        });
+      }
+    },
+    { maxRetries: 3, baseDelayMs: 500 },
+  );
 }

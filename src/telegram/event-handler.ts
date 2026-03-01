@@ -6,7 +6,7 @@ import type { Config } from '../config.js';
 import { AccessControl } from '../access/access-control.js';
 import type { SessionManager } from '../session/session-manager.js';
 import { RequestQueue } from '../queue/request-queue.js';
-import { sendThinkingMessage, updateMessage, sendFinalMessages, sendTextReply, sendPermissionMessage, updatePermissionMessage, startTypingLoop } from './message-sender.js';
+import { sendThinkingMessage, updateMessage, sendFinalMessages, sendTextReply, sendPermissionMessage, updatePermissionMessage, startTypingLoop, sendImageReply } from './message-sender.js';
 import { registerPermissionSender, resolvePermissionById } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord } from '../commands/handler.js';
 import { runClaudeTask, type TaskRunState, type TaskDeps } from '../shared/claude-task.js';
@@ -129,6 +129,7 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config, sessionMana
         onTaskReady: (state) => {
           runningTasks.set(taskKey, state);
         },
+        sendImage: (imagePath) => sendImageReply(chatId, imagePath),
       },
     );
   }

@@ -6,17 +6,28 @@
 
 ## [Unreleased]
 
+### 新功能
+
+- 截图自动发送：Claude 使用截图工具后，任务完成时自动将截图上传并发送到聊天窗口（飞书/Telegram 双平台支持）
+
+### 修复
+
+- `disableStreaming` 限频重试：完成时关闭流式模式被限频（200400）后自动重试，避免卡片残留 streaming 状态
+- CardKit `streamContent` re-enable 增加失败上限（3 次），防止持续重试
+- `setTimeout` 超时值溢出保护：clamp 到 2^31-1，防止超大值立即触发
+- 权限超时定时器在卡片发送成功后才启动，确保用户有完整的决策时间
+- `trackCost` 增加 500 条上限保护，防止长期运行的服务内存无限增长
+- `closeLogger()` 清除日志轮转定时器，防止关闭后定时器仍触发
+
 ### 重构
 
 - `runClaudeTask` 签名简化：依赖项合并为 `TaskDeps`，回调移入 `TaskAdapter` 接口
 - 提取 `ClaudeRunOptions` 具名接口，替代 `runClaude` 的内联类型
 - Telegram `MAX_MESSAGE_LENGTH` 常量统一使用 `constants.ts` 中的定义
 
-### 修复
+### 其他
 
-- 权限超时定时器在卡片发送成功后才启动，确保用户有完整的决策时间
-- `trackCost` 增加 500 条上限保护，防止长期运行的服务内存无限增长
-- `closeLogger()` 清除日志轮转定时器，防止关闭后定时器仍触发
+- `dotenv` 从 dependencies 移至 devDependencies，生产环境不再依赖
 
 ## [1.1.1] - 2026-02-26
 

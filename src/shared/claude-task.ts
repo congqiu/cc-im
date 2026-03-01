@@ -3,6 +3,8 @@
  * 封装两个平台重复的节流更新、完成统计、竞态保护等代码
  */
 
+import { access } from 'node:fs/promises';
+import { resolve as pathResolve } from 'node:path';
 import type { Config } from '../config.js';
 import type { SessionManager } from '../session/session-manager.js';
 import { runClaude, type ClaudeRunHandle } from '../claude/cli-runner.js';
@@ -42,6 +44,26 @@ export interface TaskAdapter {
   onTaskReady(state: TaskRunState): void;
   /** 首次收到内容时的回调（可选，飞书用来���除 waitingTimer） */
   onFirstContent?(): void;
+  /** 发送图片消息（可选，用于截图自动发送） */
+  sendImage?(imagePath: string): Promise<void>;
+}
+
+/**
+ * 检测工具名是否为截图工具
+ */
+export function isScreenshotTool(toolName: string): boolean {
+  return toolName.toLowerCase().includes('screenshot');
+}
+
+/**
+ * 从工具输入中提取截图文件路径
+ */
+export function extractScreenshotPath(toolInput: Record<string, unknown>): string | undefined {
+  for (const key of ['filePath', 'file_path', 'filename', 'path']) {
+    const val = toolInput[key];
+    if (typeof val === 'string' && val.length > 0) return val;
+  }
+  return undefined;
 }
 
 /**
@@ -118,6 +140,7 @@ export function runClaudeTask(
     let thinkingText = '';
     let toolLines: string[] = [];
     const startTime = Date.now();
+    const screenshotPaths: string[] = [];
 
     // 任务状态对象（可变引用，调用方通过 onTaskReady 存入 runningTasks）
     let taskState: TaskRunState;
@@ -204,6 +227,17 @@ export function runClaudeTask(
         toolLines.push(notification);
         if (toolLines.length > 5) toolLines = toolLines.slice(-5);
         throttledUpdate(taskState.latestContent);
+
+        // 收集截图路径
+        if (isScreenshotTool(toolName) && toolInput) {
+          const rawPath = extractScreenshotPath(toolInput);
+          if (rawPath) {
+            const absPath = rawPath.startsWith('/') ? rawPath : pathResolve(ctx.workDir, rawPath);
+            if (!screenshotPaths.includes(absPath)) {
+              screenshotPaths.push(absPath);
+            }
+          }
+        }
       },
       onComplete: async (result) => {
         if (settled) return;
@@ -223,6 +257,19 @@ export function runClaudeTask(
         } catch (err) {
           log.error('Failed to send complete:', err);
         }
+
+        // 完成后自动发送截图
+        if (adapter.sendImage && screenshotPaths.length > 0) {
+          for (const imgPath of screenshotPaths) {
+            try {
+              await access(imgPath);
+              await adapter.sendImage(imgPath);
+            } catch (err) {
+              log.warn(`Screenshot send skipped (${imgPath}):`, err);
+            }
+          }
+        }
+
         cleanup();
         resolve();
       },

@@ -55,6 +55,7 @@ pnpm test:watch
 - `im:message:send_as_bot` — 以应用身份发消息
 - `im:message` — 获取与发送单聊、群组消息
 - `im:message:patch_as_bot` — 更新应用发送的消息（权限卡片更新）
+- `im:resource` — 上传和下载图片/文件资源（图片消息、截图发送）
 - `cardkit:card` — 创建与更新 CardKit 卡片（流式输出必需）
 
 ### 2. 会话管理（SessionManager）
@@ -224,14 +225,15 @@ claude -p \
 
 **CardKit API 重试策略**：
 - `card.create` 不使用重试（创建操作不幂等，重试会产生孤儿卡片）
-- 其他 API（`enableStreaming`、`updateCardFull` 等）使用 `withRetry` 自动重试
+- `enableStreaming`、`updateCardFull`、`disableStreaming` 使用 `withRetry` 自动重试
+- `streamContent` re-enable 连续失败上限 3 次（`MAX_REENABLE_ATTEMPTS`），超过后静默跳过
 
 **CardKit API 错误码处理**：
 - Lark SDK 不抛异常，错误码在 `res.code` 中返回，需显式检查
 - `200810`（用户交互中）→ 静默忽略
-- `200850` / `300309`（流式超时/关闭）→ 自动重新启用 streaming_mode 后重试一次
+- `200850` / `300309`（流式超时/关闭）→ 自动重新启用 streaming_mode 后重试一次（上限 3 次）
 - `300317`（sequence 冲突）→ 静默忽略，下次自动修正
-- `200400`（限频）→ 静默忽略，等下次节流重试
+- `200400`（限频）→ `streamContent` 静默忽略等下次节流；`disableStreaming` 自动重试
 
 ## 测试
 

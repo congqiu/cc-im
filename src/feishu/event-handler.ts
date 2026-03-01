@@ -5,7 +5,7 @@ import type { Config } from '../config.js';
 import { AccessControl } from '../access/access-control.js';
 import type { SessionManager } from '../session/session-manager.js';
 import { RequestQueue } from '../queue/request-queue.js';
-import { sendThinkingCard, streamContentUpdate, sendFinalCards, sendErrorCard, sendTextReply, sendPermissionCard, updatePermissionCard, fetchThreadDescription, type CardHandle, type ThreadContext } from './message-sender.js';
+import { sendThinkingCard, streamContentUpdate, sendFinalCards, sendErrorCard, sendTextReply, sendPermissionCard, updatePermissionCard, fetchThreadDescription, uploadAndSendImage, type CardHandle, type ThreadContext } from './message-sender.js';
 import { getClient, getBotOpenId } from './client.js';
 import { buildCardV2 } from './card-builder.js';
 import { destroySession, updateCardFull, disableStreaming } from './cardkit-manager.js';
@@ -233,6 +233,7 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
           // 首次内容到达，清除等待计时器
           if (waitingTimer) { clearInterval(waitingTimer); waitingTimer = null; }
         },
+        sendImage: (imagePath) => uploadAndSendImage(chatId, imagePath, finalThreadCtx),
       },
     );
   }

@@ -11,6 +11,7 @@
 - **思考过程展示**：实时显示 Claude 的思考过程（折叠面板）
 - **工具调用通知**：流式显示当前正在使用的工具及参数摘要
 - **图片消息支持**：支持发送图片给 Claude 进行分析
+- **截图自动发送**：Claude 使用截图工具后，任务完成时自动将截图上传到聊天窗口
 - **话题会话**：飞书群聊话题（thread）独立会话
 - **会话管理**：每用户独立 session，支持 `/new` 重置
 - **并发控制**：同会话串行执行，不同会话可并发，最多排队 3 条消息
@@ -66,7 +67,7 @@ pnpm dev
 
 1. 在[飞书开放平台](https://open.feishu.cn)创建应用
 2. 开启机器人能力
-3. 添加权限：`im:message`、`im:message:send_as_bot`、`im:message.group_msg`、`im:message.p2p_msg:readonly`、`cardkit:card:write`
+3. 添加权限：`im:message`、`im:message:send_as_bot`、`im:message.group_msg`、`im:message.p2p_msg:readonly`、`im:resource`、`cardkit:card:write`
 4. 事件订阅中启用 **长连接模式**，订阅以下事件：
    - `im.message.receive_v1` — 接收消息
    - `im.message.recalled_v1` — 消息撤回（自动清理话题会话）

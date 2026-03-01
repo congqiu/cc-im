@@ -1,4 +1,5 @@
 import { getBot } from './client.js';
+import { createReadStream } from 'node:fs';
 import { createLogger } from '../logger.js';
 import { splitLongContent, buildInputSummary, truncateText } from '../shared/utils.js';
 import { MAX_TELEGRAM_MESSAGE_LENGTH } from '../constants.js';
@@ -291,3 +292,9 @@ export async function updatePermissionMessage(chatId: string, messageId: string,
   }
 }
 
+export async function sendImageReply(chatId: string, imagePath: string): Promise<void> {
+  const bot = getBot();
+  await callWithRetry(chatId, 'sendImageReply', () =>
+    bot.telegram.sendPhoto(Number(chatId), { source: createReadStream(imagePath) }),
+  );
+}
