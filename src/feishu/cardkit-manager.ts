@@ -11,7 +11,12 @@ interface CardSession {
   streamingEnabled: boolean;
   completed: boolean;
   createdAt: number;
+  /** 连续 re-enable 失败次数，成功时重置 */
+  reenableFailCount: number;
 }
+
+/** 连续 re-enable 失败上限，超过后不再尝试 */
+const MAX_REENABLE_ATTEMPTS = 3;
 
 const sessions = new Map<string, CardSession>();
 
@@ -59,7 +64,7 @@ export async function createCard(cardJson: string): Promise<string> {
     throw new Error(`card.create returned no card_id (code=${res.code}, msg=${res.msg})`);
   }
 
-  sessions.set(cardId, { cardId, sequence: 0, streamingEnabled: false, completed: false, createdAt: Date.now() });
+  sessions.set(cardId, { cardId, sequence: 0, streamingEnabled: false, completed: false, createdAt: Date.now(), reenableFailCount: 0 });
   log.debug(`Card created: ${cardId}`);
   return cardId;
 }
@@ -125,7 +130,12 @@ export async function streamContent(
 
   const code = res?.code;
 
-  if (!code || code === 0) return; // 成功
+  if (!code || code === 0) {
+    // 成功，重置 re-enable 失败计数
+    const s = sessions.get(cardId);
+    if (s) s.reenableFailCount = 0;
+    return;
+  }
   if (code === 200810) return;     // 用户正在交互
   if (code === 300317) return;     // sequence 冲突，下次会修正
   if (code === 200400) return;     // 限频，等下次节流重试
@@ -136,6 +146,7 @@ export async function streamContent(
   if (code === 200850 || code === 300309) {
     const s = sessions.get(cardId);
     if (!s || s.completed) return; // 卡片已完成，不再重试
+    if (s.reenableFailCount >= MAX_REENABLE_ATTEMPTS) return; // 超过上限，静默跳过
     log.warn(`Streaming closed/timeout (${code}) for card ${cardId}, re-enabling...`);
     try {
       await enableStreaming(cardId);
@@ -144,10 +155,14 @@ export async function streamContent(
       if (!s2 || s2.completed) return;
       const retryRes = await call(nextSeq(cardId));
       if (retryRes?.code && retryRes.code !== 0) {
-        log.warn(`Retry still failed: code=${retryRes.code}, skipping`);
+        s.reenableFailCount++;
+        log.warn(`Retry still failed: code=${retryRes.code}, skipping (${s.reenableFailCount}/${MAX_REENABLE_ATTEMPTS})`);
+      } else {
+        s.reenableFailCount = 0; // 重试成功，重置计数
       }
     } catch {
-      log.warn(`Re-enable failed for card ${cardId}, skipping`);
+      s.reenableFailCount++;
+      log.warn(`Re-enable failed for card ${cardId}, skipping (${s.reenableFailCount}/${MAX_REENABLE_ATTEMPTS})`);
     }
     return;
   }
@@ -232,20 +247,25 @@ export async function disableStreaming(cardId: string): Promise<void> {
   s.completed = true;
   s.streamingEnabled = false;
 
-  const client = getClient();
   try {
-    const res = await client.cardkit.v1.card.settings({
-      path: { card_id: cardId },
-      data: {
-        settings: JSON.stringify({ streaming_mode: false }),
-        sequence: nextSeq(cardId),
-      },
-    });
-    if (res?.code && res.code !== 0) {
-      log.warn(`disableStreaming failed: code=${res.code}, msg=${res.msg}`);
-    } else {
-      log.debug(`Streaming disabled for card ${cardId}`);
-    }
+    await withRetry(async () => {
+      const client = getClient();
+      const res = await client.cardkit.v1.card.settings({
+        path: { card_id: cardId },
+        data: {
+          settings: JSON.stringify({ streaming_mode: false }),
+          sequence: nextSeq(cardId),
+        },
+      });
+      if (res?.code && res.code !== 0) {
+        if (res.code === 200400) {
+          throw new Error(`disableStreaming rate limited: code=${res.code}, msg=${res.msg}`);
+        }
+        log.warn(`disableStreaming failed: code=${res.code}, msg=${res.msg}`);
+      } else {
+        log.debug(`Streaming disabled for card ${cardId}`);
+      }
+    }, { maxRetries: 3, baseDelayMs: 500 });
   } catch (err) {
     log.warn(`disableStreaming error for card ${cardId}:`, err);
   }

@@ -88,15 +88,19 @@ export function runClaude(
   let timeoutHandle: NodeJS.Timeout | null = null;
   const pendingToolInputs = new Map<number, { name: string; json: string }>();
 
-  // 设置超时
-  if (options?.timeoutMs && options.timeoutMs > 0) {
+  // 设置超时（setTimeout 最大值为 2^31-1，超过会立即触发）
+  const MAX_TIMEOUT = 2_147_483_647;
+  const timeoutMs = options?.timeoutMs && options.timeoutMs > 0
+    ? Math.min(options.timeoutMs, MAX_TIMEOUT)
+    : 0;
+  if (timeoutMs > 0) {
     timeoutHandle = setTimeout(() => {
       if (!completed && !child.killed) {
         completed = true;
         child.kill('SIGTERM');
-        callbacks.onError(`执行超时（${options.timeoutMs}ms），已终止进程`);
+        callbacks.onError(`执行超时（${timeoutMs}ms），已终止进程`);
       }
-    }, options.timeoutMs);
+    }, timeoutMs);
   }
 
   const rl = createInterface({ input: child.stdout! });
