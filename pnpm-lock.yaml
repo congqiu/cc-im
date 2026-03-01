@@ -11,9 +11,6 @@ importers:
       '@larksuiteoapi/node-sdk':
         specifier: ^1.59.0
         version: 1.59.0
-      dotenv:
-        specifier: ^17.3.1
-        version: 17.3.1
       telegraf:
         specifier: ^4.16.3
         version: 4.16.3
@@ -24,6 +21,9 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^4.0.18
         version: 4.0.18(vitest@4.0.18(@types/node@25.3.0)(tsx@4.21.0))
+      dotenv:
+        specifier: ^17.3.1
+        version: 17.3.1
       tsx:
         specifier: ^4.21.0
         version: 4.21.0

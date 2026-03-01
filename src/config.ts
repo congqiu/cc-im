@@ -1,4 +1,4 @@
-import 'dotenv/config';
+try { await import('dotenv/config'); } catch {}
 import { readFileSync, accessSync, constants } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, isAbsolute } from 'node:path';
