@@ -5,10 +5,15 @@ import { createLogger } from '../logger.js';
 const log = createLogger('Telegram');
 
 let bot: Telegraf;
+let botUsername: string | undefined;
 
 export function getBot(): Telegraf {
   if (!bot) throw new Error('Telegram bot not initialized. Call initTelegram() first.');
   return bot;
+}
+
+export function getBotUsername(): string | undefined {
+  return botUsername;
 }
 
 export async function initTelegram(config: Config, setupHandlers: (bot: Telegraf) => void) {
@@ -24,7 +29,8 @@ export async function initTelegram(config: Config, setupHandlers: (bot: Telegraf
     const timeout = new Promise((_, reject) =>
       setTimeout(() => reject(new Error('Telegram bot connect timeout after 30s')), 30000)
     );
-    await Promise.race([bot.telegram.getMe(), timeout]);
+    const me = await Promise.race([bot.telegram.getMe(), timeout]) as Awaited<ReturnType<typeof bot.telegram.getMe>>;
+    botUsername = me.username;
     // launch() 的 Promise 在轮询停止时才 resolve，不能 await
     bot.launch().catch(err => {
       log.error('Telegram polling fatal error:', err);

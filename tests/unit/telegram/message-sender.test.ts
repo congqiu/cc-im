@@ -47,7 +47,7 @@ describe('telegram/message-sender', () => {
 
       const id = await sendThinkingMessage('12345');
       expect(id).toBe('42');
-      expect(mockSendMessage).toHaveBeenCalledWith(12345, expect.stringContaining('思考中'));
+      expect(mockSendMessage).toHaveBeenCalledWith(12345, expect.stringContaining('思考中'), {});
       expect(mockEditMessageText).toHaveBeenCalledWith(
         12345, 42, undefined,
         expect.any(String),

@@ -49,7 +49,7 @@ pnpm test:watch
   - 消息撤回时自动清理关联的话题会话（`im.message.recalled_v1` 事件）
   - 权限卡片仍使用传统 `im.v1.message.patch` 更新
 - Telegram：`src/telegram/` - 使用 `telegraf`，轮询模式
-  - **仅支持私聊**：群组和话题（topic）消息会被拒绝
+  - **支持私聊和群组**：群组中需要 @机器人才会响应，回复会以 reply 形式关联到原消息
 
 **飞书应用权限要求**：
 - `im:message:send_as_bot` — 以应用身份发消息

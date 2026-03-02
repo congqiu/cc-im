@@ -124,15 +124,21 @@ function buildStopKeyboard(messageId: number) {
   };
 }
 
-export async function sendThinkingMessage(chatId: string): Promise<string> {
+export async function sendThinkingMessage(chatId: string, replyToMessageId?: string): Promise<string> {
   const bot = getBot();
   const numericChatId = Number(chatId);
+
+  const extra: Record<string, unknown> = {};
+  if (replyToMessageId) {
+    extra.reply_parameters = { message_id: Number(replyToMessageId) };
+  }
 
   // Use retry for initial message to ensure delivery
   const msg = await callWithRetry(chatId, 'sendThinkingMessage', () =>
     bot.telegram.sendMessage(
       numericChatId,
       formatMessage('正在思考...', 'thinking', '请稍候'),
+      extra,
     ),
   );
 

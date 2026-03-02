@@ -9,6 +9,8 @@ import { RequestQueue } from '../queue/request-queue.js';
 import { sendThinkingMessage, updateMessage, sendFinalMessages, sendTextReply, sendPermissionMessage, updatePermissionMessage, startTypingLoop, sendImageReply } from './message-sender.js';
 import { registerPermissionSender, resolvePermissionById } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord } from '../commands/handler.js';
+import type { ThreadContext } from '../shared/types.js';
+import { getBotUsername } from './client.js';
 import { runClaudeTask, type TaskRunState, type TaskDeps } from '../shared/claude-task.js';
 import { startTaskCleanup } from '../shared/task-cleanup.js';
 import { MessageDedup } from '../shared/message-dedup.js';
@@ -67,6 +69,8 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config, sessionMana
     prompt: string,
     workDir: string,
     convId?: string,
+    _threadCtx?: ThreadContext,
+    replyToMessageId?: string,
   ) {
     const sessionId = convId ? sessionManager.getSessionIdForConv(userId, convId) : undefined;
 
@@ -74,7 +78,7 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config, sessionMana
 
     let msgId: string;
     try {
-      msgId = await sendThinkingMessage(chatId);
+      msgId = await sendThinkingMessage(chatId, replyToMessageId);
     } catch (err) {
       log.error('Failed to send thinking message:', err);
       return;
@@ -178,15 +182,26 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config, sessionMana
     const chatId = String(ctx.chat.id);
     const userId = String(ctx.from.id);
     const messageId = String(ctx.message.message_id);
-    const text = ctx.message.text.trim();
+    let text = ctx.message.text.trim();
 
     log.debug(`Received message from user ${userId}, chat ${chatId}: ${text.slice(0, 50)}${text.length > 50 ? '...' : ''}`);
 
-    // Only allow private chats
-    if (ctx.chat.type !== 'private') {
-      log.warn(`Rejected message from non-private chat: ${ctx.chat.type}, chatId=${chatId}`);
-      await sendTextReply(chatId, '抱歉，本机器人仅支持私聊模式。\n\n请在私聊窗口中与我对话。');
-      return;
+    // 群聊需要 @机器人才响应
+    const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+    let replyToMessageId: string | undefined;
+    if (isGroup) {
+      const username = getBotUsername();
+      if (!username) return;
+      const entities = ctx.message.entities ?? [];
+      const isMentioned = entities.some(e =>
+        e.type === 'mention' &&
+        text.substring(e.offset, e.offset + e.length).toLowerCase() === `@${username.toLowerCase()}`
+      );
+      if (!isMentioned) return;
+      // 去掉 @botUsername
+      text = text.replace(new RegExp(`@${username}\\b`, 'gi'), '').trim();
+      if (!text) return;
+      replyToMessageId = messageId;
     }
 
     // Dedup
@@ -217,7 +232,7 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config, sessionMana
     const convIdSnapshot = sessionManager.getConvId(userId);
 
     const enqueueResult = requestQueue.enqueue(userId, convIdSnapshot, text, async (prompt) => {
-      await handleClaudeRequest(userId, chatId, prompt, workDirSnapshot, convIdSnapshot);
+      await handleClaudeRequest(userId, chatId, prompt, workDirSnapshot, convIdSnapshot, undefined, replyToMessageId);
     });
 
     if (enqueueResult === 'rejected') {
@@ -235,10 +250,19 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config, sessionMana
     const messageId = String(ctx.message.message_id);
     const caption = ctx.message.caption?.trim() || '';
 
-    // Only allow private chats
-    if (ctx.chat.type !== 'private') {
-      await sendTextReply(chatId, '抱歉，本机器人仅支持私聊模式。');
-      return;
+    // 群聊需要 @机器人才响应（通过 caption 中的 @mention）
+    const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+    let replyToMessageId: string | undefined;
+    if (isGroup) {
+      const username = getBotUsername();
+      if (!username) return;
+      const entities = ctx.message.caption_entities ?? [];
+      const isMentioned = entities.some(e =>
+        e.type === 'mention' &&
+        caption.substring(e.offset, e.offset + e.length).toLowerCase() === `@${username.toLowerCase()}`
+      );
+      if (!isMentioned) return;
+      replyToMessageId = messageId;
     }
 
     // Dedup
@@ -265,8 +289,13 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config, sessionMana
       return;
     }
 
-    const prompt = caption
-      ? `用户发送了一张图片（附言：${caption}），已保存到 ${imagePath}。请用 Read 工具查看并分析图片内容。`
+    // 去掉 caption 中的 @botUsername
+    const cleanCaption = isGroup
+      ? caption.replace(new RegExp(`@${getBotUsername()}\\b`, 'gi'), '').trim()
+      : caption;
+
+    const prompt = cleanCaption
+      ? `用户发送了一张图片（附言：${cleanCaption}），已保存到 ${imagePath}。请用 Read 工具查看并分析图片内容。`
       : `用户发送了一张图片，已保存到 ${imagePath}。请用 Read 工具查看并分析图片内容。`;
 
     log.info(`User ${userId} [photo]: ${prompt.slice(0, 100)}...`);
@@ -276,7 +305,7 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config, sessionMana
     const convIdSnapshot = sessionManager.getConvId(userId);
 
     const enqueueResult = requestQueue.enqueue(userId, convIdSnapshot, prompt, async (p) => {
-      await handleClaudeRequest(userId, chatId, p, workDirSnapshot, convIdSnapshot);
+      await handleClaudeRequest(userId, chatId, p, workDirSnapshot, convIdSnapshot, undefined, replyToMessageId);
     });
 
     if (enqueueResult === 'rejected') {

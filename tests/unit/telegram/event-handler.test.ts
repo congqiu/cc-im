@@ -124,6 +124,10 @@ vi.mock('telegraf/filters', () => ({
   message: vi.fn((type: string) => type),
 }));
 
+vi.mock('../../../src/telegram/client.js', () => ({
+  getBotUsername: vi.fn(() => 'test_bot'),
+}));
+
 vi.mock('node:fs/promises', () => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
   writeFile: vi.fn().mockResolvedValue(undefined),
@@ -222,17 +226,33 @@ describe('Telegram Event Handler', () => {
       };
     }
 
-    it('非私聊消息应该被拒绝', async () => {
+    it('群聊无 @mention 应该被忽略', async () => {
       setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['text'];
 
-      const ctx = createTextCtx({ chat: { id: 123, type: 'group' } });
+      const ctx = createTextCtx({ chat: { id: 123, type: 'group' }, message: { message_id: Date.now(), text: 'Hello' } });
       await handler(ctx);
 
-      expect(messageSender.sendTextReply).toHaveBeenCalledWith(
-        '123',
-        expect.stringContaining('仅支持私聊模式'),
-      );
+      expect(messageSender.sendTextReply).not.toHaveBeenCalled();
+      expect(runClaudeTask).not.toHaveBeenCalled();
+    });
+
+    it('群聊 @机器人 应该响应', async () => {
+      setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
+      const handler = mockBot.handlers['text'];
+
+      const ctx = createTextCtx({
+        chat: { id: 123, type: 'group' },
+        message: {
+          message_id: Date.now(),
+          text: '@test_bot 帮我写代码',
+          entities: [{ type: 'mention', offset: 0, length: 9 }],
+        },
+      });
+      await handler(ctx);
+
+      expect(messageSender.sendThinkingMessage).toHaveBeenCalledWith('123', expect.any(String));
+      expect(runClaudeTask).toHaveBeenCalled();
     });
 
     it('重复消息应该被忽略', async () => {
@@ -287,7 +307,7 @@ describe('Telegram Event Handler', () => {
       const ctx = createTextCtx({ message: { message_id: 2001, text: '帮我写代码' } });
       await handler(ctx);
 
-      expect(messageSender.sendThinkingMessage).toHaveBeenCalledWith('123');
+      expect(messageSender.sendThinkingMessage).toHaveBeenCalledWith('123', undefined);
       expect(runClaudeTask).toHaveBeenCalled();
     });
 
@@ -360,17 +380,15 @@ describe('Telegram Event Handler', () => {
       };
     }
 
-    it('非私聊应该被拒绝', async () => {
+    it('群聊无 @mention 应该被忽略', async () => {
       setupTelegramHandlers(mockBot as any, mockConfig as any, mockSessionManager as any);
       const handler = mockBot.handlers['photo'];
 
       const ctx = createPhotoCtx({ chat: { id: 123, type: 'group' } });
       await handler(ctx);
 
-      expect(messageSender.sendTextReply).toHaveBeenCalledWith(
-        '123',
-        expect.stringContaining('仅支持私聊模式'),
-      );
+      expect(messageSender.sendTextReply).not.toHaveBeenCalled();
+      expect(runClaudeTask).not.toHaveBeenCalled();
     });
 
     it('重复图片消息应该被忽略', async () => {

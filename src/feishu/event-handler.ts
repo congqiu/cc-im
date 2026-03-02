@@ -143,6 +143,8 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
     workDir: string,
     convId?: string,
     threadCtx?: ThreadContext,
+    mentionedBot?: boolean,
+    isGroup?: boolean,
   ) {
     const sessionId = threadCtx && threadCtx.threadId
       ? sessionManager.getSessionIdForThread(userId, threadCtx.threadId)
@@ -194,6 +196,12 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
         sendComplete: async (content, note, thinkingText) => {
           try {
             await sendFinalCards(chatId, messageId, cardId, content, note, finalThreadCtx, thinkingText);
+
+            // 如果是群聊且被@了，任务完成后@回发送者
+            if (isGroup && mentionedBot) {
+              const replyText = `<at user_id="${userId}"></at> 任务已完成 ✅`;
+              await sendTextReply(chatId, replyText, finalThreadCtx);
+            }
           } catch (err) {
             log.error('Failed to send final cards:', err);
           }
@@ -244,6 +252,7 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
     threadId: string,
     rootMessageId: string,
     text: string,
+    mentionedBot?: boolean,
   ) {
     let threadSession = sessionManager.getThreadSession(userId, threadId);
     if (!threadSession) {
@@ -271,7 +280,7 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
     const threadCtx: ThreadContext = { rootMessageId, threadId };
 
     const enqueueResult = requestQueue.enqueue(userId, threadId, text, async (prompt) => {
-      await handleClaudeRequest(userId, chatId, prompt, workDir, undefined, threadCtx);
+      await handleClaudeRequest(userId, chatId, prompt, workDir, undefined, threadCtx, mentionedBot, true);
     });
 
     if (enqueueResult === 'rejected') {
@@ -286,12 +295,14 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
     userId: string,
     chatId: string,
     text: string,
+    mentionedBot?: boolean,
+    isGroup?: boolean,
   ) {
     const workDirSnapshot = sessionManager.getWorkDir(userId);
     const convIdSnapshot = sessionManager.getConvId(userId);
 
     const enqueueResult = requestQueue.enqueue(userId, convIdSnapshot, text, async (prompt) => {
-      await handleClaudeRequest(userId, chatId, prompt, workDirSnapshot, convIdSnapshot);
+      await handleClaudeRequest(userId, chatId, prompt, workDirSnapshot, convIdSnapshot, undefined, mentionedBot, isGroup);
     });
 
     if (enqueueResult === 'rejected') {
@@ -427,15 +438,19 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
 
       if (!isGroup) setActiveChatId('feishu', chatId);
 
+      // 检测是否@了机器人
+      let mentionedBot = false;
       if (isGroup && !threadId) {
         const mentions: Array<{ key: string; id: { open_id?: string }; name: string }> | undefined = message.mentions;
         if (!mentions || mentions.length === 0) {
           return;
         }
         const myOpenId = getBotOpenId();
+        console.log('Message mentions:', mentions, myOpenId);
         if (myOpenId && !mentions.some(m => m.id?.open_id === myOpenId)) {
           return;
         }
+        mentionedBot = true;
       }
 
       if (!accessControl.isAllowed(senderId)) {
@@ -528,9 +543,9 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
       }
 
       if (isGroup && threadId && rootId) {
-        await routeToThread(senderId, chatId, threadId, rootId, text);
+        await routeToThread(senderId, chatId, threadId, rootId, text, mentionedBot);
       } else {
-        await routeToDefault(senderId, chatId, text);
+        await routeToDefault(senderId, chatId, text, mentionedBot, isGroup);
       }
     },
   });
