@@ -55,11 +55,11 @@ export async function main() {
   log.info(`Timeout: ${config.claudeTimeoutMs}ms`);
   log.info(`Allowed base dirs: ${config.allowedBaseDirs.length} dirs configured`);
 
-  let permissionServer: { close: () => void } | null = null;
+  let permissionServer: { port: number; close: () => Promise<void> } | null = null;
   if (!config.claudeSkipPermissions) {
     ensureHookConfigured();
     permissionServer = await startPermissionServer(config.hookPort);
-    log.info(`Permission hook server started on port ${config.hookPort}`);
+    log.info(`Permission hook server started on port ${permissionServer.port}`);
   }
 
   // 创建共享的 SessionManager 单例

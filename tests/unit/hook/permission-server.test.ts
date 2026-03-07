@@ -65,14 +65,9 @@ describe('permission-server HTTP', () => {
   let serverHandle: { close: () => void };
 
   beforeEach(async () => {
-    port = 18950 + Math.floor(Math.random() * 100);
-    try {
-      serverHandle = await startPermissionServer(port);
-    } catch {
-      // Port might be taken, try another
-      port = 18950 + Math.floor(Math.random() * 100);
-      serverHandle = await startPermissionServer(port);
-    }
+    const handle = await startPermissionServer(0);
+    port = handle.port;
+    serverHandle = handle;
   });
 
   afterEach(async () => {

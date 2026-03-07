@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock all dependencies at the top level BEFORE imports
 
@@ -364,6 +364,10 @@ describe('Telegram Event Handler', () => {
   // --- photo message handlers ---
 
   describe('图片消息处理', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
     function createPhotoCtx(overrides: Record<string, any> = {}) {
       return {
         chat: { id: 123, type: 'private', ...overrides.chat },
@@ -412,8 +416,6 @@ describe('Telegram Event Handler', () => {
       // 第二次同一 messageId
       await handler(ctx);
       expect(runClaudeTask).not.toHaveBeenCalled();
-
-      vi.unstubAllGlobals();
     });
 
     it('未授权用户应该被拒绝', async () => {
@@ -445,8 +447,6 @@ describe('Telegram Event Handler', () => {
 
       expect(mockBot.telegram.getFileLink).toHaveBeenCalledWith('photo-ok');
       expect(runClaudeTask).toHaveBeenCalled();
-
-      vi.unstubAllGlobals();
     });
 
     it('图片下载失败应该提示错误', async () => {
@@ -496,8 +496,6 @@ describe('Telegram Event Handler', () => {
       await handler(ctx);
 
       expect(capturedPrompt).toContain('附言：分析这张图片');
-
-      vi.unstubAllGlobals();
     });
 
     it('图片队列满时应该返回拒绝消息', async () => {
@@ -523,8 +521,6 @@ describe('Telegram Event Handler', () => {
         '123',
         expect.stringContaining('队列已满'),
       );
-
-      vi.unstubAllGlobals();
     });
   });
 

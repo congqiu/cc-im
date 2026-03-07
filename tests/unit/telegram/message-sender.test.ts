@@ -149,22 +149,24 @@ describe('telegram/message-sender', () => {
   describe('startTypingLoop', () => {
     it('立即发送 typing 状态并返回停止函数', () => {
       vi.useFakeTimers();
-      mockSendChatAction.mockResolvedValue({});
+      try {
+        mockSendChatAction.mockResolvedValue({});
 
-      const stop = startTypingLoop('100');
-      expect(mockSendChatAction).toHaveBeenCalledWith(100, 'typing');
+        const stop = startTypingLoop('100');
+        expect(mockSendChatAction).toHaveBeenCalledWith(100, 'typing');
 
-      // Advance timer to trigger another typing
-      vi.advanceTimersByTime(5000);
-      expect(mockSendChatAction).toHaveBeenCalledTimes(2);
+        // Advance timer to trigger another typing
+        vi.advanceTimersByTime(5000);
+        expect(mockSendChatAction).toHaveBeenCalledTimes(2);
 
-      stop();
+        stop();
 
-      // After stop, no more typing
-      vi.advanceTimersByTime(5000);
-      expect(mockSendChatAction).toHaveBeenCalledTimes(2);
-
-      vi.useRealTimers();
+        // After stop, no more typing
+        vi.advanceTimersByTime(5000);
+        expect(mockSendChatAction).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
