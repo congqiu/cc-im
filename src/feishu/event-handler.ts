@@ -271,7 +271,7 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
       const description = await fetchThreadDescription(rootMessageId);
       if (description) {
         threadSession.description = description;
-        threadSession.displayName = description.slice(0, 20) + (description.length > 20 ? '...' : '');
+        threadSession.displayName = description.substring(0, 20) + (description.length > 20 ? '...' : '');
         sessionManager.setThreadSession(userId, threadId, threadSession);
       }
     }
@@ -446,8 +446,11 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
           return;
         }
         const myOpenId = getBotOpenId();
-        console.log('Message mentions:', mentions, myOpenId);
-        if (myOpenId && !mentions.some(m => m.id?.open_id === myOpenId)) {
+        if (!myOpenId) {
+          log.warn('Bot open_id not available yet, skipping group message');
+          return;
+        }
+        if (!mentions.some(m => m.id?.open_id === myOpenId)) {
           return;
         }
         mentionedBot = true;
@@ -505,9 +508,16 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
           log.debug(`Post message - images: ${imageKeys.length}, textContent: ${textContent?.slice(0, 100)}`);
 
           if (imageKeys.length > 0) {
-            const imagePaths = await Promise.all(
-              imageKeys.map(key => downloadFeishuImage(message.message_id, key))
-            );
+            // 分批下载，每批最多 3 张，避免并发过高
+            const imagePaths: string[] = [];
+            const BATCH_SIZE = 3;
+            for (let i = 0; i < imageKeys.length; i += BATCH_SIZE) {
+              const batch = imageKeys.slice(i, i + BATCH_SIZE);
+              const paths = await Promise.all(
+                batch.map(key => downloadFeishuImage(message.message_id, key))
+              );
+              imagePaths.push(...paths);
+            }
             const pathList = imagePaths.map(p => `- ${p}`).join('\n');
             if (textContent) {
               text = `用户发送了 ${imagePaths.length} 张图片和文字：\n\n图片路径：\n${pathList}\n\n文字内容：${textContent}\n\n请用 Read 工具查看图片并分析。`;
@@ -518,10 +528,12 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
           } else if (textContent) {
             text = textContent;
           } else {
+            await sendTextReply(chatId, '未能识别消息内容，请发送文本或图片。', threadCtx);
             return;
           }
         } catch (err) {
           log.error('Failed to parse post message:', err);
+          await sendTextReply(chatId, '消息解析失败，请重试。', threadCtx);
           return;
         }
       } else {

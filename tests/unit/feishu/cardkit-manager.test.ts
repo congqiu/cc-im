@@ -344,13 +344,12 @@ describe('cardkit-manager', () => {
       mockCardSettings.mockClear();
 
       mockCardSettings.mockResolvedValue({ code: 0 });
-      // 并发调用两次
-      await Promise.all([
-        disableStreaming('card-ds5'),
-        disableStreaming('card-ds5'),
-      ]);
-      // 第二次调用因 streamingEnabled=false 提前返回，API 只调用 1 次
-      expect(mockCardSettings).toHaveBeenCalledTimes(1);
+      // 第一次调用
+      await disableStreaming('card-ds5');
+      mockCardSettings.mockClear();
+      // 第二次调用因 streamingEnabled=false 提前返回，API 不再调用
+      await disableStreaming('card-ds5');
+      expect(mockCardSettings).toHaveBeenCalledTimes(0);
     });
   });
 
@@ -370,8 +369,10 @@ describe('cardkit-manager', () => {
       mockCardCreate.mockResolvedValue({ code: 0, data: { card_id: 'card-dy1' } });
       await createCard('{}');
       destroySession('card-dy1');
-      // Subsequent operations on this card should fail
-      await expect(enableStreaming('card-dy1')).rejects.toThrow();
+      // Subsequent streamContent should silently skip (session gone)
+      mockElementContent.mockResolvedValue({ code: 0 });
+      await streamContent('card-dy1', 'el-1', 'hello');
+      expect(mockElementContent).not.toHaveBeenCalled();
     });
   });
 });

@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { APP_HOME } from '../constants.js';
@@ -49,4 +49,18 @@ export function setActiveChatId(platform: 'feishu' | 'telegram', chatId: string)
   if (data[platform] === chatId) return;
   data[platform] = chatId;
   scheduleSave();
+}
+
+export function flushActiveChats(): void {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  try {
+    const dir = dirname(ACTIVE_CHATS_FILE);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(ACTIVE_CHATS_FILE, JSON.stringify(data, null, 2), 'utf-8');
+  } catch (err) {
+    log.warn('Failed to flush active chats:', err);
+  }
 }

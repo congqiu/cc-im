@@ -52,6 +52,9 @@ export function resolvePermissionById(requestId: string, decision: 'allow' | 'de
   const pending = pendingRequests.get(requestId);
   if (!pending) return null;
 
+  const waitSec = ((Date.now() - pending.createdAt) / 1000).toFixed(1);
+  log.info(`Permission ${decision} for ${pending.toolName} (${requestId}), waited ${waitSec}s`);
+
   pending.resolve(decision);
   const platformSender = senders.get(pending.platform);
   platformSender?.updatePermissionCard({ messageId: pending.messageId, chatId: pending.chatId, toolName: pending.toolName, decision }).catch(() => {});
@@ -84,19 +87,24 @@ export function getPendingCount(chatId: string): number {
 
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      req.destroy();
+      reject(new Error('Request body read timeout'));
+    }, 30000);
     let body = '';
     let size = 0;
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
       if (size > MAX_BODY_SIZE) {
+        clearTimeout(timeout);
         req.destroy();
         reject(new Error(`Request body too large (>${MAX_BODY_SIZE} bytes)`));
         return;
       }
       body += chunk.toString();
     });
-    req.on('end', () => resolve(body));
-    req.on('error', reject);
+    req.on('end', () => { clearTimeout(timeout); resolve(body); });
+    req.on('error', (err) => { clearTimeout(timeout); reject(err); });
   });
 }
 
@@ -200,6 +208,24 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
           pendingRequests.set(id, pending);
           addToIndex(chatId, id);
           log.info(`Permission request created: ${id} tool=${toolName} platform=${resolvedPlatform}`);
+
+          // 定期输出等待日志，帮助诊断用户长时间未响应
+          const waitLogTimer = setInterval(() => {
+            if (!pendingRequests.has(id)) {
+              clearInterval(waitLogTimer);
+              return;
+            }
+            const waitSec = Math.floor((Date.now() - pending.createdAt) / 1000);
+            log.info(`Permission request ${id} (${toolName}) waiting for user decision... (${waitSec}s)`);
+          }, 30_000);
+          waitLogTimer.unref();
+
+          // 请求 resolve 时原始 resolve 已包装过，这里再包装一次以清理 timer
+          const originalResolve = pending.resolve;
+          pending.resolve = (decision) => {
+            clearInterval(waitLogTimer);
+            originalResolve(decision);
+          };
         }).catch((err) => {
           log.error('Failed to send permission card:', err);
           safeResolve('deny');

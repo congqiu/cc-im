@@ -79,6 +79,11 @@ vi.mock('../../../src/feishu/cardkit-manager.js', () => ({
   disableStreaming: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('../../../src/feishu/client.js', () => ({
+  getClient: vi.fn(),
+  getBotOpenId: vi.fn(() => 'bot-id'),
+}));
+
 const mockRunClaudeTask = vi.fn().mockResolvedValue(undefined);
 vi.mock('../../../src/shared/claude-task.js', () => ({
   runClaudeTask: (...args: any[]) => mockRunClaudeTask(...args),

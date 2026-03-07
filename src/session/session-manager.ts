@@ -391,6 +391,19 @@ export class SessionManager {
     }
   }
 
+  destroy() {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    try {
+      this.doFlush();
+      log.info('Sessions flushed on destroy');
+    } catch (err) {
+      log.error('Failed to flush sessions on destroy:', err);
+    }
+  }
+
   private doFlush() {
     const dir = dirname(SESSIONS_FILE);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });

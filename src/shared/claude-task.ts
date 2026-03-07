@@ -141,12 +141,15 @@ export function runClaudeTask(
     let toolLines: string[] = [];
     const startTime = Date.now();
     const screenshotPaths: string[] = [];
+    let lastActivityTime = startTime;
+    let stallLogTimer: ReturnType<typeof setInterval> | null = null;
 
     // 任务状态对象（可变引用，调用方通过 onTaskReady 存入 runningTasks）
     let taskState: TaskRunState;
 
     const cleanup = () => {
       if (pendingUpdate) { clearTimeout(pendingUpdate); pendingUpdate = null; }
+      if (stallLogTimer) { clearInterval(stallLogTimer); stallLogTimer = null; }
       adapter.extraCleanup?.();
     };
 
@@ -192,9 +195,10 @@ export function runClaudeTask(
         }
       },
       onThinking: (thinking) => {
+        lastActivityTime = Date.now();
         if (!firstContentLogged) {
           firstContentLogged = true;
-          log.debug(`First content (thinking) for user ${ctx.userId} after ${Date.now() - startTime}ms`);
+          log.info(`First content (thinking) for user ${ctx.userId} after ${Date.now() - startTime}ms`);
           adapter.onFirstContent?.();
         }
         wasThinking = true;
@@ -203,9 +207,10 @@ export function runClaudeTask(
         throttledUpdate(display);
       },
       onText: (accumulated) => {
+        lastActivityTime = Date.now();
         if (!firstContentLogged) {
           firstContentLogged = true;
-          log.debug(`First content (text) for user ${ctx.userId} after ${Date.now() - startTime}ms`);
+          log.info(`First content (text) for user ${ctx.userId} after ${Date.now() - startTime}ms`);
           adapter.onFirstContent?.();
         }
         if (wasThinking && adapter.onThinkingToText) {
@@ -223,6 +228,7 @@ export function runClaudeTask(
         throttledUpdate(accumulated);
       },
       onToolUse: (toolName, toolInput) => {
+        lastActivityTime = Date.now();
         const notification = formatToolCallNotification(toolName, toolInput);
         toolLines.push(notification);
         if (toolLines.length > 5) toolLines = toolLines.slice(-5);
@@ -301,5 +307,19 @@ export function runClaudeTask(
 
     taskState = { handle, latestContent: '', settle, startedAt: Date.now() };
     adapter.onTaskReady(taskState);
+
+    // 定期检查任务活跃度，长时间无活动时输出日志
+    stallLogTimer = setInterval(() => {
+      if (settled) return;
+      const now = Date.now();
+      const totalElapsed = Math.floor((now - startTime) / 1000);
+      const stallSeconds = Math.floor((now - lastActivityTime) / 1000);
+      if (!firstContentLogged) {
+        log.warn(`Task for user ${ctx.userId} waiting for first response... (${totalElapsed}s elapsed)`);
+      } else if (stallSeconds >= 30) {
+        log.info(`Task for user ${ctx.userId} running ${totalElapsed}s total, no output for ${stallSeconds}s (likely tool execution)`);
+      }
+    }, 60_000);
+    (stallLogTimer as NodeJS.Timeout).unref();
   });
 }

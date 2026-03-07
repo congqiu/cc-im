@@ -5,6 +5,7 @@ const log = createLogger('Queue');
 interface QueuedTask {
   prompt: string;
   execute: (prompt: string) => Promise<void>;
+  enqueuedAt: number;
 }
 
 interface UserQueue {
@@ -37,8 +38,8 @@ export class RequestQueue {
     }
 
     if (queue.running) {
-      queue.tasks.push({ prompt, execute });
-      log.info(`Queued task for ${queueKey}, queue size: ${queue.tasks.length}`);
+      queue.tasks.push({ prompt, execute, enqueuedAt: Date.now() });
+      log.info(`Queued task for ${queueKey}, position: ${queue.tasks.length}/${MAX_QUEUE_SIZE}`);
       return 'queued';
     }
 
@@ -60,8 +61,9 @@ export class RequestQueue {
 
     const next = queue.tasks.shift();
     if (next) {
-      log.info(`Processing next queued task for ${queueKey}, remaining: ${queue.tasks.length}`);
-      this.run(queueKey, next.prompt, next.execute);
+      const waitSec = ((Date.now() - next.enqueuedAt) / 1000).toFixed(1);
+      log.info(`Dequeuing task for ${queueKey}, waited ${waitSec}s, remaining: ${queue.tasks.length}`);
+      setImmediate(() => this.run(queueKey, next.prompt, next.execute));
     } else {
       queue.running = false;
       this.queues.delete(queueKey);

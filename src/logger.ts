@@ -66,9 +66,10 @@ export function initLogger(dir?: string, level?: LogLevel) {
     const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
     const ms = tomorrow.getTime() - now.getTime() + 1000;
     reopenTimer = setTimeout(() => {
-      logStream.end();
+      const oldStream = logStream;
       rotateOldLogs();
       logStream = createWriteStream(join(logDir, getLogFileName()), { flags: 'a' });
+      oldStream.end();
       scheduleReopen();
     }, ms);
     reopenTimer.unref();

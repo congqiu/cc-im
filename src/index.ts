@@ -2,13 +2,14 @@ import { loadConfig } from './config.js';
 import { initFeishu, stopFeishu } from './feishu/client.js';
 import { initTelegram, stopTelegram } from './telegram/client.js';
 import { createEventDispatcher, type FeishuEventHandlerHandle } from './feishu/event-handler.js';
+import { stopCleanupTimer as stopCardKitCleanup } from './feishu/cardkit-manager.js';
 import { sendTextReply as feishuSendText } from './feishu/message-sender.js';
 import { setupTelegramHandlers, type TelegramEventHandlerHandle } from './telegram/event-handler.js';
 import { sendTextReply as telegramSendText } from './telegram/message-sender.js';
 import { startPermissionServer } from './hook/permission-server.js';
 import { ensureHookConfigured } from './hook/ensure-hook.js';
 import { SessionManager } from './session/session-manager.js';
-import { loadActiveChats, getActiveChatId } from './shared/active-chats.js';
+import { loadActiveChats, getActiveChatId, flushActiveChats } from './shared/active-chats.js';
 import { cleanOldImages } from './shared/utils.js';
 import { checkForUpdate } from './shared/update-check.js';
 import { initLogger, createLogger, closeLogger } from './logger.js';
@@ -29,7 +30,10 @@ async function sendLifecycleNotification(activeBots: string[], message: string) 
   for (const bot of activeBots) {
     const platform = bot.toLowerCase() as 'feishu' | 'telegram';
     const chatId = getActiveChatId(platform);
-    if (!chatId) continue;
+    if (!chatId) {
+      log.info(`${bot} 启动通知跳过：尚无活跃聊天记录，向机器人发送一条消息后下次启动即可收到通知`);
+      continue;
+    }
     const sender = platform === 'feishu' ? feishuSendText : telegramSendText;
     tasks.push(sender(chatId, message).catch((err) => {
       log.debug(`Failed to send ${bot} lifecycle notification:`, err);
@@ -169,6 +173,13 @@ export async function main() {
     }
     permissionServer?.close();
 
+    // 持久化会话和活跃聊天数据
+    sessionManager.destroy();
+    flushActiveChats();
+    if (config.enabledPlatforms.includes('feishu')) {
+      stopCardKitCleanup();
+    }
+
     // 等待运行中的任务完成（最多 30 秒）
     const maxWait = 30_000;
     const start = Date.now();
@@ -197,5 +208,9 @@ export async function main() {
 // Run directly when executed as main module
 const isDirectRun = process.argv[1]?.endsWith('/index.js') || process.argv[1]?.endsWith('/index.ts');
 if (isDirectRun) {
-  main();
+  main().catch((err) => {
+    console.error('Fatal error:', err);
+    closeLogger();
+    process.exit(1);
+  });
 }

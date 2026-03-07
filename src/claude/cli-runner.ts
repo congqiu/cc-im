@@ -2,6 +2,9 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { parseStreamLine, extractTextDelta, extractThinkingDelta, extractResult, type ParsedResult } from './stream-parser.js';
 import { isStreamInit, isContentBlockStart, isContentBlockDelta, isContentBlockStop } from './types.js';
+import { createLogger } from '../logger.js';
+
+const log = createLogger('CliRunner');
 
 export interface ClaudeRunCallbacks {
   onText: (accumulated: string) => void;
@@ -80,6 +83,8 @@ export function runClaude(
     env,
   });
 
+  log.debug(`Claude CLI spawned: pid=${child.pid}, cwd=${workDir}, session=${sessionId ?? 'new'}, model=${options?.model ?? 'default'}`);
+
   let accumulated = '';
   let accumulatedThinking = '';
   let completed = false;
@@ -97,6 +102,7 @@ export function runClaude(
     timeoutHandle = setTimeout(() => {
       if (!completed && !child.killed) {
         completed = true;
+        log.warn(`Claude CLI timeout after ${timeoutMs}ms, killing pid=${child.pid}`);
         child.kill('SIGTERM');
         callbacks.onError(`执行超时（${timeoutMs}ms），已终止进程`);
       }
@@ -237,6 +243,7 @@ export function runClaude(
   };
 
   child.on('close', (code) => {
+    log.debug(`Claude CLI exited: pid=${child.pid}, code=${code}`);
     exitCode = code;
     childClosed = true;
     finalize();
@@ -249,6 +256,7 @@ export function runClaude(
   });
 
   child.on('error', (err) => {
+    log.error(`Claude CLI error: ${err.message}`);
     if (timeoutHandle) {
       clearTimeout(timeoutHandle);
     }

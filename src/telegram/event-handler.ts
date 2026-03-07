@@ -205,7 +205,7 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config, sessionMana
     }
 
     // Dedup
-    if (dedup.isDuplicate(messageId)) {
+    if (dedup.isDuplicate(`${chatId}:${messageId}`)) {
       log.debug(`Duplicate message ${messageId}, skipping`);
       return;
     }
@@ -266,7 +266,7 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config, sessionMana
     }
 
     // Dedup
-    if (dedup.isDuplicate(messageId)) return;
+    if (dedup.isDuplicate(`${chatId}:${messageId}`)) return;
 
     // Access control
     if (!accessControl.isAllowed(userId)) {

@@ -72,10 +72,10 @@ async function main() {
   const chatId = process.env.CC_IM_CHAT_ID;
   const port = parseInt(process.env.CC_IM_HOOK_PORT ?? '18900', 10);
 
-  // No chat ID configured - allow by default and exit
+  // No chat ID configured - deny by default for security
   if (!chatId) {
-    // Output allow decision to maintain consistency with hook protocol
-    process.stdout.write(JSON.stringify({ permissionDecision: 'allow' }));
+    process.stderr.write('Warning: CC_IM_CHAT_ID not set, denying by default. Check hook configuration.\n');
+    process.stdout.write(JSON.stringify({ permissionDecision: 'deny' }));
     process.exit(HOOK_EXIT_CODES.SUCCESS);
   }
 

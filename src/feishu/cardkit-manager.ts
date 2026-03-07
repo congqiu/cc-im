@@ -40,9 +40,16 @@ function ensureCleanupTimer() {
   cleanupTimer.unref();
 }
 
+export function stopCleanupTimer(): void {
+  if (cleanupTimer) {
+    clearInterval(cleanupTimer);
+    cleanupTimer = null;
+  }
+}
+
 function nextSeq(cardId: string): number {
   const s = sessions.get(cardId);
-  if (!s) throw new Error(`No session for card ${cardId}`);
+  if (!s) return -1;
   s.sequence += 1;
   return s.sequence;
 }
@@ -116,9 +123,12 @@ export async function streamContent(
     });
   };
 
+  const seq = nextSeq(cardId);
+  if (seq === -1) return; // session already destroyed
+
   let res;
   try {
-    res = await call(nextSeq(cardId));
+    res = await call(seq);
   } catch (err: unknown) {
     // Lark SDK 在 HTTP 4xx 时抛异常（如 99991400 平台级限频），而非返回 response 对象
     // 流式更新失败不影响功能，下次节流周期会重试
@@ -243,18 +253,19 @@ export async function disableStreaming(cardId: string): Promise<void> {
   const s = sessions.get(cardId);
   if (!s || !s.streamingEnabled) return;
 
-  // 标记已完成，防止并发调用
+  // 先标记已完成，阻止后续 streamContent 重试
   s.completed = true;
-  s.streamingEnabled = false;
 
   try {
     await withRetry(async () => {
       const client = getClient();
+      const seq = nextSeq(cardId);
+      if (seq === -1) return; // session already destroyed
       const res = await client.cardkit.v1.card.settings({
         path: { card_id: cardId },
         data: {
           settings: JSON.stringify({ streaming_mode: false }),
-          sequence: nextSeq(cardId),
+          sequence: seq,
         },
       });
       if (res?.code && res.code !== 0) {
@@ -263,11 +274,15 @@ export async function disableStreaming(cardId: string): Promise<void> {
         }
         log.warn(`disableStreaming failed: code=${res.code}, msg=${res.msg}`);
       } else {
+        s.streamingEnabled = false;
         log.debug(`Streaming disabled for card ${cardId}`);
       }
     }, { maxRetries: 3, baseDelayMs: 500 });
   } catch (err) {
     log.warn(`disableStreaming error for card ${cardId}:`, err);
+  } finally {
+    // 无论成功失败，都标记为已关闭，避免重复尝试
+    s.streamingEnabled = false;
   }
 }
 
