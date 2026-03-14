@@ -29,7 +29,7 @@ export interface WecomSender {
   sendTextReply(chatId: string, text: string): Promise<void>;
   initStream(frame: WsFrame, taskKey?: string): void;
   sendStreamUpdate(content: string, toolNote?: string): Promise<void>;
-  resetStreamForTextSwitch(content: string): Promise<void>;
+  resetStreamForTextSwitch(content: string, thinkingText: string): Promise<void>;
   sendStreamComplete(content: string, note: string): Promise<void>;
   sendStreamError(error: string): Promise<void>;
   cleanupStream(): void;
@@ -43,6 +43,10 @@ export interface WecomSender {
  */
 export function createWecomSender(wsClient: WSClient): WecomSender {
   let session: StreamSession | null = null;
+
+  // 忙碌锁：防止并发 replyStream 调用导致 SDK 排队/丢弃/阻塞
+  let streamBusy = false;
+  let pendingStreamUpdate: { content: string; toolNote?: string } | null = null;
 
   /**
    * 如果流式消息接近超时（330s），结束当前流并开始新流。
@@ -65,6 +69,55 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
     }
   }
 
+  /** 构建停止按钮模板卡片 */
+  function buildStopCard(taskKey: string) {
+    return {
+      templateCard: {
+        card_type: 'button_interaction' as const,
+        main_title: { title: 'Claude Code' },
+        task_id: `stop_${taskKey}`,
+        button_list: [
+          { text: '⏹️ 停止', style: 3, key: `stop_${taskKey}` },
+        ],
+      },
+    };
+  }
+
+  /** 等待 streamBusy 释放，带 5 秒超时保护 */
+  async function waitForStreamIdle(): Promise<void> {
+    const waitStart = Date.now();
+    while (streamBusy) {
+      if (Date.now() - waitStart > 5000) {
+        log.warn('Timed out waiting for streamBusy lock (5s), proceeding anyway');
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+
+  /**
+   * 内部串行化的流式更新
+   * 保证同一时刻最多一个 replyStream 在飞行中
+   */
+  async function doStreamUpdate(content: string, toolNote?: string): Promise<void> {
+    if (!session) return;
+
+    await renewStreamIfNeeded(content);
+
+    const text = toolNote ? `${content}\n\n---\n> ${toolNote}` : content;
+
+    try {
+      if (session.isFirstUpdate && session.taskKey) {
+        await wsClient.replyStreamWithCard(session.frame, session.streamId, text, false, buildStopCard(session.taskKey));
+      } else {
+        await wsClient.replyStream(session.frame, session.streamId, text, false);
+      }
+      session.isFirstUpdate = false;
+    } catch (err) {
+      log.warn('Failed to send stream update:', err);
+    }
+  }
+
   return {
     async sendTextReply(chatId: string, text: string): Promise<void> {
       try {
@@ -80,6 +133,8 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
     initStream(frame: WsFrame, taskKey?: string): void {
       const body = frame.body as Record<string, unknown> | undefined;
       const chatId = (body?.chatid as string) ?? (body?.from as Record<string, string>)?.userid ?? null;
+      streamBusy = false;
+      pendingStreamUpdate = null;
       session = {
         frame,
         chatId,
@@ -93,88 +148,118 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
     async sendStreamUpdate(content: string, toolNote?: string): Promise<void> {
       if (!session) return;
 
-      await renewStreamIfNeeded(content);
+      // 如果前一个 replyStream 还在飞行中，保存最新内容，等它完成后再发
+      if (streamBusy) {
+        pendingStreamUpdate = { content, toolNote };
+        return;
+      }
 
-      const text = toolNote ? `${content}\n\n─────────\n${toolNote}` : content;
-
+      streamBusy = true;
       try {
-        if (session.isFirstUpdate && session.taskKey) {
-          // 首次更新且有 taskKey：发送带停止按钮的卡片
-          await wsClient.replyStreamWithCard(session.frame, session.streamId, text, false, {
-            templateCard: {
-              card_type: 'button_interaction',
-              main_title: { title: 'Claude Code' },
-              task_id: `stop_${session.taskKey}`,
-              button_list: [
-                { text: '⏹️ 停止', style: 3, key: `stop_${session.taskKey}` },
-              ],
-            },
-          });
-        } else {
-          await wsClient.replyStream(session.frame, session.streamId, text, false);
+        await doStreamUpdate(content, toolNote);
+        // 发送期间如果有新的 pending 内容，循环处理（避免递归）
+        while (pendingStreamUpdate) {
+          const pending = pendingStreamUpdate;
+          pendingStreamUpdate = null;
+          await doStreamUpdate(pending.content, pending.toolNote);
         }
-        session.isFirstUpdate = false;
-      } catch (err) {
-        log.warn('Failed to send stream update:', err);
+      } finally {
+        streamBusy = false;
       }
     },
 
-    async resetStreamForTextSwitch(content: string): Promise<void> {
+    async resetStreamForTextSwitch(content: string, thinkingText: string): Promise<void> {
       if (!session) return;
 
-      try {
-        // 结束当前流
-        await wsClient.replyStream(session.frame, session.streamId, '', true);
-      } catch (err) {
-        log.warn('Failed to finish stream during text switch:', err);
-      }
+      // 等待正在飞行的 replyStream 完成，避免并发调用
+      await waitForStreamIdle();
 
-      // 开始新流
-      session.streamId = generateReqId('stream');
-      session.streamStartedAt = Date.now();
-      session.isFirstUpdate = true;
+      streamBusy = true;
+      // 丢弃切换前的 pending 更新（思考阶段的内容已过时）
+      pendingStreamUpdate = null;
+
+      try {
+        // 结束当前流，保留完整思考内容作为独立消息
+        const thinkingContent = `💭 **思考过程**\n\n${thinkingText}`;
+        try {
+          await wsClient.replyStream(session.frame, session.streamId, thinkingContent, true);
+        } catch (err) {
+          log.warn('Failed to finish thinking stream:', err);
+        }
+
+        // 开启新流用于实际回答
+        session.streamId = generateReqId('stream');
+        session.streamStartedAt = Date.now();
+        session.isFirstUpdate = true;
+
+        // 立即发送首条文本内容到新流（带停止按钮）
+        try {
+          if (session.taskKey) {
+            await wsClient.replyStreamWithCard(session.frame, session.streamId, content || '...', false, buildStopCard(session.taskKey));
+          } else {
+            await wsClient.replyStream(session.frame, session.streamId, content || '...', false);
+          }
+          session.isFirstUpdate = false;
+        } catch (err) {
+          log.warn('Failed to start text stream:', err);
+        }
+      } finally {
+        streamBusy = false;
+      }
     },
 
     async sendStreamComplete(content: string, note: string): Promise<void> {
       if (!session) return;
 
+      // 等待飞行中的 replyStream 完成，避免并发调用
+      await waitForStreamIdle();
+      streamBusy = true;
+
       const parts = splitLongContent(content, MAX_WECOM_MESSAGE_LENGTH);
-      const firstPart = note ? `${parts[0]}\n\n─────────\n${note}` : parts[0];
+      const firstPart = note ? `${parts[0]}\n\n---\n> ${note}` : parts[0];
 
       try {
-        await wsClient.replyStream(session.frame, session.streamId, firstPart, true);
-      } catch (err) {
-        log.warn('Failed to finish stream, falling back to sendMessage:', err);
-        if (session.chatId) {
-          try {
-            await wsClient.sendMessage(session.chatId, {
-              msgtype: 'markdown',
-              markdown: { content: firstPart },
-            });
-          } catch (fallbackErr) {
-            log.error('Fallback sendMessage also failed:', fallbackErr);
+        try {
+          await wsClient.replyStream(session.frame, session.streamId, firstPart, true);
+        } catch (err) {
+          log.warn('Failed to finish stream, falling back to sendMessage:', err);
+          if (session.chatId) {
+            try {
+              await wsClient.sendMessage(session.chatId, {
+                msgtype: 'markdown',
+                markdown: { content: firstPart },
+              });
+            } catch (fallbackErr) {
+              log.error('Fallback sendMessage also failed:', fallbackErr);
+            }
           }
         }
-      }
 
-      // 发送后续分片
-      if (parts.length > 1 && session.chatId) {
-        for (let i = 1; i < parts.length; i++) {
-          try {
-            const partText = `${parts[i]}\n\n─────────\n(续 ${i + 1}/${parts.length}) ${note}`;
-            await wsClient.sendMessage(session.chatId, {
-              msgtype: 'markdown',
-              markdown: { content: partText },
-            });
-          } catch (err) {
-            log.error(`Failed to send continuation part ${i + 1}/${parts.length}:`, err);
+        // 发送后续分片
+        if (parts.length > 1 && session.chatId) {
+          for (let i = 1; i < parts.length; i++) {
+            try {
+              const partText = `${parts[i]}\n\n---\n> (续 ${i + 1}/${parts.length}) ${note}`;
+              await wsClient.sendMessage(session.chatId, {
+                msgtype: 'markdown',
+                markdown: { content: partText },
+              });
+            } catch (err) {
+              log.error(`Failed to send continuation part ${i + 1}/${parts.length}:`, err);
+            }
           }
         }
+      } finally {
+        streamBusy = false;
       }
     },
 
     async sendStreamError(error: string): Promise<void> {
       if (!session) return;
+
+      // 等待飞行中的 replyStream 完成，避免并发调用
+      await waitForStreamIdle();
+      streamBusy = true;
 
       const text = `❌ 错误\n\n${error}`;
       try {
@@ -191,11 +276,15 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
             log.error('Fallback sendMessage also failed:', fallbackErr);
           }
         }
+      } finally {
+        streamBusy = false;
       }
     },
 
     cleanupStream(): void {
       session = null;
+      streamBusy = false;
+      pendingStreamUpdate = null;
     },
 
     async sendPermissionCard(chatId: string, requestId: string, toolName: string, toolInput: Record<string, unknown>): Promise<string> {

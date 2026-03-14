@@ -89,6 +89,26 @@ describe('formatToolCallNotification', () => {
     expect(result).toContain('Run tests');
   });
 
+  it('Agent 显示 prompt 摘要', () => {
+    const result = formatToolCallNotification('Agent', { prompt: 'Review the code changes' });
+    expect(result).toBe('🤖 Agent → Review the code changes');
+  });
+
+  it('Agent 长 prompt 被截断', () => {
+    const result = formatToolCallNotification('Agent', { prompt: 'x'.repeat(100) });
+    expect(result).toContain('...');
+  });
+
+  it('Agent 无 prompt 时使用 description', () => {
+    const result = formatToolCallNotification('Agent', { description: 'Code review' });
+    expect(result).toBe('🤖 Agent → Code review');
+  });
+
+  it('Skill 显示 skill 名称', () => {
+    const result = formatToolCallNotification('Skill', { skill: 'commit' });
+    expect(result).toBe('⚡ Skill → commit');
+  });
+
   it('未知工具显示默认 emoji', () => {
     const result = formatToolCallNotification('CustomTool', { key: 'val' });
     expect(result).toBe('🔧 CustomTool');

@@ -382,7 +382,7 @@ describe('runClaudeTask', () => {
       // Then text - should trigger onThinkingToText
       capturedCallbacks.onText!('Here is the answer');
 
-      expect(adapter.onThinkingToText).toHaveBeenCalledWith('Here is the answer');
+      expect(adapter.onThinkingToText).toHaveBeenCalledWith('Here is the answer', 'Let me think');
 
       await capturedCallbacks.onComplete!(makeResult());
       await promise;
@@ -407,7 +407,7 @@ describe('runClaudeTask', () => {
       capturedCallbacks.onText!('The answer');
 
       expect(taskState!.latestContent).toBe('The answer');
-      expect(adapter.onThinkingToText).toHaveBeenCalledWith('The answer');
+      expect(adapter.onThinkingToText).toHaveBeenCalledWith('The answer', 'Still thinking...');
 
       // The pending timer should have been cleared and not fire
       vi.advanceTimersByTime(200);

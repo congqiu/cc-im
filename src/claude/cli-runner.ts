@@ -139,6 +139,11 @@ export function runClaude(
       return;
     }
 
+    if (isContentBlockStart(event) && event.event.content_block.type === 'thinking') {
+      accumulatedThinking = '';
+      return;
+    }
+
     if (isContentBlockStart(event) && event.event.content_block.type === 'tool_use') {
       const { name } = event.event.content_block;
       if (name) pendingToolInputs.set(event.event.index, { name, json: '' });

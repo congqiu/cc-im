@@ -134,7 +134,7 @@ describe('wecom/message-sender', () => {
       expect(mockReplyStream).toHaveBeenCalledWith(
         frame,
         expect.any(String),
-        'done\n\n─────────\n耗时 5s',
+        'done\n\n---\n> 耗时 5s',
         true,
       );
     });
@@ -213,6 +213,70 @@ describe('wecom/message-sender', () => {
       // cleanup 后调用不应抛异常，也不应调用 replyStream
       await sender.sendStreamUpdate('after cleanup');
       expect(mockReplyStream).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('resetStreamForTextSwitch', () => {
+    it('结束思考流并开启新流发送文本内容（有 taskKey 带停止按钮）', async () => {
+      mockReplyStream.mockResolvedValue({});
+      mockReplyStreamWithCard.mockResolvedValue({});
+      const sender = createWecomSender(mockWsClient as any);
+      const frame = { headers: { req_id: 'test-req' }, body: { chatid: 'chat1', from: { userid: 'u1' } } };
+      sender.initStream(frame as any, 'user1:1');
+
+      await sender.resetStreamForTextSwitch('Hello', 'Let me think about this...');
+
+      // 第一次：结束思考流，保留完整思考内容
+      expect(mockReplyStream).toHaveBeenCalledWith(
+        frame, expect.any(String),
+        '💭 **思考过程**\n\nLet me think about this...', true,
+      );
+      // 第二次：新流带停止按钮发送文本内容
+      expect(mockReplyStreamWithCard).toHaveBeenCalledWith(
+        frame, expect.any(String), 'Hello', false,
+        expect.objectContaining({ templateCard: expect.objectContaining({ task_id: 'stop_user1:1' }) }),
+      );
+      // 两次使用不同的 streamId
+      const streamCalls = mockReplyStream.mock.calls;
+      const cardCalls = mockReplyStreamWithCard.mock.calls;
+      expect(streamCalls[0][1]).not.toBe(cardCalls[0][1]);
+    });
+
+    it('结束思考流并开启新流发送文本内容（无 taskKey 不带按钮）', async () => {
+      mockReplyStream.mockResolvedValue({});
+      const sender = createWecomSender(mockWsClient as any);
+      const frame = { headers: { req_id: 'test-req' }, body: { chatid: 'chat1', from: { userid: 'u1' } } };
+      sender.initStream(frame as any);
+
+      await sender.resetStreamForTextSwitch('Hello', 'Let me think about this...');
+
+      const calls = mockReplyStream.mock.calls;
+      expect(calls.length).toBe(2);
+      // 第一次：结束思考流
+      expect(calls[0][2]).toBe('💭 **思考过程**\n\nLet me think about this...');
+      expect(calls[0][3]).toBe(true);
+      // 第二次：新流发送文本内容（无按钮）
+      expect(calls[1][2]).toBe('Hello');
+      expect(calls[1][3]).toBe(false);
+      expect(calls[0][1]).not.toBe(calls[1][1]);
+    });
+
+    it('后续 sendStreamUpdate 不带思考前缀', async () => {
+      mockReplyStream.mockResolvedValue({});
+      const sender = createWecomSender(mockWsClient as any);
+      const frame = { headers: { req_id: 'test-req' }, body: { chatid: 'chat1', from: { userid: 'u1' } } };
+      sender.initStream(frame as any);
+
+      await sender.resetStreamForTextSwitch('Hello', 'thinking...');
+      mockReplyStream.mockClear();
+
+      await sender.sendStreamUpdate('Hello world');
+      expect(mockReplyStream).toHaveBeenCalledWith(
+        frame,
+        expect.any(String),
+        'Hello world',
+        false,
+      );
     });
   });
 

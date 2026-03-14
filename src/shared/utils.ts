@@ -27,6 +27,8 @@ const TOOL_EMOJIS: Record<string, string> = {
   TodoWrite: '✅',
   AskUserQuestion: '❓',
   NotebookEdit: '📓',
+  Agent: '🤖',
+  Skill: '⚡',
 };
 
 function getToolEmoji(toolName: string): string {
@@ -166,6 +168,13 @@ export function formatToolCallNotification(toolName: string, toolInput?: Record<
       break;
     case 'Task':
       if (toolInput.description) detail = ` → ${truncate(String(toolInput.description), 40)}`;
+      break;
+    case 'Agent':
+      if (toolInput.prompt) detail = ` → ${truncate(String(toolInput.prompt), 60)}`;
+      else if (toolInput.description) detail = ` → ${truncate(String(toolInput.description), 60)}`;
+      break;
+    case 'Skill':
+      if (toolInput.skill) detail = ` → ${truncate(String(toolInput.skill), 40)}`;
       break;
     default:
       break;

@@ -213,7 +213,7 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
             log.error('Failed to send error card:', err);
           }
         },
-        onThinkingToText: (content) => {
+        onThinkingToText: (content, _thinkingText) => {
           const resetCard = buildCardV2({ content: content || '...', status: 'streaming' }, cardId);
           updateCardFull(cardId, resetCard)
             .catch((e) => log.warn('Thinking→text transition update failed:', e?.message ?? e));

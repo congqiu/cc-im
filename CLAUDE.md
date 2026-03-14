@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-cc-im 是一个多平台机器人桥接服务，连接飞书（Feishu）和 Telegram 到 Claude Code CLI。用户在聊天平台发送消息，服务器调用 Claude Code 执行，并将输出实时流式推送回聊天窗口。
+cc-im 是一个多平台机器人桥接服务，连接飞书（Feishu）、Telegram 和企业微信（WeCom）到 Claude Code CLI。用户在聊天平台发送消息，服务器调用 Claude Code 执行，并将输出实时流式推送回聊天窗口。
 
 ## 开发命令
 
@@ -51,8 +51,12 @@ pnpm test:watch
 - Telegram：`src/telegram/` - 使用 `telegraf`，轮询模式
   - **支持私聊和群组**：群组中需要 @机器人才会响应，回复会以 reply 形式关联到原消息
 - 企业微信：`src/wecom/` - 使用 `@wecom/aibot-node-sdk`，WebSocket 长连接模式
-  - 流式输出使用 SDK 原生 `replyStream()`，支持 Markdown
+  - 配置指南：[通过长连接配置智能机器人](https://open.work.weixin.qq.com/help2/pc/21661)
+  - 流式输出使用 SDK 原生 `replyStream()`（替换式，非追加），支持 Markdown
+  - 流式更新串行化：忙碌锁（`streamBusy`）+ 挂起队列（`pendingStreamUpdate`），防止并发 `replyStream` 调用
   - 6 分钟流式消息自动续接（5 分 30 秒触发）
+  - 思考→文本切换：结束思考流（`finish=true`，保留为独立消息），开启新流输出文本
+  - 等待状态追踪：首次内容前显示等待提示，工具执行期间检测停滞并保持流活跃
   - 支持私聊和群聊，群聊需 @机器人触发
   - 图片消息通过 `downloadFile()` 下载并 AES 解密
   - 语音消息自动转文字（`voice.content`）
@@ -118,7 +122,7 @@ pnpm test:watch
 
 位置：`src/shared/claude-task.ts`
 
-将两个平台重复的 Claude 任务执行逻辑（节流更新、完成统计、竞态保护、轮次追踪等）提取为共享模块。
+将各平台重复的 Claude 任务执行逻辑（节流更新、完成统计、竞态保护、轮次追踪等）提取为共享模块。
 
 **核心接口**：
 - `TaskAdapter` — 平台适配器，各平台提供 `streamUpdate`、`sendComplete`、`sendError` 等具体实现
@@ -127,7 +131,7 @@ pnpm test:watch
 
 **`runClaudeTask()` 封装的通用逻辑**：
 - 节流更新（各平台自定义间隔）
-- 思考→文本切换检测
+- 思考→文本切换检测，通过 `onThinkingToText(content, thinkingText)` 回调通知平台
 - 工具调用通知收集（保留最近 5 条，显示最近 3 条）
 - 完成时构建 note（耗时/费用/工具统计/模型/上下文警告）
 - `onComplete` / `onError` 竞态保护（`settled` 标记）
@@ -155,13 +159,14 @@ claude -p \
 - `CC_IM_HOOK_PORT`：权限服务器端口
 - `CC_IM_THREAD_ROOT_MSG_ID`：话题根消息 ID（飞书话题会话）
 - `CC_IM_THREAD_ID`：话题 ID
-- `CC_IM_PLATFORM`：当前平台标识（`feishu` / `telegram`）
+- `CC_IM_PLATFORM`：当前平台标识（`feishu` / `telegram` / `wecom`）
 - `HTTPS_PROXY` / `HTTP_PROXY`：代理地址（由 `PROXY_URL` 配置项注入）
 
 **流式输出处理**：
 - 使用 `readline` 逐行解析 stdout
 - `stream-parser.ts` 解析 stream-json 格式
 - 提取文本增量（`extractTextDelta`）和思考过程（`extractThinkingDelta`）
+- 思考累积器在每个新 thinking content block 开始时重置，确保多轮思考不跨轮累积
 - 工具调用通知：通过 `onToolUse` 回调实时显示当前工具名称和参数摘要
 - 工具使用统计：完成时汇总各工具调用次数
 - 累积文本并通过回调实时推送
@@ -266,9 +271,9 @@ pnpm test -- tests/unit/queue/request-queue.test.ts
 - ESM 模块（`"type": "module"`），导入路径需要 `.js` 后缀
 - TypeScript strict 模式，target ES2023
 - commit 信息使用中文，格式 `<type>: <subject>`
-- 流式输出节流：飞书 CardKit 80ms（`CARDKIT_THROTTLE_MS`）、Telegram 200ms（`THROTTLE_MS`）
+- 流式输出节流：飞书 CardKit 80ms（`CARDKIT_THROTTLE_MS`）、Telegram 200ms（`THROTTLE_MS`）、企业微信 200ms（`WECOM_THROTTLE_MS`）
 - 常量统一定义在 `src/constants.ts`
-- 消息长度限制：飞书流式阶段 25000 字符（CardKit）、完成卡片 3800 字符、Telegram 4000 字符，超长自动分片
+- 消息长度限制：飞书流式阶段 25000 字符（CardKit）、完成卡片 3800 字符、Telegram 4000 字符、企业微信 4000 字符，超长自动分片
 
 ## 配置管理
 
@@ -354,7 +359,7 @@ pnpm test -- tests/unit/queue/request-queue.test.ts
 
 所有日志经过 `sanitize()` 自动脱敏：飞书 open_id 截断、UUID/session ID 只保留末 4 位、绝对路径只保留最后两段。业务代码无需手动处理。
 
-各模块标签：`Main`、`Config`、`Session`、`Queue`、`PermissionServer`、`ClaudeTask`、`EventHandler`（飞书）、`TgHandler`（Telegram）。
+各模块标签：`Main`、`Config`、`Session`、`Queue`、`PermissionServer`、`ClaudeTask`、`EventHandler`（飞书）、`TgHandler`（Telegram）、`WecomHandler`（企业微信）、`WecomSender`（企业微信消息发送）。
 
 ## 常见开发任务
 

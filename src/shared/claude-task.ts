@@ -34,8 +34,8 @@ export interface TaskAdapter {
   sendComplete(content: string, note: string, thinkingText?: string): Promise<void>;
   /** 发送错误消息/卡片 */
   sendError(error: string): Promise<void>;
-  /** 思考→文本切换处理（飞书 CardKit 需要重置基线） */
-  onThinkingToText?(content: string): void;
+  /** 思考→文本切换处理（飞书 CardKit 需要重置基线，企业微信需要思考摘要） */
+  onThinkingToText?(content: string, thinkingText: string): void;
   /** 额外清理逻辑（停止 typing 循环、清理 waitingTimer 等） */
   extraCleanup?(): void;
   /** 节流间隔（飞书 80ms，Telegram 200ms） */
@@ -221,7 +221,7 @@ export function runClaudeTask(
           }
           lastUpdateTime = Date.now();
           taskState.latestContent = accumulated;
-          adapter.onThinkingToText(accumulated);
+          adapter.onThinkingToText(accumulated, thinkingText);
           return;
         }
         wasThinking = false;

@@ -891,7 +891,7 @@ describe('Event Handler', () => {
 
     it('adapter.onThinkingToText 调用 updateCardFull 重置卡片', async () => {
       mockRunClaudeTask.mockImplementationOnce(async (_deps: any, _ctx: any, _prompt: any, adapter: any) => {
-        adapter.onThinkingToText('new content');
+        adapter.onThinkingToText('new content', 'thinking text');
       });
 
       createEventDispatcher(mockConfig, mockSessionManager as any);

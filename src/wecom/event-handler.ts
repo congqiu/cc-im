@@ -109,11 +109,17 @@ export function setupWecomHandlers(
     log.info(`Running Claude for user ${userId}, convId=${convId}, workDir=${workDir}, sessionId=${sessionId ?? 'new'}`);
 
     const taskKey = `${userId}:${++taskCounter}`;
+    let waitingTimer: ReturnType<typeof setInterval> | null = null;
 
     // 有 frame 时使用流式回复，无 frame 时 sender 内部会退化为 sendMessage
     if (frame) {
       sender.initStream(frame, taskKey);
     }
+
+    // 追踪内容变化，用于检测工具执行期间的停滞
+    let lastSeenContent = '';
+    let firstContentReceived = false;
+    let isThinking = false;
 
     await runClaudeTask(
       { config, sessionManager, userCosts },
@@ -130,6 +136,9 @@ export function setupWecomHandlers(
       {
         throttleMs: WECOM_THROTTLE_MS,
         streamUpdate: (content, toolNote) => {
+          lastSeenContent = content;
+          // 通过内容前缀判断是否在思考阶段（claude-task 中思考内容以 💭 开头）
+          isThinking = content.startsWith('💭');
           sender.sendStreamUpdate(content, toolNote).catch(() => {});
         },
         sendComplete: async (content, note) => {
@@ -138,7 +147,7 @@ export function setupWecomHandlers(
               await sender.sendStreamComplete(content, note);
             } else {
               // 无 frame（命令触发），退化为 sendMessage
-              const text = note ? `${content}\n\n─────────\n${note}` : content;
+              const text = note ? `${content}\n\n---\n> ${note}` : content;
               await sender.sendTextReply(chatId, text);
             }
           } catch (err) {
@@ -156,15 +165,56 @@ export function setupWecomHandlers(
             log.error('Failed to send error:', err);
           }
         },
-        onThinkingToText: (content) => {
-          sender.resetStreamForTextSwitch(content).catch(() => {});
+        onThinkingToText: (content, thinkingText) => {
+          isThinking = false;
+          sender.resetStreamForTextSwitch(content, thinkingText).catch(() => {});
         },
         extraCleanup: () => {
+          if (waitingTimer) { clearInterval(waitingTimer); waitingTimer = null; }
           sender.cleanupStream();
           runningTasks.delete(taskKey);
         },
         onTaskReady: (state) => {
           runningTasks.set(taskKey, state);
+
+          // 有 frame 时才启动活动计时器（无 frame 场景没有流式通道）
+          if (frame) {
+            sender.sendStreamUpdate('⏳ 正在处理...').catch(() => {});
+            const startTime = Date.now();
+            let stallChecks = 0;
+            waitingTimer = setInterval(() => {
+              if (!runningTasks.has(taskKey)) {
+                if (waitingTimer) { clearInterval(waitingTimer); waitingTimer = null; }
+                return;
+              }
+              const elapsed = Math.floor((Date.now() - startTime) / 1000);
+
+              if (!firstContentReceived) {
+                // 首次内容前：持续显示等待状态
+                sender.sendStreamUpdate(`⏳ 等待 Claude 响应... (${elapsed}s)`).catch(() => {});
+              } else if (isThinking) {
+                // 思考阶段：不做 stall 检测，思考本身就可能暂停
+              } else if (state.latestContent === lastSeenContent) {
+                // 内容未变化（工具执行中）：重发内容保持流活跃
+                stallChecks++;
+                if (stallChecks >= 2) {
+                  // 停滞 6s+ 才触发，避免正常节流间隔内的误判
+                  sender.sendStreamUpdate(
+                    state.latestContent,
+                    `⏳ 工具执行中... (${elapsed}s)`,
+                  ).catch(() => {});
+                }
+              } else {
+                // 内容有更新，重置计数
+                stallChecks = 0;
+                lastSeenContent = state.latestContent;
+              }
+            }, 3000);
+            waitingTimer.unref();
+          }
+        },
+        onFirstContent: () => {
+          firstContentReceived = true;
         },
       },
     );
@@ -178,26 +228,32 @@ export function setupWecomHandlers(
   }
 
   /**
-   * 通用消息处理逻辑
+   * 消息前置检查（去重、访问控制、活跃聊天设置）
+   * @returns true 表示通过检查，false 表示应跳过处理
    */
-  async function handleMessage(frame: WsFrame, text: string, userId: string, chatId: string, msgId: string, isGroup: boolean) {
-    if (!accepting) return;
+  async function preCheck(userId: string, chatId: string, msgId: string): Promise<boolean> {
+    if (!accepting) return false;
 
-    // 去重
     if (dedup.isDuplicate(`${chatId}:${msgId}`)) {
       log.debug(`Duplicate message ${msgId}, skipping`);
-      return;
+      return false;
     }
 
-    // 访问控制
     if (!accessControl.isAllowed(userId)) {
       log.warn(`Access denied for user ${userId}. Add to ALLOWED_USER_IDS to grant access.`);
       await sender.sendTextReply(chatId, '抱歉，您没有访问权限。\n\n请联系管理员将您的用户 ID 添加到白名单。\n您的 ID: ' + userId);
-      return;
+      return false;
     }
 
-    // 设置活跃聊天
     setActiveChatId('wecom', chatId);
+    return true;
+  }
+
+  /**
+   * 通用消息处理逻辑
+   */
+  async function handleMessage(frame: WsFrame, text: string, userId: string, chatId: string, msgId: string, isGroup: boolean) {
+    if (!await preCheck(userId, chatId, msgId)) return;
 
     let cleanText = text.trim();
 
@@ -212,12 +268,17 @@ export function setupWecomHandlers(
 
     // 处理 /stop 命令（企业微信特有，因为按钮可能不可用）
     if (cleanText === '/stop') {
-      // 找到该用户最新的运行任务并停止（taskKey 格式为 userId:counter，取最大的）
+      // 找到该用户最新的运行任务并停止（taskKey 格式为 userId:counter，用数值比较 counter）
       const prefix = `${userId}:`;
       let latestKey: string | null = null;
+      let latestCounter = -1;
       for (const key of runningTasks.keys()) {
         if (key.startsWith(prefix)) {
-          if (!latestKey || key > latestKey) latestKey = key;
+          const counter = parseInt(key.slice(prefix.length), 10);
+          if (counter > latestCounter) {
+            latestCounter = counter;
+            latestKey = key;
+          }
         }
       }
       if (latestKey) {
@@ -278,14 +339,7 @@ export function setupWecomHandlers(
     if (!body) return;
     const { userId, chatId, msgId, isGroup } = extractInfo(body);
 
-    if (!accepting) return;
-    if (dedup.isDuplicate(`${chatId}:${msgId}`)) return;
-    if (!accessControl.isAllowed(userId)) {
-      await sender.sendTextReply(chatId, '抱歉，您没有访问权限。\n您的 ID: ' + userId);
-      return;
-    }
-
-    setActiveChatId('wecom', chatId);
+    if (!await preCheck(userId, chatId, msgId)) return;
 
     const imageUrl = body.image?.url;
     const aesKey = body.image?.aeskey;
@@ -326,14 +380,7 @@ export function setupWecomHandlers(
     if (!body) return;
     const { userId, chatId, msgId, isGroup } = extractInfo(body);
 
-    if (!accepting) return;
-    if (dedup.isDuplicate(`${chatId}:${msgId}`)) return;
-    if (!accessControl.isAllowed(userId)) {
-      await sender.sendTextReply(chatId, '抱歉，您没有访问权限。\n您的 ID: ' + userId);
-      return;
-    }
-
-    setActiveChatId('wecom', chatId);
+    if (!await preCheck(userId, chatId, msgId)) return;
 
     const msgItems = body.mixed?.msg_item ?? [];
     const textParts: string[] = [];
