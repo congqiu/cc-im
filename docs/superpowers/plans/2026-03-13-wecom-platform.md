@@ -242,18 +242,18 @@ git commit -m "feat: active-chats 支持企业微信平台"
 
 - [ ] **Step 1: 修改 dispatch() 的 platform 参数类型**
 
-第 60 行，将 `platform: 'feishu' | 'telegram'` 改为：
+第 60 行，将 `platform: 'feishu' | 'telegram'` 改为使用 `Platform` 类型（从 `../config.js` 导入）：
 
 ```typescript
-    platform: 'feishu' | 'telegram' | 'wecom',
+    platform: Platform,
 ```
 
 - [ ] **Step 2: 修改 handleHelp() 的 platform 参数类型**
 
-第 116 行，将 `platform: 'feishu' | 'telegram'` 改为：
+第 116 行，同样改为 `Platform` 类型：
 
 ```typescript
-  async handleHelp(chatId: string, platform: 'feishu' | 'telegram' | 'wecom', threadCtx?: ThreadContext): Promise<boolean> {
+  async handleHelp(chatId: string, platform: Platform, threadCtx?: ThreadContext): Promise<boolean> {
 ```
 
 在 help 文本中，`threadsCmd` 之后（第 134 行后），添加企业微信专有命令提示：
@@ -561,7 +561,8 @@ const log = createLogger('WecomSender');
  * 流式会话状态
  */
 interface StreamSession {
-  frame: WsFrameHeaders;
+  frame: WsFrame;
+  chatId: string | null;
   streamId: string;
   streamStartedAt: number;
   isFirstUpdate: boolean;
@@ -570,7 +571,7 @@ interface StreamSession {
 
 export interface WecomSender extends MessageSender {
   /** 初始化流式会话 */
-  initStream(frame: WsFrameHeaders, taskKey?: string): void;
+  initStream(frame: WsFrame, taskKey?: string): void;
   /** 流式更新内容 */
   sendStreamUpdate(content: string, toolNote?: string): Promise<void>;
   /** 思考→文本切换时重置 stream */
@@ -615,9 +616,11 @@ function buildPermissionCard(requestId: string, toolName: string, inputSummary: 
 export function createWecomSender(wsClient: WSClient): WecomSender {
   let session: StreamSession | null = null;
 
-  function initStream(frame: WsFrameHeaders, taskKey?: string): void {
+  function initStream(frame: WsFrame, taskKey?: string): void {
+    const body = frame.body as Record<string, any> | undefined;
     session = {
       frame,
+      chatId: body?.chatid ?? body?.from?.userid ?? null,
       streamId: generateReqId('stream'),
       streamStartedAt: Date.now(),
       isFirstUpdate: true,
@@ -703,7 +706,7 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
       log.error('Failed to finish stream:', err);
       // 降级：尝试 sendMessage
       try {
-        const chatId = extractChatId(session.frame);
+        const chatId = session.chatId;
         if (chatId) {
           await wsClient.sendMessage(chatId, {
             msgtype: 'markdown',
@@ -718,7 +721,7 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
     // 发送续片
     for (let i = 1; i < parts.length; i++) {
       try {
-        const chatId = extractChatId(session.frame);
+        const chatId = session.chatId;
         if (chatId) {
           await wsClient.sendMessage(chatId, {
             msgtype: 'markdown',
@@ -804,15 +807,7 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
   };
 }
 
-/**
- * 从 frame 中提取 chatId（用于降级发送）
- * frame.body 可能包含 chatid（群聊）或 from.userid（单聊）
- */
-function extractChatId(frame: WsFrameHeaders): string | null {
-  const body = (frame as any).body;
-  if (!body) return null;
-  return body.chatid ?? body.from?.userid ?? null;
-}
+// chatId 在 initStream() 时已从 frame.body 中提取并缓存到 session.chatId
 ```
 
 - [ ] **Step 4: 运行测试确认通过**
