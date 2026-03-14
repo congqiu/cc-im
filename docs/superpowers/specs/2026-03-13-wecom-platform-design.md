@@ -328,7 +328,7 @@ export const MAX_WECOM_MESSAGE_LENGTH = 4000;      // 消息长度限制
 | 群聊触发 | @机器人 | @机器人 | @机器人 |
 | 话题/Thread | 支持 | 不支持 | 不支持 |
 | 图片接收 | SDK 下载 | Telegram API | SDK downloadFile() + AES 解密 |
-| 图片发送 | 上传+消息 | sendPhoto | 不支持（SDK 限制） |
+| 图片发送 | 上传+消息 | sendPhoto | replyStream finish 时附带 msgItem（base64，最多10张，≤10MB） |
 | 语音消息 | 不支持 | 不支持 | 支持（voice.content 自动转文字） |
 | 消息撤回清理 | 支持 | 不支持 | 不支持（SDK 限制） |
 | 主动推送 | API 发消息 | bot.telegram.sendMessage | sendMessage（markdown/template_card） |
@@ -338,7 +338,7 @@ export const MAX_WECOM_MESSAGE_LENGTH = 4000;      // 消息长度限制
 
 1. **话题/Thread** — 企业微信无话题概念，不实现 ThreadContext
 2. **消息撤回回调** — SDK 不支持撤回事件
-3. **图片发送** — 流式消息仅支持文本/Markdown，无法内嵌图片
+3. **图片独立发送** — `sendMessage` 不支持图片类型，但 `replyStream` 结束时可通过 `msgItem` 附带图片（base64 编码，最多 10 张，≤10MB/张，仅 JPG/PNG）。Claude 产出的截图可在任务完成时附带发送
 4. **文件消息处理** — 暂不处理文件消息（仅处理文本、图片、语音、混排）
 
 ## 企业微信限制与应对
