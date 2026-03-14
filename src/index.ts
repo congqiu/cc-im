@@ -57,6 +57,9 @@ export async function main() {
   log.info(`Default work directory: ${config.claudeWorkDir}`);
   log.info(`Skip permissions: ${config.claudeSkipPermissions}`);
   log.info(`Timeout: ${config.claudeTimeoutMs}ms`);
+  if (config.proxyUrl) {
+    log.info(`Proxy: ${config.proxyUrl}`);
+  }
   log.info(`Allowed base dirs: ${config.allowedBaseDirs.length} dirs configured`);
 
   let permissionServer: { port: number; close: () => Promise<void> } | null = null;

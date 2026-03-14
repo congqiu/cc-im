@@ -162,6 +162,7 @@ cc-im stop
 | `CLAUDE_SKIP_PERMISSIONS` | 跳过权限检查（生产环境建议 `false`） | `false` |
 | `CLAUDE_TIMEOUT_MS` | 执行超时（毫秒） | `600000`（10分钟） |
 | `CLAUDE_MODEL` | 默认模型（如 `sonnet`、`opus`、`haiku`） | 空（由 Claude Code 决定） |
+| `PROXY_URL` | 代理地址，传递给 Claude CLI（如 `http://127.0.0.1:7890`） | 空 |
 | `HOOK_SERVER_PORT` | 权限确认 Hook 服务端口 | `18900` |
 | `LOG_DIR` | 日志文件存储目录 | `~/.cc-im/logs` |
 | `LOG_LEVEL` | 日志等级（`DEBUG`/`INFO`/`WARN`/`ERROR`） | `DEBUG` |
@@ -190,6 +191,7 @@ cc-im stop
   "claudeSkipPermissions": false,
   "claudeTimeoutMs": 600000,
   "claudeModel": "sonnet",
+  "proxyUrl": "http://127.0.0.1:7890",
   "hookPort": 18900,
   "logDir": "/var/log/cc-im",
   "logLevel": "INFO"

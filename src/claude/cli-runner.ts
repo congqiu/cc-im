@@ -29,6 +29,7 @@ export interface ClaudeRunOptions {
   threadRootMsgId?: string;
   threadId?: string;
   platform?: string;
+  proxyUrl?: string;
 }
 
 export function runClaude(
@@ -75,6 +76,10 @@ export function runClaude(
   }
   if (options?.platform) {
     env.CC_IM_PLATFORM = options.platform;
+  }
+  if (options?.proxyUrl) {
+    env.HTTPS_PROXY = options.proxyUrl;
+    env.HTTP_PROXY = options.proxyUrl;
   }
 
   const child = spawn(cliPath, args, {

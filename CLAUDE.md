@@ -156,6 +156,7 @@ claude -p \
 - `CC_IM_THREAD_ROOT_MSG_ID`：话题根消息 ID（飞书话题会话）
 - `CC_IM_THREAD_ID`：话题 ID
 - `CC_IM_PLATFORM`：当前平台标识（`feishu` / `telegram`）
+- `HTTPS_PROXY` / `HTTP_PROXY`：代理地址（由 `PROXY_URL` 配置项注入）
 
 **流式输出处理**：
 - 使用 `readline` 逐行解析 stdout
@@ -291,6 +292,7 @@ pnpm test -- tests/unit/queue/request-queue.test.ts
 - `CLAUDE_SKIP_PERMISSIONS`：是否跳过权限确认，默认 `false`
 - `CLAUDE_TIMEOUT_MS`：Claude CLI 超时时间（毫秒），默认 600000（10分钟）
 - `CLAUDE_MODEL`：Claude 模型名（如 `sonnet`、`opus`，可被用户 `/model` 命令覆盖）
+- `PROXY_URL`：代理地址（可选），传递给 Claude CLI 子进程的 `HTTPS_PROXY`/`HTTP_PROXY` 环境变量
 - `HOOK_SERVER_PORT`：权限服务器端口，默认 18900
 - `LOG_LEVEL`：日志等级（`DEBUG`/`INFO`/`WARN`/`ERROR`），默认 `DEBUG`
 

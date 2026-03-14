@@ -17,6 +17,7 @@
   - 图片消息接收（AES 解密）
   - 语音消息（自动转文字）
   - 配置：`WECOM_BOT_ID` + `WECOM_BOT_SECRET`
+- 新增 `PROXY_URL` 配置项，支持为 Claude CLI 子进程设置 HTTP/HTTPS 代理
 
 ## [1.3.0] - 2026-03-07
 

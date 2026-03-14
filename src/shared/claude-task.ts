@@ -303,6 +303,7 @@ export function runClaudeTask(
       threadRootMsgId: ctx.threadRootMsgId,
       threadId: ctx.threadId,
       platform: ctx.platform,
+      proxyUrl: config.proxyUrl,
     });
 
     taskState = { handle, latestContent: '', settle, startedAt: Date.now() };

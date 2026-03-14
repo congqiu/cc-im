@@ -24,6 +24,7 @@ export interface Config {
   claudeSkipPermissions: boolean;
   claudeTimeoutMs: number;
   claudeModel?: string;
+  proxyUrl?: string;
   hookPort: number;
   logDir: string;
   logLevel: LogLevel;
@@ -42,6 +43,7 @@ interface FileConfig {
   claudeSkipPermissions?: boolean;
   claudeTimeoutMs?: number;
   claudeModel?: string;
+  proxyUrl?: string;
   hookPort?: number;
   logDir?: string;
   logLevel?: LogLevel;
@@ -182,6 +184,8 @@ export function loadConfig(): Config {
       ? parseInt(process.env.HOOK_SERVER_PORT, 10) || 18900
       : file.hookPort ?? 18900;
 
+  const proxyUrl = process.env.PROXY_URL ?? file.proxyUrl;
+
   const logDir = process.env.LOG_DIR ?? file.logDir ?? join(APP_HOME, 'logs');
   const logLevel = (process.env.LOG_LEVEL?.toUpperCase() ?? file.logLevel ?? 'DEBUG') as LogLevel;
 
@@ -199,6 +203,7 @@ export function loadConfig(): Config {
     claudeSkipPermissions,
     claudeTimeoutMs,
     claudeModel: process.env.CLAUDE_MODEL ?? file.claudeModel,
+    proxyUrl,
     hookPort,
     logDir,
     logLevel,
