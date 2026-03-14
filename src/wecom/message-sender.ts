@@ -20,6 +20,7 @@ interface StreamSession {
   streamStartedAt: number;
   isFirstUpdate: boolean;
   taskKey: string;
+  stopCardSent: boolean;
 }
 
 /**
@@ -72,14 +73,12 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
   /** 构建停止按钮模板卡片 */
   function buildStopCard(taskKey: string) {
     return {
-      templateCard: {
-        card_type: 'button_interaction' as const,
-        main_title: { title: 'Claude Code' },
-        task_id: `stop_${taskKey}`,
-        button_list: [
-          { text: '⏹️ 停止', style: 3, key: `stop_${taskKey}` },
-        ],
-      },
+      card_type: 'button_interaction' as const,
+      main_title: { title: 'Claude Code' },
+      task_id: `stop_${taskKey}`,
+      button_list: [
+        { text: '⏹️ 停止', style: 3, key: `stop_${taskKey}` },
+      ],
     };
   }
 
@@ -96,6 +95,23 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
   }
 
   /**
+   * 首次流式更新后，单独发一条停止按钮卡片消息。
+   * replyStreamWithCard 在手机端可能不渲染卡片，改为 sendMessage 独立发送。
+   */
+  async function sendStopCardIfNeeded(): Promise<void> {
+    if (!session || !session.chatId || !session.taskKey || session.stopCardSent) return;
+    session.stopCardSent = true;
+    try {
+      await wsClient.sendMessage(session.chatId, {
+        msgtype: 'template_card',
+        template_card: buildStopCard(session.taskKey),
+      });
+    } catch (err) {
+      log.warn('Failed to send stop card:', err);
+    }
+  }
+
+  /**
    * 内部串行化的流式更新
    * 保证同一时刻最多一个 replyStream 在飞行中
    */
@@ -107,11 +123,7 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
     const text = toolNote ? `${content}\n\n---\n> ${toolNote}` : content;
 
     try {
-      if (session.isFirstUpdate && session.taskKey) {
-        await wsClient.replyStreamWithCard(session.frame, session.streamId, text, false, buildStopCard(session.taskKey));
-      } else {
-        await wsClient.replyStream(session.frame, session.streamId, text, false);
-      }
+      await wsClient.replyStream(session.frame, session.streamId, text, false);
       session.isFirstUpdate = false;
     } catch (err) {
       log.warn('Failed to send stream update:', err);
@@ -142,6 +154,7 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
         streamStartedAt: Date.now(),
         isFirstUpdate: true,
         taskKey: taskKey ?? '',
+        stopCardSent: false,
       };
     },
 
@@ -157,6 +170,8 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
       streamBusy = true;
       try {
         await doStreamUpdate(content, toolNote);
+        // 首次流式更新成功后，单独发送停止按钮卡片
+        await sendStopCardIfNeeded();
         // 发送期间如果有新的 pending 内容，循环处理（避免递归）
         while (pendingStreamUpdate) {
           const pending = pendingStreamUpdate;
@@ -192,13 +207,9 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
         session.streamStartedAt = Date.now();
         session.isFirstUpdate = true;
 
-        // 立即发送首条文本内容到新流（带停止按钮）
+        // 立即发送首条文本内容到新流
         try {
-          if (session.taskKey) {
-            await wsClient.replyStreamWithCard(session.frame, session.streamId, content || '...', false, buildStopCard(session.taskKey));
-          } else {
-            await wsClient.replyStream(session.frame, session.streamId, content || '...', false);
-          }
+          await wsClient.replyStream(session.frame, session.streamId, content || '...', false);
           session.isFirstUpdate = false;
         } catch (err) {
           log.warn('Failed to start text stream:', err);

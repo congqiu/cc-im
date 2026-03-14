@@ -101,26 +101,37 @@ describe('wecom/message-sender', () => {
       );
     });
 
-    it('首次更新且有 taskKey 时使用 replyStreamWithCard', async () => {
-      mockReplyStreamWithCard.mockResolvedValue({});
+    it('首次更新且有 taskKey 时通过 sendMessage 单独发送停止按钮卡片', async () => {
+      mockReplyStream.mockResolvedValue({});
+      mockSendMessage.mockResolvedValue({});
       const sender = createWecomSender(mockWsClient as any);
       const frame = { headers: { req_id: 'test-req' }, body: { chatid: 'chat1', from: { userid: 'u1' } } };
       sender.initStream(frame as any, 'task-key-1');
       await sender.sendStreamUpdate('hello');
-      expect(mockReplyStreamWithCard).toHaveBeenCalledWith(
-        frame,
-        expect.any(String),
-        'hello',
-        false,
-        expect.objectContaining({
-          templateCard: expect.objectContaining({
-            card_type: 'button_interaction',
-            button_list: expect.arrayContaining([
-              expect.objectContaining({ text: expect.stringContaining('停止') }),
-            ]),
-          }),
+      // 流式内容通过 replyStream 发送
+      expect(mockReplyStream).toHaveBeenCalledWith(frame, expect.any(String), 'hello', false);
+      // 停止按钮通过 sendMessage 独立发送
+      expect(mockSendMessage).toHaveBeenCalledWith('chat1', {
+        msgtype: 'template_card',
+        template_card: expect.objectContaining({
+          card_type: 'button_interaction',
+          button_list: expect.arrayContaining([
+            expect.objectContaining({ text: expect.stringContaining('停止') }),
+          ]),
         }),
-      );
+      });
+    });
+
+    it('停止按钮卡片只发送一次', async () => {
+      mockReplyStream.mockResolvedValue({});
+      mockSendMessage.mockResolvedValue({});
+      const sender = createWecomSender(mockWsClient as any);
+      const frame = { headers: { req_id: 'test-req' }, body: { chatid: 'chat1', from: { userid: 'u1' } } };
+      sender.initStream(frame as any, 'task-key-1');
+      await sender.sendStreamUpdate('first');
+      await sender.sendStreamUpdate('second');
+      // sendMessage 只应被调用一次（停止卡片）
+      expect(mockSendMessage).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -217,29 +228,24 @@ describe('wecom/message-sender', () => {
   });
 
   describe('resetStreamForTextSwitch', () => {
-    it('结束思考流并开启新流发送文本内容（有 taskKey 带停止按钮）', async () => {
+    it('结束思考流并开启新流发送文本内容（有 taskKey）', async () => {
       mockReplyStream.mockResolvedValue({});
-      mockReplyStreamWithCard.mockResolvedValue({});
       const sender = createWecomSender(mockWsClient as any);
       const frame = { headers: { req_id: 'test-req' }, body: { chatid: 'chat1', from: { userid: 'u1' } } };
       sender.initStream(frame as any, 'user1:1');
 
       await sender.resetStreamForTextSwitch('Hello', 'Let me think about this...');
 
+      const calls = mockReplyStream.mock.calls;
+      expect(calls.length).toBe(2);
       // 第一次：结束思考流，保留完整思考内容
-      expect(mockReplyStream).toHaveBeenCalledWith(
-        frame, expect.any(String),
-        '💭 **思考过程**\n\nLet me think about this...', true,
-      );
-      // 第二次：新流带停止按钮发送文本内容
-      expect(mockReplyStreamWithCard).toHaveBeenCalledWith(
-        frame, expect.any(String), 'Hello', false,
-        expect.objectContaining({ templateCard: expect.objectContaining({ task_id: 'stop_user1:1' }) }),
-      );
+      expect(calls[0][2]).toBe('💭 **思考过程**\n\nLet me think about this...');
+      expect(calls[0][3]).toBe(true);
+      // 第二次：新流发送文本内容
+      expect(calls[1][2]).toBe('Hello');
+      expect(calls[1][3]).toBe(false);
       // 两次使用不同的 streamId
-      const streamCalls = mockReplyStream.mock.calls;
-      const cardCalls = mockReplyStreamWithCard.mock.calls;
-      expect(streamCalls[0][1]).not.toBe(cardCalls[0][1]);
+      expect(calls[0][1]).not.toBe(calls[1][1]);
     });
 
     it('结束思考流并开启新流发送文本内容（无 taskKey 不带按钮）', async () => {

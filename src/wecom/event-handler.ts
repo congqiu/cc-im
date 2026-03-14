@@ -198,7 +198,7 @@ export function setupWecomHandlers(
                 // 内容未变化（工具执行中）：重发内容保持流活跃
                 stallChecks++;
                 if (stallChecks >= 2) {
-                  // 停滞 6s+ 才触发，避免正常节流间隔内的误判
+                  // 停滞 6~9s 才触发，避免正常节流间隔内的误判
                   sender.sendStreamUpdate(
                     state.latestContent,
                     `⏳ 工具执行中... (${elapsed}s)`,
