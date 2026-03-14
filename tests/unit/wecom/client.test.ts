@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock @wecom/aibot-node-sdk
-vi.mock('@wecom/aibot-node-sdk', () => {
-  const { EventEmitter } = require('events');
+vi.mock('@wecom/aibot-node-sdk', async () => {
+  const { EventEmitter } = await import('events');
   class MockWSClient extends EventEmitter {
     connect() {
       // 模拟异步认证成功

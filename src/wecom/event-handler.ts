@@ -39,14 +39,12 @@ function extractInfo(body: Record<string, any>): {
 }
 
 /**
- * 检查群聊中是否 @了机器人（企业微信 @机器人时文本以 @机器人名 开头）
- * 企业微信智能机器人在群聊中收到的消息，文本中已经去除了 @mention
- * 只要消息能到达事件处理器，就说明是 @了机器人
+ * 清理群聊消息文本
+ * 企业微信智能机器人 SDK 在群聊中只会推送 @机器人的消息，
+ * 所以只要收到群聊消息，就一定是被 mention 的，无需额外检查。
  */
-function checkGroupMention(_text: string): { mentioned: boolean; cleanText: string } {
-  // 企业微信智能机器人 SDK 在群聊中只会推送 @机器人的消息
-  // 所以只要收到群聊消息，就是被 mention 的
-  return { mentioned: true, cleanText: _text.trim() };
+function cleanGroupText(text: string): string {
+  return text.trim();
 }
 
 /**
@@ -77,6 +75,7 @@ export function setupWecomHandlers(
 
   // accepting flag: 标记是否接受新消息
   let accepting = true;
+  let taskCounter = 0;
 
   const commandHandler = new CommandHandler({
     config,
@@ -109,7 +108,7 @@ export function setupWecomHandlers(
 
     log.info(`Running Claude for user ${userId}, convId=${convId}, workDir=${workDir}, sessionId=${sessionId ?? 'new'}`);
 
-    const taskKey = `${userId}:${Date.now()}`;
+    const taskKey = `${userId}:${++taskCounter}`;
 
     // 有 frame 时使用流式回复，无 frame 时 sender 内部会退化为 sendMessage
     if (frame) {
@@ -202,11 +201,9 @@ export function setupWecomHandlers(
 
     let cleanText = text.trim();
 
-    // 群聊检查 @mention
+    // 群聊文本清理（企业微信 SDK 只推送 @机器人的消息，无需检查 mention）
     if (isGroup) {
-      const { mentioned, cleanText: ct } = checkGroupMention(cleanText);
-      if (!mentioned) return;
-      cleanText = ct;
+      cleanText = cleanGroupText(cleanText);
     }
 
     if (!cleanText) return;
@@ -215,19 +212,21 @@ export function setupWecomHandlers(
 
     // 处理 /stop 命令（企业微信特有，因为按钮可能不可用）
     if (cleanText === '/stop') {
-      // 找到该用户最新的运行任务并停止
-      let stopped = false;
-      for (const [key, task] of runningTasks) {
-        if (key.startsWith(`${userId}:`)) {
-          runningTasks.delete(key);
-          task.settle();
-          task.handle.abort();
-          await sender.sendTextReply(chatId, '⏹️ 已停止当前任务');
-          stopped = true;
-          break;
+      // 找到该用户最新的运行任务并停止（taskKey 格式为 userId:counter，取最大的）
+      const prefix = `${userId}:`;
+      let latestKey: string | null = null;
+      for (const key of runningTasks.keys()) {
+        if (key.startsWith(prefix)) {
+          if (!latestKey || key > latestKey) latestKey = key;
         }
       }
-      if (!stopped) {
+      if (latestKey) {
+        const task = runningTasks.get(latestKey)!;
+        runningTasks.delete(latestKey);
+        task.settle();
+        task.handle.abort();
+        await sender.sendTextReply(chatId, '⏹️ 已停止当前任务');
+      } else {
         await sender.sendTextReply(chatId, '当前没有运行中的任务');
       }
       return;
@@ -353,18 +352,10 @@ export function setupWecomHandlers(
       }
     }
 
-    const textContent = textParts.join(' ').trim();
-
-    // 如果群聊，检查 mention
-    if (isGroup) {
-      const { mentioned, cleanText } = checkGroupMention(textContent);
-      if (!mentioned && imagePaths.length === 0) return;
-      // 使用清理后的文本
-      if (mentioned) {
-        textParts.length = 0;
-        textParts.push(cleanText);
-      }
-    }
+    // 群聊文本清理（企业微信 SDK 只推送 @机器人的消息，无需检查 mention）
+    const textContent = isGroup
+      ? cleanGroupText(textParts.join(' '))
+      : textParts.join(' ').trim();
 
     let prompt: string;
     if (imagePaths.length > 0) {

@@ -123,4 +123,126 @@ describe('wecom/message-sender', () => {
       );
     });
   });
+
+  describe('sendStreamComplete', () => {
+    it('结束流式并发送最终内容', async () => {
+      mockReplyStream.mockResolvedValue({});
+      const sender = createWecomSender(mockWsClient as any);
+      const frame = { headers: { req_id: 'test-req' }, body: { chatid: 'chat1', from: { userid: 'u1' } } };
+      sender.initStream(frame as any);
+      await sender.sendStreamComplete('done', '耗时 5s');
+      expect(mockReplyStream).toHaveBeenCalledWith(
+        frame,
+        expect.any(String),
+        'done\n\n─────────\n耗时 5s',
+        true,
+      );
+    });
+
+    it('长内容分片发送后续部分', async () => {
+      mockReplyStream.mockResolvedValue({});
+      mockSendMessage.mockResolvedValue({});
+      const sender = createWecomSender(mockWsClient as any);
+      const frame = { headers: { req_id: 'test-req' }, body: { chatid: 'chat1', from: { userid: 'u1' } } };
+      sender.initStream(frame as any);
+
+      // 生成超长内容（超过 MAX_WECOM_MESSAGE_LENGTH = 4000）
+      const longContent = 'x'.repeat(5000);
+      await sender.sendStreamComplete(longContent, 'note');
+
+      // 第一片通过 replyStream 发送
+      expect(mockReplyStream).toHaveBeenCalledWith(
+        frame,
+        expect.any(String),
+        expect.stringContaining('note'),
+        true,
+      );
+      // 后续分片通过 sendMessage 发送
+      expect(mockSendMessage).toHaveBeenCalled();
+    });
+
+    it('replyStream 失败时 fallback 到 sendMessage', async () => {
+      mockReplyStream.mockRejectedValue(new Error('stream error'));
+      mockSendMessage.mockResolvedValue({});
+      const sender = createWecomSender(mockWsClient as any);
+      const frame = { headers: { req_id: 'test-req' }, body: { chatid: 'chat1', from: { userid: 'u1' } } };
+      sender.initStream(frame as any);
+      await sender.sendStreamComplete('content', 'note');
+      expect(mockSendMessage).toHaveBeenCalledWith('chat1', {
+        msgtype: 'markdown',
+        markdown: { content: expect.stringContaining('content') },
+      });
+    });
+  });
+
+  describe('sendStreamError', () => {
+    it('发送错误消息并结束流', async () => {
+      mockReplyStream.mockResolvedValue({});
+      const sender = createWecomSender(mockWsClient as any);
+      const frame = { headers: { req_id: 'test-req' }, body: { chatid: 'chat1', from: { userid: 'u1' } } };
+      sender.initStream(frame as any);
+      await sender.sendStreamError('something failed');
+      expect(mockReplyStream).toHaveBeenCalledWith(
+        frame,
+        expect.any(String),
+        '❌ 错误\n\nsomething failed',
+        true,
+      );
+    });
+
+    it('replyStream 失败时 fallback 到 sendMessage', async () => {
+      mockReplyStream.mockRejectedValue(new Error('stream error'));
+      mockSendMessage.mockResolvedValue({});
+      const sender = createWecomSender(mockWsClient as any);
+      const frame = { headers: { req_id: 'test-req' }, body: { chatid: 'chat1', from: { userid: 'u1' } } };
+      sender.initStream(frame as any);
+      await sender.sendStreamError('fail');
+      expect(mockSendMessage).toHaveBeenCalledWith('chat1', {
+        msgtype: 'markdown',
+        markdown: { content: '❌ 错误\n\nfail' },
+      });
+    });
+  });
+
+  describe('cleanupStream', () => {
+    it('cleanup 后 sendStreamUpdate 不报错', async () => {
+      const sender = createWecomSender(mockWsClient as any);
+      const frame = { headers: { req_id: 'test-req' }, body: { chatid: 'chat1', from: { userid: 'u1' } } };
+      sender.initStream(frame as any);
+      sender.cleanupStream();
+      // cleanup 后调用不应抛异常，也不应调用 replyStream
+      await sender.sendStreamUpdate('after cleanup');
+      expect(mockReplyStream).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('renewStreamIfNeeded', () => {
+    it('超时后自动续接流', async () => {
+      mockReplyStream.mockResolvedValue({});
+      const sender = createWecomSender(mockWsClient as any);
+      const frame = { headers: { req_id: 'test-req' }, body: { chatid: 'chat1', from: { userid: 'u1' } } };
+
+      const baseTime = 1000000;
+      const nowSpy = vi.spyOn(Date, 'now');
+      // initStream 内部调用 Date.now() 记录 streamStartedAt
+      nowSpy.mockReturnValue(baseTime);
+      sender.initStream(frame as any);
+
+      // sendStreamUpdate 内部 renewStreamIfNeeded 调用 Date.now() 计算 elapsed
+      // 让 elapsed > 330_000ms 触发续接
+      nowSpy.mockReturnValue(baseTime + 331_000);
+
+      await sender.sendStreamUpdate('content after timeout');
+
+      // 应该先结束旧流（finish=true），然后用新 streamId 发送新内容
+      const calls = mockReplyStream.mock.calls;
+      expect(calls.length).toBeGreaterThanOrEqual(2);
+      // 第一次调用应是 finish=true（续接结束旧流）
+      expect(calls[0][3]).toBe(true);
+      // 第二次调用应是 finish=false（新流发送内容）
+      expect(calls[1][3]).toBe(false);
+
+      nowSpy.mockRestore();
+    });
+  });
 });

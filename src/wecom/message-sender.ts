@@ -45,7 +45,9 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
   let session: StreamSession | null = null;
 
   /**
-   * 如果流式消息接近超时（330s），结束当前流并开始新流
+   * 如果流式消息接近超时（330s），结束当前流并开始新流。
+   * 企业微信 SDK 的 replyStream(finish=true) 会终结当前流内容并展示最终文本，
+   * 新流会以独立消息出现，因此重发完整内容不会导致用户侧重复显示。
    */
   async function renewStreamIfNeeded(content: string): Promise<void> {
     if (!session) return;
@@ -215,7 +217,8 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
       } catch (err) {
         log.error('Failed to send permission card:', err);
       }
-      // 企业微信通过 sendMessage 发送的模板卡片没有可追踪的 messageId
+      // 企业微信通过 sendMessage 发送的模板卡片没有可追踪的 messageId。
+      // 权限卡片的更新不依赖 messageId，而是通过 template_card_event 事件的回调帧完成（见 event-handler.ts）。
       return '';
     },
 
