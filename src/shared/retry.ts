@@ -14,6 +14,7 @@ export interface RetryOptions {
   maxRetries?: number;
   baseDelayMs?: number;
   maxDelayMs?: number;
+  shouldRetry?: (error: unknown) => boolean;
 }
 
 export async function withRetry<T>(fn: () => Promise<T>, opts?: RetryOptions): Promise<T> {
@@ -25,7 +26,9 @@ export async function withRetry<T>(fn: () => Promise<T>, opts?: RetryOptions): P
     try {
       return await fn();
     } catch (err) {
-      if (err instanceof NonRetryableError || attempt >= maxRetries) throw err;
+      if (err instanceof NonRetryableError) throw err;
+      if (opts?.shouldRetry && !opts.shouldRetry(err)) throw err;
+      if (attempt >= maxRetries) throw err;
       const delay = Math.min(baseDelay * 2 ** attempt + Math.random() * 200, maxDelay);
       log.warn(`Retry ${attempt + 1}/${maxRetries} after ${Math.round(delay)}ms: ${(err as Error)?.message ?? err}`);
       await new Promise(r => setTimeout(r, delay));

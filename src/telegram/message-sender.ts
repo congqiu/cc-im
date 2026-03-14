@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs';
 import { createLogger } from '../logger.js';
 import { splitLongContent, buildInputSummary, truncateText } from '../shared/utils.js';
 import { MAX_TELEGRAM_MESSAGE_LENGTH } from '../constants.js';
+import { withRetry } from '../shared/retry.js';
 
 const log = createLogger('TgSender');
 
@@ -67,23 +68,20 @@ async function callWithRetry<T>(chatId: string, label: string, fn: () => Promise
     chatCooldownUntil.delete(chatId);
   }
 
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const result = await fn();
-      return result;
-    } catch (err: unknown) {
+  return withRetry(fn, {
+    maxRetries: MAX_RETRIES - 1, // withRetry counts retries after first attempt
+    baseDelayMs: 1000,
+    maxDelayMs: RATE_LIMIT_MAX_WAIT_SEC * 1000,
+    shouldRetry: (err) => {
       const retryAfter = parseRetryAfter(err);
-      if (retryAfter !== null && attempt < MAX_RETRIES) {
-        const waitSec = Math.min(retryAfter, RATE_LIMIT_MAX_WAIT_SEC);
+      if (retryAfter !== null) {
         setCooldown(chatId, retryAfter);
-        log.warn(`${label}: rate limited, waiting ${waitSec}s before retry (attempt ${attempt}/${MAX_RETRIES})`);
-        await new Promise((r) => setTimeout(r, waitSec * 1000));
-        continue;
+        log.warn(`${label}: rate limited, retry after ${retryAfter}s`);
+        return true;
       }
-      throw err;
-    }
-  }
-  throw new Error('unreachable');
+      return false; // 非 429 错误不重试
+    },
+  });
 }
 
 export type MessageStatus = 'thinking' | 'streaming' | 'done' | 'error';

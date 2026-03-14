@@ -8,17 +8,10 @@ import { readdir } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import type { ThreadContext, CostRecord } from '../shared/types.js';
+import type { ThreadContext, CostRecord, MessageSender } from '../shared/types.js';
 import { getHistory, formatHistoryPage } from '../shared/history.js';
 
-export type { ThreadContext, CostRecord };
-
-/**
- * 平台无关的消息发送接口
- */
-export interface MessageSender {
-  sendTextReply(chatId: string, text: string, threadCtx?: ThreadContext): Promise<void>;
-}
+export type { ThreadContext, CostRecord, MessageSender };
 
 /**
  * 命令处理器依赖项

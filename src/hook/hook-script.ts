@@ -133,4 +133,8 @@ async function main() {
   }
 }
 
-main();
+/* c8 ignore next 3 */
+const isDirectRun = process.argv[1]?.endsWith('hook-script.js');
+if (isDirectRun) main();
+
+export { main, readStdin, httpPost };

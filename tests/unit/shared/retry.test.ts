@@ -96,4 +96,49 @@ describe('withRetry', () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.name).toBe('NonRetryableError');
   });
+
+  it('shouldRetry 返回 false 时不重试', async () => {
+    const fn = vi.fn().mockRejectedValue(new Error('custom error'));
+
+    await expect(
+      withRetry(fn, {
+        maxRetries: 3,
+        baseDelayMs: 10,
+        maxDelayMs: 20,
+        shouldRetry: (err) => !(err instanceof Error && err.message === 'custom error'),
+      }),
+    ).rejects.toThrow('custom error');
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('shouldRetry 返回 true 时正常重试', async () => {
+    vi.useRealTimers();
+    const fn = vi.fn()
+      .mockRejectedValueOnce(new Error('transient'))
+      .mockResolvedValue('ok');
+
+    const result = await withRetry(fn, {
+      maxRetries: 3,
+      baseDelayMs: 10,
+      maxDelayMs: 20,
+      shouldRetry: () => true,
+    });
+    expect(result).toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(2);
+    vi.useFakeTimers();
+  });
+
+  it('NonRetryableError 优先于 shouldRetry', async () => {
+    const fn = vi.fn().mockRejectedValue(new NonRetryableError('non-retryable'));
+
+    await expect(
+      withRetry(fn, {
+        maxRetries: 3,
+        baseDelayMs: 10,
+        maxDelayMs: 20,
+        shouldRetry: () => true,
+      }),
+    ).rejects.toThrow('non-retryable');
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
 });

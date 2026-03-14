@@ -5,17 +5,15 @@ import type { Config } from '../config.js';
 import { AccessControl } from '../access/access-control.js';
 import type { SessionManager } from '../session/session-manager.js';
 import { RequestQueue } from '../queue/request-queue.js';
-import { sendThinkingCard, streamContentUpdate, sendFinalCards, sendErrorCard, sendTextReply, sendPermissionCard, updatePermissionCard, fetchThreadDescription, uploadAndSendImage, type CardHandle, type ThreadContext } from './message-sender.js';
+import { sendTextReply, fetchThreadDescription, type ThreadContext } from './message-sender.js';
 import { getClient, getBotOpenId } from './client.js';
-import { buildCardV2 } from './card-builder.js';
-import { destroySession, updateCardFull, disableStreaming } from './cardkit-manager.js';
-import { registerPermissionSender, resolvePermissionById } from '../hook/permission-server.js';
+import { registerFeishuPermissionSender, handlePermissionAction } from './permission-handler.js';
 import { CommandHandler, type CostRecord } from '../commands/handler.js';
 import { safeStringify } from '../shared/utils.js';
-import { runClaudeTask, type TaskRunState, type TaskDeps } from '../shared/claude-task.js';
 import { startTaskCleanup } from '../shared/task-cleanup.js';
 import { MessageDedup } from '../shared/message-dedup.js';
-import { CARDKIT_THROTTLE_MS, IMAGE_DIR } from '../constants.js';
+import { IMAGE_DIR } from '../constants.js';
+import { executeClaudeTask, handleStopAction, type TaskInfo } from './task-executor.js';
 import { setActiveChatId } from '../shared/active-chats.js';
 import { createLogger } from '../logger.js';
 
@@ -95,12 +93,6 @@ async function downloadFeishuImage(messageId: string, imageKey: string): Promise
   return imagePath;
 }
 
-// 跟踪正在执行的任务
-interface TaskInfo extends TaskRunState {
-  cardId: string;
-  messageId: string;
-}
-
 export interface FeishuEventHandlerHandle {
   dispatcher: Lark.EventDispatcher;
   stop: () => void;
@@ -128,123 +120,9 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
   });
 
   // Register feishu permission sender
-  registerPermissionSender('feishu', {
-    sendPermissionCard,
-    updatePermissionCard: ({ messageId, toolName, decision }) =>
-      updatePermissionCard(messageId, toolName, decision),
-  });
+  registerFeishuPermissionSender();
 
   // ─── 内部函数（闭包访问 runningTasks 等） ───
-
-  async function handleClaudeRequest(
-    userId: string,
-    chatId: string,
-    prompt: string,
-    workDir: string,
-    convId?: string,
-    threadCtx?: ThreadContext,
-    mentionedBot?: boolean,
-    isGroup?: boolean,
-  ) {
-    const sessionId = threadCtx && threadCtx.threadId
-      ? sessionManager.getSessionIdForThread(userId, threadCtx.threadId)
-      : convId
-        ? sessionManager.getSessionIdForConv(userId, convId)
-        : undefined;
-
-    log.info(`Running Claude for user ${userId}, ${threadCtx ? `thread=${threadCtx.threadId}` : `convId=${convId}`}, workDir=${workDir}, sessionId=${sessionId ?? 'new'}`);
-
-    let cardHandle: CardHandle;
-    try {
-      cardHandle = await sendThinkingCard(chatId, threadCtx);
-    } catch (err) {
-      log.error('Failed to send thinking card:', err);
-      return;
-    }
-
-    const { messageId, cardId } = cardHandle;
-
-    if (!cardId) {
-      log.error('No card_id returned for thinking card');
-      return;
-    }
-
-    const finalThreadCtx = threadCtx;
-    const taskKey = `${userId}:${cardId}`;
-
-    let waitingTimer: ReturnType<typeof setInterval> | null = null;
-
-    await runClaudeTask(
-      { config, sessionManager, userCosts },
-      {
-        userId,
-        chatId,
-        workDir,
-        sessionId,
-        convId,
-        threadId: finalThreadCtx?.threadId,
-        threadRootMsgId: finalThreadCtx?.rootMessageId,
-        platform: 'feishu',
-        taskKey,
-      },
-      prompt,
-      {
-        throttleMs: CARDKIT_THROTTLE_MS,
-        streamUpdate: (content, toolNote) => {
-          streamContentUpdate(cardId, content, toolNote).catch((e) => log.warn('Stream update failed:', e?.message ?? e));
-        },
-        sendComplete: async (content, note, thinkingText) => {
-          try {
-            await sendFinalCards(chatId, messageId, cardId, content, note, finalThreadCtx, thinkingText);
-
-            // 如果是群聊且被@了，任务完成后@回发送者
-            if (isGroup && mentionedBot) {
-              const replyText = `<at user_id="${userId}"></at> 任务已完成 ✅`;
-              await sendTextReply(chatId, replyText, finalThreadCtx);
-            }
-          } catch (err) {
-            log.error('Failed to send final cards:', err);
-          }
-        },
-        sendError: async (error) => {
-          try {
-            await sendErrorCard(cardId, error);
-          } catch (err) {
-            log.error('Failed to send error card:', err);
-          }
-        },
-        onThinkingToText: (content, _thinkingText) => {
-          const resetCard = buildCardV2({ content: content || '...', status: 'streaming' }, cardId);
-          updateCardFull(cardId, resetCard)
-            .catch((e) => log.warn('Thinking→text transition update failed:', e?.message ?? e));
-        },
-        extraCleanup: () => {
-          if (waitingTimer) { clearInterval(waitingTimer); waitingTimer = null; }
-          runningTasks.delete(taskKey);
-        },
-        onTaskReady: (state) => {
-          runningTasks.set(taskKey, { ...state, cardId, messageId });
-
-          // 等待首次内容期间，每3秒更新卡片显示已等待时间
-          const startTime = Date.now();
-          waitingTimer = setInterval(() => {
-            const taskInfo = runningTasks.get(taskKey);
-            if (!taskInfo) {
-              if (waitingTimer) { clearInterval(waitingTimer); waitingTimer = null; }
-              return;
-            }
-            const elapsed = Math.floor((Date.now() - startTime) / 1000);
-            streamContentUpdate(cardId, `等待 Claude 响应... (${elapsed}s)`).catch(() => {});
-          }, 3000);
-        },
-        onFirstContent: () => {
-          // 首次内容到达，清除等待计时器
-          if (waitingTimer) { clearInterval(waitingTimer); waitingTimer = null; }
-        },
-        sendImage: (imagePath) => uploadAndSendImage(chatId, imagePath, finalThreadCtx),
-      },
-    );
-  }
 
   async function routeToThread(
     userId: string,
@@ -280,7 +158,10 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
     const threadCtx: ThreadContext = { rootMessageId, threadId };
 
     const enqueueResult = requestQueue.enqueue(userId, threadId, text, async (prompt) => {
-      await handleClaudeRequest(userId, chatId, prompt, workDir, undefined, threadCtx, mentionedBot, true);
+      await executeClaudeTask(
+        { config, sessionManager, userCosts, runningTasks },
+        userId, chatId, prompt, workDir, undefined, threadCtx, mentionedBot, true,
+      );
     });
 
     if (enqueueResult === 'rejected') {
@@ -302,7 +183,10 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
     const convIdSnapshot = sessionManager.getConvId(userId);
 
     const enqueueResult = requestQueue.enqueue(userId, convIdSnapshot, text, async (prompt) => {
-      await handleClaudeRequest(userId, chatId, prompt, workDirSnapshot, convIdSnapshot, undefined, mentionedBot, isGroup);
+      await executeClaudeTask(
+        { config, sessionManager, userCosts, runningTasks },
+        userId, chatId, prompt, workDirSnapshot, convIdSnapshot, undefined, mentionedBot, isGroup,
+      );
     });
 
     if (enqueueResult === 'rejected') {
@@ -367,45 +251,14 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
           log.warn('No card_id in stop action data');
           return;
         }
-        const taskKey = `${userId}:${cardId}`;
-        const taskInfo = runningTasks.get(taskKey);
-
-        log.debug(`Stop button clicked - taskKey: ${taskKey}, handle exists: ${!!taskInfo}`);
-
-        if (taskInfo) {
-          log.info(`User ${userId} stopped task for card ${cardId}`);
-
-          const stoppedContent = taskInfo.latestContent || '(任务已停止，暂无输出)';
-
-          runningTasks.delete(taskKey);
-          taskInfo.settle();
-          taskInfo.handle.abort();
-
-          const stoppedCard = buildCardV2({ content: stoppedContent, status: 'done', note: '⏹️ 已停止' });
-          disableStreaming(cardId)
-            .then(() => updateCardFull(cardId, stoppedCard))
-            .catch((e) => log.warn('Stop card update failed:', e?.message ?? e))
-            .finally(() => destroySession(cardId));
-        } else {
-          log.warn(`No running task found for key: ${taskKey}`);
-          log.info(`Current running tasks: ${Array.from(runningTasks.keys()).join(', ')}`);
-        }
+        handleStopAction(runningTasks, userId, cardId);
       } else if (actionData.action === 'allow' || actionData.action === 'deny') {
-        // 处理权限按钮点击
         const requestId = actionData.requestId;
-        const decision = actionData.action as 'allow' | 'deny';
-
         if (!requestId) {
           log.warn('No requestId in permission action');
           return;
         }
-
-        const resolvedId = resolvePermissionById(requestId, decision);
-        if (resolvedId) {
-          log.info(`Permission ${decision} via button for request ${requestId}`);
-        } else {
-          log.warn(`No pending permission request found for requestId: ${requestId}`);
-        }
+        handlePermissionAction(requestId, actionData.action);
       }
     },
   });
@@ -550,7 +403,11 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
 
       log.info(`User ${senderId}${isImageMessage ? ' [image]' : ''}: ${text.slice(0, 100)}${text.length > 100 ? '...' : ''}`);
 
-      if (!isImageMessage && await commandHandler.dispatch(text, chatId, senderId, 'feishu', handleClaudeRequest, threadCtx)) {
+      if (!isImageMessage && await commandHandler.dispatch(text, chatId, senderId, 'feishu', (userId, chatId, prompt, workDir, convId, threadCtx) =>
+        executeClaudeTask(
+          { config, sessionManager, userCosts, runningTasks },
+          userId, chatId, prompt, workDir, convId, threadCtx,
+        ), threadCtx)) {
         return;
       }
 

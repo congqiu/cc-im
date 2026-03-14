@@ -18,3 +18,10 @@ export interface CostRecord {
   totalDurationMs: number;
   requestCount: number;
 }
+
+/**
+ * 平台无关的消息发送接口
+ */
+export interface MessageSender {
+  sendTextReply(chatId: string, text: string, threadCtx?: ThreadContext): Promise<void>;
+}
