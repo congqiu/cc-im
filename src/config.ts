@@ -8,13 +8,15 @@ import { APP_HOME } from './constants.js';
 
 const logger = createLogger('Config');
 
-export type Platform = 'feishu' | 'telegram';
+export type Platform = 'feishu' | 'telegram' | 'wecom';
 
 export interface Config {
   enabledPlatforms: Platform[]; // 改为支持多平台
   feishuAppId: string;
   feishuAppSecret: string;
   telegramBotToken: string;
+  wecomBotId: string;
+  wecomBotSecret: string;
   allowedUserIds: string[];
   claudeCliPath: string;
   claudeWorkDir: string;
@@ -31,6 +33,8 @@ interface FileConfig {
   feishuAppId?: string;
   feishuAppSecret?: string;
   telegramBotToken?: string;
+  wecomBotId?: string;
+  wecomBotSecret?: string;
   allowedUserIds?: string[];
   claudeCliPath?: string;
   claudeWorkDir?: string;
@@ -83,12 +87,20 @@ function detectPlatforms(file: FileConfig): Platform[] {
     platforms.push('feishu');
   }
 
+  // 检测企业微信
+  const wecomBotId = process.env.WECOM_BOT_ID ?? file.wecomBotId;
+  const wecomBotSecret = process.env.WECOM_BOT_SECRET ?? file.wecomBotSecret;
+  if (wecomBotId && wecomBotSecret) {
+    platforms.push('wecom');
+  }
+
   // 如果都没配置，抛出错误
   if (platforms.length === 0) {
     throw new Error(
       '至少需要配置一个平台：\n' +
       '  Telegram: 设置 TELEGRAM_BOT_TOKEN\n' +
-      '  飞书: 设置 FEISHU_APP_ID 和 FEISHU_APP_SECRET'
+      '  飞书: 设置 FEISHU_APP_ID 和 FEISHU_APP_SECRET\n' +
+      '  企业微信: 设置 WECOM_BOT_ID 和 WECOM_BOT_SECRET'
     );
   }
 
@@ -105,6 +117,10 @@ export function loadConfig(): Config {
 
   // Telegram 配置
   const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN ?? file.telegramBotToken ?? '';
+
+  // 企业微信配置
+  const wecomBotId = process.env.WECOM_BOT_ID ?? file.wecomBotId ?? '';
+  const wecomBotSecret = process.env.WECOM_BOT_SECRET ?? file.wecomBotSecret ?? '';
 
   const allowedUserIds =
     process.env.ALLOWED_USER_IDS !== undefined
@@ -174,6 +190,8 @@ export function loadConfig(): Config {
     feishuAppId: appId,
     feishuAppSecret: appSecret,
     telegramBotToken,
+    wecomBotId,
+    wecomBotSecret,
     allowedUserIds,
     claudeCliPath,
     claudeWorkDir,

@@ -106,3 +106,21 @@ export const HOOK_EXIT_CODES = {
   /** 权限服务器不可达 */
   PERMISSION_SERVER_ERROR: 2,
 } as const;
+
+/**
+ * 企业微信流式更新节流时间（毫秒）
+ */
+export const WECOM_THROTTLE_MS = 200;
+
+/**
+ * 企业微信流式消息续接阈值（毫秒）
+ * 企业微信流式消息有 6 分钟硬超时，设 5 分 30 秒触发续接
+ */
+export const WECOM_STREAM_TIMEOUT_MS = 330_000;
+
+/**
+ * 企业微信消息最大长度
+ * replyStream 的 content 最长不超过 20480 字节（utf-8）
+ * 为安全起见，以字符计限制在 4000
+ */
+export const MAX_WECOM_MESSAGE_LENGTH = 4000;

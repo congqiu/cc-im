@@ -1,4 +1,4 @@
-import type { Config } from '../config.js';
+import type { Config, Platform } from '../config.js';
 import type { SessionManager } from '../session/session-manager.js';
 import type { RequestQueue } from '../queue/request-queue.js';
 import { resolveLatestPermission, getPendingCount } from '../hook/permission-server.js';
@@ -57,7 +57,7 @@ export class CommandHandler {
     text: string,
     chatId: string,
     userId: string,
-    platform: 'feishu' | 'telegram',
+    platform: Platform,
     handleClaudeRequest: ClaudeRequestHandler,
     threadCtx?: ThreadContext,
   ): Promise<boolean> {
@@ -113,9 +113,10 @@ export class CommandHandler {
   /**
    * 处理 /help 命令
    */
-  async handleHelp(chatId: string, platform: 'feishu' | 'telegram', threadCtx?: ThreadContext): Promise<boolean> {
+  async handleHelp(chatId: string, platform: Platform, threadCtx?: ThreadContext): Promise<boolean> {
     const startCmd = platform === 'telegram' ? '/start           - 显示欢迎信息\n' : '';
     const threadsCmd = platform === 'feishu' ? '/threads        - 列出所有话题会话\n' : '';
+    const stopCmd = platform === 'wecom' ? '/stop           - 停止当前运行的任务\n' : '';
     const helpText = [
       '📋 可用命令:',
       '',
@@ -132,6 +133,7 @@ export class CommandHandler {
       '/list           - 列出所有工作区',
       '/history [页码]  - 浏览会话历史记录',
       threadsCmd,
+      stopCmd,
       '/allow (/y)     - 允许权限请求（按钮不可用时的备选）',
       '/deny (/n)      - 拒绝权限请求（按钮不可用时的备选）',
     ].filter(Boolean).join('\n');

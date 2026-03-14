@@ -35,7 +35,7 @@ pnpm test:watch
 
 ### 1. 多平台支持架构
 
-项目支持飞书和 Telegram 两个平台，可以同时运行或单独使用。
+项目支持飞书、Telegram 和企业微信三个平台，可以同时运行或单独使用。
 
 - **平台检测**：`src/config.ts` 中的 `detectPlatforms()` 自动检测已配置的平台
 - **并行初始化**：`src/index.ts` 中使用 `Promise.all()` 并行初始化多个平台
@@ -50,6 +50,14 @@ pnpm test:watch
   - 权限卡片仍使用传统 `im.v1.message.patch` 更新
 - Telegram：`src/telegram/` - 使用 `telegraf`，轮询模式
   - **支持私聊和群组**：群组中需要 @机器人才会响应，回复会以 reply 形式关联到原消息
+- 企业微信：`src/wecom/` - 使用 `@wecom/aibot-node-sdk`，WebSocket 长连接模式
+  - 流式输出使用 SDK 原生 `replyStream()`，支持 Markdown
+  - 6 分钟流式消息自动续接（5 分 30 秒触发）
+  - 支持私聊和群聊，群聊需 @机器人触发
+  - 图片消息通过 `downloadFile()` 下载并 AES 解密
+  - 语音消息自动转文字（`voice.content`）
+  - 权限确认使用模板卡片按钮（`sendMessage` 主动推送 + `updateTemplateCard` 更新）
+  - 停止按钮通过 `replyStreamWithCard` 附带，同时支持 `/stop` 命令
 
 **飞书应用权限要求**：
 - `im:message:send_as_bot` — 以应用身份发消息
@@ -176,7 +184,7 @@ claude -p \
 - 状态查询：`/status`、`/cost`、`/doctor`、`/history`
 - 权限管理：`/allow`、`/deny`（按钮不可用时的 fallback）
 - 模型切换：`/model`（按用户/话题粒度，存储在 SessionManager 中，不修改全局配置）
-- 平台特有：`/threads`（飞书，列出话题会话）、`/start`（Telegram）
+- 平台特有：`/threads`（飞书，列出话题会话）、`/start`（Telegram）、`/stop`（企业微信，停止当前任务）
 
 ### 8. 版本更新检查
 
@@ -274,6 +282,8 @@ pnpm test -- tests/unit/queue/request-queue.test.ts
 - `LOG_DIR`：日志目录路径，默认 `~/.cc-im/logs`
 - `FEISHU_APP_ID`、`FEISHU_APP_SECRET`：飞书应用凭证
 - `TELEGRAM_BOT_TOKEN`：Telegram 机器人 Token
+- `WECOM_BOT_ID`：企业微信机器人 ID
+- `WECOM_BOT_SECRET`：企业微信机器人 Secret
 - `ALLOWED_USER_IDS`：允许的用户 ID 列表（逗号分隔）
 - `CLAUDE_CLI_PATH`：Claude CLI 可执行文件路径，默认 `claude`
 - `CLAUDE_WORK_DIR`：默认工作目录，默认当前目录

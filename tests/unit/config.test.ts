@@ -48,6 +48,8 @@ function setEnv(overrides: Record<string, string>) {
   delete process.env.FEISHU_APP_ID;
   delete process.env.FEISHU_APP_SECRET;
   delete process.env.TELEGRAM_BOT_TOKEN;
+  delete process.env.WECOM_BOT_ID;
+  delete process.env.WECOM_BOT_SECRET;
   delete process.env.ALLOWED_USER_IDS;
   delete process.env.CLAUDE_CLI_PATH;
   delete process.env.CLAUDE_WORK_DIR;
@@ -255,5 +257,33 @@ describe('loadConfig', () => {
     // Should not throw, just warn and use env
     const config = await loadConfigFresh();
     expect(config.telegramBotToken).toBe('token');
+  });
+});
+
+describe('wecom platform detection', () => {
+  it('should detect wecom when WECOM_BOT_ID and WECOM_BOT_SECRET are set', async () => {
+    mockReadFileSync.mockImplementation(() => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); });
+    mockExecFileSync.mockReturnValue(Buffer.from('/usr/bin/claude'));
+    setEnv({
+      WECOM_BOT_ID: 'test-bot-id',
+      WECOM_BOT_SECRET: 'test-bot-secret',
+      CLAUDE_CLI_PATH: 'claude',
+    });
+    const config = await loadConfigFresh();
+    expect(config.enabledPlatforms).toContain('wecom');
+    expect(config.wecomBotId).toBe('test-bot-id');
+    expect(config.wecomBotSecret).toBe('test-bot-secret');
+  });
+
+  it('should not detect wecom when only WECOM_BOT_ID is set', async () => {
+    mockReadFileSync.mockImplementation(() => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); });
+    mockExecFileSync.mockReturnValue(Buffer.from('/usr/bin/claude'));
+    setEnv({
+      WECOM_BOT_ID: 'test-bot-id',
+      TELEGRAM_BOT_TOKEN: 'test-token',
+      CLAUDE_CLI_PATH: 'claude',
+    });
+    const config = await loadConfigFresh();
+    expect(config.enabledPlatforms).not.toContain('wecom');
   });
 });

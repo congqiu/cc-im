@@ -6,6 +6,10 @@ import { stopCleanupTimer as stopCardKitCleanup } from './feishu/cardkit-manager
 import { sendTextReply as feishuSendText } from './feishu/message-sender.js';
 import { setupTelegramHandlers, type TelegramEventHandlerHandle } from './telegram/event-handler.js';
 import { sendTextReply as telegramSendText } from './telegram/message-sender.js';
+import { initWecom, stopWecom } from './wecom/client.js';
+import { setupWecomHandlers } from './wecom/event-handler.js';
+import type { WecomEventHandlerHandle } from './wecom/client.js';
+import { sendTextReply as wecomSendText } from './wecom/message-sender.js';
 import { startPermissionServer } from './hook/permission-server.js';
 import { ensureHookConfigured } from './hook/ensure-hook.js';
 import { SessionManager } from './session/session-manager.js';
@@ -28,13 +32,13 @@ function getClaudeVersion(cliPath: string): string {
 async function sendLifecycleNotification(activeBots: string[], message: string) {
   const tasks: Promise<void>[] = [];
   for (const bot of activeBots) {
-    const platform = bot.toLowerCase() as 'feishu' | 'telegram';
+    const platform = bot.toLowerCase() as 'feishu' | 'telegram' | 'wecom';
     const chatId = getActiveChatId(platform);
     if (!chatId) {
       log.info(`${bot} 启动通知跳过：尚无活跃聊天记录，向机器人发送一条消息后下次启动即可收到通知`);
       continue;
     }
-    const sender = platform === 'feishu' ? feishuSendText : telegramSendText;
+    const sender = platform === 'feishu' ? feishuSendText : platform === 'wecom' ? wecomSendText : telegramSendText;
     tasks.push(sender(chatId, message).catch((err) => {
       log.debug(`Failed to send ${bot} lifecycle notification:`, err);
     }));
@@ -71,6 +75,7 @@ export async function main() {
 
   let feishuHandle: FeishuEventHandlerHandle | null = null;
   let telegramHandle: TelegramEventHandlerHandle | null = null;
+  let wecomHandle: WecomEventHandlerHandle | null = null;
 
   if (config.enabledPlatforms.includes('telegram')) {
     log.debug('Initializing Telegram platform...');
@@ -108,6 +113,25 @@ export async function main() {
           log.error('Failed to initialize Feishu bot:', err);
           log.warn('Continuing without Feishu support');
           return { platform: 'Feishu', success: false };
+        })
+    );
+  }
+
+  if (config.enabledPlatforms.includes('wecom')) {
+    log.debug('Initializing WeChat Work (WeCom) platform...');
+    initTasks.push(
+      initWecom(config, (wsClient) => {
+        wecomHandle = setupWecomHandlers(wsClient, config, sessionManager);
+        return wecomHandle;
+      })
+        .then(() => {
+          log.info('WeCom bot initialized');
+          return { platform: 'WeCom', success: true };
+        })
+        .catch((err) => {
+          log.error('Failed to initialize WeCom bot:', err);
+          log.warn('Continuing without WeCom support');
+          return { platform: 'WeCom', success: false };
         })
     );
   }
@@ -171,6 +195,10 @@ export async function main() {
     if (config.enabledPlatforms.includes('feishu')) {
       stopFeishu();
     }
+    wecomHandle?.stop();
+    if (config.enabledPlatforms.includes('wecom')) {
+      stopWecom();
+    }
     permissionServer?.close();
 
     // 持久化会话和活跃聊天数据
@@ -183,7 +211,10 @@ export async function main() {
     // 等待运行中的任务完成（最多 30 秒）
     const maxWait = 30_000;
     const start = Date.now();
-    const getTotalTasks = () => (feishuHandle?.getRunningTaskCount() ?? 0) + (telegramHandle?.getRunningTaskCount() ?? 0);
+    const getTotalTasks = () =>
+      (feishuHandle?.getRunningTaskCount() ?? 0) +
+      (telegramHandle?.getRunningTaskCount() ?? 0) +
+      (wecomHandle?.getRunningTaskCount() ?? 0);
     let remaining = getTotalTasks();
     if (remaining > 0) {
       log.info(`Waiting for ${remaining} running task(s) to complete...`);

@@ -6,6 +6,18 @@
 
 ## [Unreleased]
 
+### 新功能
+
+- 新增企业微信（WeCom）平台支持
+  - 使用 `@wecom/aibot-node-sdk` WebSocket 长连接接入
+  - 支持私聊和群聊（@机器人触发）
+  - 流式输出（`replyStream`），6 分钟自动续接
+  - 权限确认模板卡片（允许/拒绝按钮）
+  - 停止按钮 + `/stop` 命令
+  - 图片消息接收（AES 解密）
+  - 语音消息（自动转文字）
+  - 配置：`WECOM_BOT_ID` + `WECOM_BOT_SECRET`
+
 ## [1.3.0] - 2026-03-07
 
 ### 新功能

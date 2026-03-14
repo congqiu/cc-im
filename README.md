@@ -1,13 +1,13 @@
 # cc-im
 
-多平台（飞书 & Telegram）机器人 ↔ Claude Code CLI 桥接服务。
+多平台（飞书 & Telegram & 企业微信）机器人 ↔ Claude Code CLI 桥接服务。
 
-用户在飞书或 Telegram 中发消息，服务器接收后调用 Claude Code 执行，并将输出实时流式推送回聊天窗口。
+用户在飞书、Telegram 或企业微信中发消息，服务器接收后调用 Claude Code 执行，并将输出实时流式推送回聊天窗口。
 
 ## 功能
 
-- **多平台支持**：飞书和 Telegram，可同时运行或单独使用
-- **流式输出**：飞书端使用 CardKit 打字机效果，Telegram 端通过 editMessage 实时更新
+- **多平台支持**：飞书、Telegram 和企业微信，可同时运行或单独使用
+- **流式输出**：飞书端使用 CardKit 打字机效果，Telegram 端通过 editMessage 实时更新，企业微信端使用 replyStream 原生流式回复
 - **思考过程展示**：实时显示 Claude 的思考过程（折叠面板）
 - **工具调用通知**：流式显示当前正在使用的工具及参数摘要
 - **图片消息支持**：支持发送图片给 Claude 进行分析
@@ -33,12 +33,14 @@
 
 ### 同时运行多个平台
 
-可以同时启用飞书和 Telegram，只需配置两个平台的凭证即可：
+可以同时启用多个平台，只需配置对应平台的凭证即可：
 
 ```bash
 export FEISHU_APP_ID=your_app_id
 export FEISHU_APP_SECRET=your_app_secret
 export TELEGRAM_BOT_TOKEN=your_bot_token
+export WECOM_BOT_ID=your_bot_id
+export WECOM_BOT_SECRET=your_bot_secret
 npx cc-im@latest
 ```
 
@@ -81,6 +83,21 @@ export FEISHU_APP_ID=your_app_id
 export FEISHU_APP_SECRET=your_app_secret
 npx cc-im@latest
 ```
+
+### 企业微信平台
+
+1. 在[企业微信管理后台](https://work.weixin.qq.com)创建智能机器人应用
+2. 获取机器人的 Bot ID 和 Secret
+3. 配置并启动：
+
+```bash
+export WECOM_BOT_ID=your_bot_id
+export WECOM_BOT_SECRET=your_bot_secret
+npx cc-im@latest
+```
+
+4. 在企业微信中找到你的机器人，发送消息开始使用
+5. 群聊中需要 @机器人 才会响应
 
 ### 从源码构建
 
@@ -125,6 +142,7 @@ cc-im stop
 | `/compact [topic]` | 压缩当前对话上下文 |
 | `/history [page]` | 查看当前会话的对话历史 |
 | `/threads` | 列出所有话题会话（飞书） |
+| `/stop` | 停止当前运行的任务（企业微信） |
 | `/allow` 或 `/y` | 允许权限请求（按钮不可用时的备选） |
 | `/deny` 或 `/n` | 拒绝权限请求（按钮不可用时的备选） |
 
@@ -135,6 +153,8 @@ cc-im stop
 | `FEISHU_APP_ID` | 飞书应用 App ID | 飞书平台必填 |
 | `FEISHU_APP_SECRET` | 飞书应用 App Secret | 飞书平台必填 |
 | `TELEGRAM_BOT_TOKEN` | Telegram Bot Token | Telegram 平台必填 |
+| `WECOM_BOT_ID` | 企业微信机器人 Bot ID | 企业微信平台必填 |
+| `WECOM_BOT_SECRET` | 企业微信机器人 Secret | 企业微信平台必填 |
 | `ALLOWED_USER_IDS` | 白名单用户 ID，逗号分隔，留空不限制 | 空（不限制） |
 | `CLAUDE_CLI_PATH` | Claude CLI 可执行文件路径 | `claude` |
 | `CLAUDE_WORK_DIR` | 默认工作目录 | 当前目录 |
@@ -150,6 +170,7 @@ cc-im stop
 
 - **飞书**：open_id 格式，如 `ou_xxxx`
 - **Telegram**：用户数字 ID，如 `123456789`（可通过 [@userinfobot](https://t.me/userinfobot) 获取）
+- **企业微信**：企业微信 userid，如 `zhangsan`
 
 ## 配置文件
 
@@ -160,6 +181,8 @@ cc-im stop
   "feishuAppId": "",
   "feishuAppSecret": "",
   "telegramBotToken": "your_bot_token",
+  "wecomBotId": "",
+  "wecomBotSecret": "",
   "allowedUserIds": ["123456789"],
   "claudeCliPath": "/usr/local/bin/claude",
   "claudeWorkDir": "/home/user/projects",
@@ -261,6 +284,10 @@ src/
 │   ├── client.ts             # Telegraf 初始化
 │   ├── event-handler.ts      # Telegram 事件处理
 │   └── message-sender.ts     # Telegram 消息发送
+├── wecom/
+│   ├── client.ts             # 企业微信 WSClient 初始化
+│   ├── event-handler.ts      # 企业微信事件处理
+│   └── message-sender.ts     # 企业微信消息发送（流式回复、权限卡片）
 ├── hook/
 │   ├── permission-server.ts  # 权限确认 HTTP 服务
 │   └── hook-script.ts        # Claude Code PreToolUse Hook
