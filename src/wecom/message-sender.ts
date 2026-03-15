@@ -21,6 +21,8 @@ interface StreamSession {
   isFirstUpdate: boolean;
   taskKey: string;
   stopCardSent: boolean;
+  /** 续接时记录的截断偏移量，新流只发 content.slice(contentOffset) */
+  contentOffset: number;
 }
 
 /**
@@ -51,19 +53,23 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
 
   /**
    * 如果流式消息接近超时（330s），结束当前流并开始新流。
-   * 企业微信 SDK 的 replyStream(finish=true) 会终结当前流内容并展示最终文本，
-   * 新流会以独立消息出现，因此重发完整内容不会导致用户侧重复显示。
+   * 旧流结束时保留到截断点的内容，新流只发截断点之后的增量内容，
+   * 避免每次续接都重复显示之前的全部文本。
    */
   async function renewStreamIfNeeded(content: string): Promise<void> {
     if (!session) return;
     const elapsed = Date.now() - session.streamStartedAt;
     if (elapsed > WECOM_STREAM_TIMEOUT_MS) {
       log.info(`Stream ${session.streamId} elapsed ${Math.round(elapsed / 1000)}s, renewing`);
+      // 旧流结束，显示当前增量内容 + 续接标记
+      const oldContent = content.slice(session.contentOffset);
       try {
-        await wsClient.replyStream(session.frame, session.streamId, content, true);
+        await wsClient.replyStream(session.frame, session.streamId, oldContent + '\n\n---\n> _(续)_', true);
       } catch (err) {
         log.warn('Failed to finish stream during renewal:', err);
       }
+      // 记录截断点，新流从此偏移开始
+      session.contentOffset = content.length;
       session.streamId = generateReqId('stream');
       session.streamStartedAt = Date.now();
       session.isFirstUpdate = true;
@@ -120,7 +126,9 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
 
     await renewStreamIfNeeded(content);
 
-    const text = toolNote ? `${content}\n\n---\n> ${toolNote}` : content;
+    // 只发送截断点之后的增量内容
+    const sliced = content.slice(session.contentOffset);
+    const text = toolNote ? `${sliced}\n\n---\n> ${toolNote}` : sliced;
 
     try {
       await wsClient.replyStream(session.frame, session.streamId, text, false);
@@ -155,6 +163,7 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
         isFirstUpdate: true,
         taskKey: taskKey ?? '',
         stopCardSent: false,
+        contentOffset: 0,
       };
     },
 
@@ -202,7 +211,8 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
           log.warn('Failed to finish thinking stream:', err);
         }
 
-        // 开启新流用于实际回答
+        // 开启新流用于实际回答，重置偏移量（文本从头开始）
+        session.contentOffset = 0;
         session.streamId = generateReqId('stream');
         session.streamStartedAt = Date.now();
         session.isFirstUpdate = true;
@@ -226,7 +236,9 @@ export function createWecomSender(wsClient: WSClient): WecomSender {
       await waitForStreamIdle();
       streamBusy = true;
 
-      const parts = splitLongContent(content, MAX_WECOM_MESSAGE_LENGTH);
+      // 只发送截断点之后的增量内容
+      const sliced = content.slice(session.contentOffset);
+      const parts = splitLongContent(sliced, MAX_WECOM_MESSAGE_LENGTH);
       const firstPart = note ? `${parts[0]}\n\n---\n> ${note}` : parts[0];
 
       try {

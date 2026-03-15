@@ -161,7 +161,7 @@ export class CommandHandler {
    * 处理 /cd 命令
    */
   async handleCd(chatId: string, userId: string, args: string, threadCtx?: ThreadContext): Promise<boolean> {
-    const dir = args.trim();
+    let dir = args.trim();
     if (!dir) {
       const workDir = threadCtx
         ? this.deps.sessionManager.getWorkDirForThread(userId, threadCtx.threadId)
@@ -174,6 +174,16 @@ export class CommandHandler {
       }
       await this.deps.sender.sendTextReply(chatId, lines.join('\n'), threadCtx);
       return true;
+    }
+    // 支持通过序号切换（对应 /list 的编号）
+    if (/^\d+$/.test(dir)) {
+      const index = parseInt(dir, 10) - 1;
+      const dirs = this.listClaudeProjects();
+      if (index < 0 || index >= dirs.length) {
+        await this.deps.sender.sendTextReply(chatId, `无效的序号 ${dir}，请使用 /list 查看可用工作区。`, threadCtx);
+        return true;
+      }
+      dir = dirs[index];
     }
     try {
       const resolved = threadCtx
@@ -209,8 +219,8 @@ export class CommandHandler {
       const current = threadCtx
         ? this.deps.sessionManager.getWorkDirForThread(userId, threadCtx.threadId)
         : this.deps.sessionManager.getWorkDir(userId);
-      const lines = dirs.map((d) => (d === current ? `▶ ${d}` : `  ${d}`));
-      await this.deps.sender.sendTextReply(chatId, `Claude Code 工作区列表:\n${lines.join('\n')}\n\n使用 /cd <路径> 切换`, threadCtx);
+      const lines = dirs.map((d, i) => (d === current ? `▶ ${i + 1}. ${d}` : `  ${i + 1}. ${d}`));
+      await this.deps.sender.sendTextReply(chatId, `Claude Code 工作区列表:\n${lines.join('\n')}\n\n使用 /cd <序号> 或 /cd <路径> 切换`, threadCtx);
     }
     return true;
   }

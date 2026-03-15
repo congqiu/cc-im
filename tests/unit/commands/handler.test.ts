@@ -462,6 +462,40 @@ describe('CommandHandler', () => {
         undefined,
       );
     });
+
+    it('should switch workDir by index from /list', async () => {
+      vi.mocked(readFileSync as any).mockReturnValue(JSON.stringify({
+        projects: { '/work': {}, '/work/alpha': {}, '/work/beta': {} },
+      }));
+      await handler.dispatch('/cd 2', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      // sorted: /work, /work/alpha, /work/beta → index 2 = /work/alpha
+      expect(deps.sessionManager.setWorkDir).toHaveBeenCalledWith(USER_ID, '/work/alpha');
+    });
+
+    it('should reject out-of-range index', async () => {
+      vi.mocked(readFileSync as any).mockReturnValue(JSON.stringify({
+        projects: { '/work': {} },
+      }));
+      await handler.dispatch('/cd 99', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
+        CHAT_ID,
+        expect.stringContaining('无效的序号'),
+        undefined,
+      );
+      expect(deps.sessionManager.setWorkDir).not.toHaveBeenCalled();
+    });
+
+    it('should reject index 0 (1-based numbering)', async () => {
+      vi.mocked(readFileSync as any).mockReturnValue(JSON.stringify({
+        projects: { '/work': {} },
+      }));
+      await handler.dispatch('/cd 0', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
+        CHAT_ID,
+        expect.stringContaining('无效的序号'),
+        undefined,
+      );
+    });
   });
 
   // ─── /pwd ───
@@ -832,7 +866,7 @@ describe('CommandHandler', () => {
       await handler.dispatch('/list', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
       const text = vi.mocked(deps.sender.sendTextReply).mock.calls[0][1];
       // Current dir '/work' should be marked
-      expect(text).toMatch(/▶\s+\/work/);
+      expect(text).toMatch(/▶\s+\d+\.\s+\/work/);
     });
 
     it('should handle readFileSync error gracefully', async () => {
