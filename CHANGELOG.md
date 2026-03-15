@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-03-15
+
 ### 新功能
 
 - `/resume` 命令：浏览当前工作区的历史会话列表，支持按序号恢复任意历史会话
@@ -15,6 +17,12 @@
 ### 修复
 
 - 企业微信流式续接改为增量发送，避免每次续接重复显示之前的全部文本
+
+### 重构
+
+- 飞书模块拆分：从 event-handler 中提取 task-executor 和 permission-handler
+- 迁移 MessageSender 接口到 shared/types.ts
+- Telegram 429 重试改用共享 withRetry
 
 ## [1.4.0] - 2026-03-14
 
