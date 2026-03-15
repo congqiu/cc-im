@@ -34,7 +34,6 @@ export const READ_ONLY_TOOLS = [
 export const TERMINAL_ONLY_COMMANDS = new Set([
   '/context',
   '/rewind',
-  '/resume',
   '/copy',
   '/export',
   '/config',

@@ -522,6 +522,48 @@ describe('SessionManager', () => {
     });
   });
 
+  describe('resumeSession', () => {
+    it('转存旧 convId 的 sessionId', () => {
+      const manager = new SessionManager('/work', ['/work']);
+      manager.getConvId('user1'); // 初始化
+      manager.setSessionId('user1', 'old-session-id');
+      const oldConvId = manager.getConvId('user1');
+
+      manager.resumeSession('user1', 'target-session-id');
+
+      expect(manager.getSessionIdForConv('user1', oldConvId)).toBe('old-session-id');
+    });
+
+    it('设置目标 sessionId', () => {
+      const manager = new SessionManager('/work', ['/work']);
+      manager.getConvId('user1');
+      manager.resumeSession('user1', 'target-session-id');
+      expect(manager.getSessionId('user1')).toBe('target-session-id');
+    });
+
+    it('生成新 convId', () => {
+      const manager = new SessionManager('/work', ['/work']);
+      manager.getConvId('user1');
+      const oldConvId = manager.getConvId('user1');
+      manager.resumeSession('user1', 'target-session-id');
+      expect(manager.getConvId('user1')).not.toBe(oldConvId);
+    });
+
+    it('重置 totalTurns', () => {
+      const manager = new SessionManager('/work', ['/work']);
+      manager.getConvId('user1');
+      manager.addTurns('user1', 5);
+      manager.resumeSession('user1', 'target-session-id');
+      expect(manager.addTurns('user1', 0)).toBe(0);
+    });
+
+    it('用户不存在时返回 false', () => {
+      const manager = new SessionManager('/work', ['/work']);
+      const result = manager.resumeSession('nonexistent', 'any-session-id');
+      expect(result).toBe(false);
+    });
+  });
+
   describe('removeThreadByRootMessageId', () => {
     it('根据根消息 ID 删除话题', () => {
       const sm = new SessionManager('/work', ['/work']);

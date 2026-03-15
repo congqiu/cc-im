@@ -187,7 +187,7 @@ claude -p \
 - 统一处理：所有命令在同一个类中处理
 
 **命令分类**：
-- 会话管理：`/new`、`/compact`
+- 会话管理：`/new`、`/compact`、`/resume`
 - 工作目录：`/cd`、`/pwd`、`/list`
 - 状态查询：`/status`、`/cost`、`/doctor`、`/history`
 - 权限管理：`/allow`、`/deny`（按钮不可用时的 fallback）

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { HistoryPage } from '../../../src/shared/history.js';
+import type { HistoryPage, SessionListItem } from '../../../src/shared/history.js';
 
 // Mock node:fs/promises
 vi.mock('node:fs/promises', () => ({
@@ -14,7 +14,7 @@ vi.mock('node:os', () => ({
 }));
 
 import { readFile, readdir, stat } from 'node:fs/promises';
-import { getHistory, formatHistoryPage } from '../../../src/shared/history.js';
+import { getHistory, formatHistoryPage, getSessionList, formatSessionList } from '../../../src/shared/history.js';
 
 const mockReadFile = vi.mocked(readFile);
 const mockReaddir = vi.mocked(readdir);
@@ -186,14 +186,26 @@ describe('getHistory', () => {
       expect(result.data.totalPages).toBe(1);
     });
 
-    it('page < 1 时 clamp 到第 1 页', async () => {
-      mockReadFile.mockResolvedValue(manyEntries(5));
+    it('page < 0 时返回最后一页', async () => {
+      mockReadFile.mockResolvedValue(manyEntries(25));
 
       const result = await getHistory(workDir, 'sess', -1);
 
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      expect(result.data.page).toBe(1);
+      expect(result.data.page).toBe(3);
+      expect(result.data.totalPages).toBe(3);
+    });
+
+    it('page=0 时返回最后一页', async () => {
+      mockReadFile.mockResolvedValue(manyEntries(25));
+      const result = await getHistory(workDir, 'sess', 0);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.data.page).toBe(3);
+      expect(result.data.totalPages).toBe(3);
+      expect(result.data.entries).toHaveLength(5);
+      expect(result.data.entries[0].text).toBe('msg-20');
     });
   });
 
@@ -296,11 +308,11 @@ describe('getHistory', () => {
 });
 
 describe('formatHistoryPage', () => {
-  it('正确格式化带 user/assistant 前缀', () => {
+  it('正确格式化带 user/assistant 前缀和时间戳', () => {
     const page: HistoryPage = {
       entries: [
-        { role: 'user', text: 'what is 1+1?' },
-        { role: 'assistant', text: 'the answer is 2' },
+        { role: 'user', text: 'what is 1+1?', timestamp: '2024-06-15T10:30:00Z' },
+        { role: 'assistant', text: 'the answer is 2', timestamp: '2024-06-15T10:31:00Z' },
       ],
       page: 1,
       totalPages: 1,
@@ -315,10 +327,10 @@ describe('formatHistoryPage', () => {
     expect(output).toContain('the answer is 2');
   });
 
-  it('截断超过 300 字符的消息', () => {
+  it('消息完整展示不截断', () => {
     const longText = 'x'.repeat(400);
     const page: HistoryPage = {
-      entries: [{ role: 'user', text: longText }],
+      entries: [{ role: 'user', text: longText, timestamp: '2024-06-15T10:30:00Z' }],
       page: 1,
       totalPages: 1,
       sessionId: 'sess12345678',
@@ -326,29 +338,59 @@ describe('formatHistoryPage', () => {
 
     const output = formatHistoryPage(page);
 
-    // 297 chars + '...' = 300 display chars
-    expect(output).toContain('x'.repeat(297) + '...');
-    expect(output).not.toContain('x'.repeat(298));
-  });
-
-  it('不足 300 字符的消息不截断', () => {
-    const text = 'x'.repeat(300);
-    const page: HistoryPage = {
-      entries: [{ role: 'user', text }],
-      page: 1,
-      totalPages: 1,
-      sessionId: 'sess12345678',
-    };
-
-    const output = formatHistoryPage(page);
-
-    expect(output).toContain(text);
+    expect(output).toContain(longText);
     expect(output).not.toContain('...');
   });
 
-  it('有下一页时显示翻页提示', () => {
+  it('当天时间戳只显示 [HH:mm]', () => {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const todayTs = now.toISOString();
     const page: HistoryPage = {
-      entries: [{ role: 'user', text: 'msg' }],
+      entries: [{ role: 'user', text: 'hello', timestamp: todayTs }],
+      page: 1,
+      totalPages: 1,
+      sessionId: 'sess12345678',
+    };
+
+    const output = formatHistoryPage(page);
+
+    const expectedTime = `[${pad(now.getHours())}:${pad(now.getMinutes())}]`;
+    expect(output).toContain(expectedTime);
+    // 不应包含月-日格式
+    expect(output).not.toMatch(/\[\d{2}-\d{2} /);
+  });
+
+  it('非当天时间戳显示 [MM-DD HH:mm]', () => {
+    const page: HistoryPage = {
+      entries: [{ role: 'user', text: 'hello', timestamp: '2024-06-15T10:30:00Z' }],
+      page: 1,
+      totalPages: 1,
+      sessionId: 'sess12345678',
+    };
+
+    const output = formatHistoryPage(page);
+
+    // 根据时区不同，具体值可能有变化，但应包含 MM-DD HH:mm 格式
+    expect(output).toMatch(/\[\d{2}-\d{2} \d{2}:\d{2}\]/);
+  });
+
+  it('无时间戳时不报错', () => {
+    const page: HistoryPage = {
+      entries: [{ role: 'user', text: 'hello' }],
+      page: 1,
+      totalPages: 1,
+      sessionId: 'sess12345678',
+    };
+
+    const output = formatHistoryPage(page);
+
+    expect(output).toContain('hello');
+  });
+
+  it('第一页时只显示下一页提示', () => {
+    const page: HistoryPage = {
+      entries: [{ role: 'user', text: 'msg', timestamp: '2024-06-15T10:30:00Z' }],
       page: 1,
       totalPages: 3,
       sessionId: 'sess12345678',
@@ -358,11 +400,28 @@ describe('formatHistoryPage', () => {
 
     expect(output).toContain('/history 2');
     expect(output).toContain('下一页');
+    expect(output).not.toContain('上一页');
   });
 
-  it('最后一页不显示翻页提示', () => {
+  it('中间页同时显示上一页和下一页提示', () => {
     const page: HistoryPage = {
-      entries: [{ role: 'user', text: 'msg' }],
+      entries: [{ role: 'user', text: 'msg', timestamp: '2024-06-15T10:30:00Z' }],
+      page: 2,
+      totalPages: 3,
+      sessionId: 'sess12345678',
+    };
+
+    const output = formatHistoryPage(page);
+
+    expect(output).toContain('/history 1');
+    expect(output).toContain('上一页');
+    expect(output).toContain('/history 3');
+    expect(output).toContain('下一页');
+  });
+
+  it('最后一页只显示上一页提示', () => {
+    const page: HistoryPage = {
+      entries: [{ role: 'user', text: 'msg', timestamp: '2024-06-15T10:30:00Z' }],
       page: 3,
       totalPages: 3,
       sessionId: 'sess12345678',
@@ -370,13 +429,14 @@ describe('formatHistoryPage', () => {
 
     const output = formatHistoryPage(page);
 
-    expect(output).not.toContain('/history');
+    expect(output).toContain('/history 2');
+    expect(output).toContain('上一页');
     expect(output).not.toContain('下一页');
   });
 
   it('单页不显示翻页提示', () => {
     const page: HistoryPage = {
-      entries: [{ role: 'user', text: 'msg' }],
+      entries: [{ role: 'user', text: 'msg', timestamp: '2024-06-15T10:30:00Z' }],
       page: 1,
       totalPages: 1,
       sessionId: 'sess12345678',
@@ -385,5 +445,149 @@ describe('formatHistoryPage', () => {
     const output = formatHistoryPage(page);
 
     expect(output).not.toContain('下一页');
+    expect(output).not.toContain('上一页');
+  });
+});
+
+describe('getSessionList', () => {
+  const workDir = '/home/user/project';
+  const projectDir = '/mock-home/.claude/projects/-home-user-project';
+
+  it('按时间倒序返回会话列表', async () => {
+    mockReaddir.mockResolvedValue(['old.jsonl', 'new.jsonl'] as any);
+    mockStat.mockImplementation(((p: string) => {
+      if (String(p).includes('old.jsonl')) return Promise.resolve({ mtimeMs: 1000 });
+      if (String(p).includes('new.jsonl')) return Promise.resolve({ mtimeMs: 2000 });
+      return Promise.resolve({ mtimeMs: 0 });
+    }) as any);
+    mockReadFile.mockResolvedValue(userLine('hello'));
+
+    const result = await getSessionList(workDir);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toHaveLength(2);
+    expect(result.data[0].sessionId).toBe('new');
+    expect(result.data[1].sessionId).toBe('old');
+    expect(result.data[0].mtime).toBe(2000);
+    expect(result.data[1].mtime).toBe(1000);
+  });
+
+  it('最多返回 10 条', async () => {
+    const files = Array.from({ length: 15 }, (_, i) => `session-${i}.jsonl`);
+    mockReaddir.mockResolvedValue(files as any);
+    mockStat.mockImplementation(((p: string) => {
+      const match = String(p).match(/session-(\d+)\.jsonl/);
+      const idx = match ? Number(match[1]) : 0;
+      return Promise.resolve({ mtimeMs: idx * 1000 });
+    }) as any);
+    mockReadFile.mockResolvedValue(userLine('hello'));
+
+    const result = await getSessionList(workDir);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toHaveLength(10);
+    // 最新的在前面
+    expect(result.data[0].sessionId).toBe('session-14');
+  });
+
+  it('正确标记当前会话', async () => {
+    mockReaddir.mockResolvedValue(['aaa.jsonl', 'bbb.jsonl'] as any);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 } as any);
+    mockReadFile.mockResolvedValue(userLine('hello'));
+
+    const result = await getSessionList(workDir, 'bbb');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const current = result.data.find(s => s.sessionId === 'bbb');
+    const other = result.data.find(s => s.sessionId === 'aaa');
+    expect(current?.isCurrent).toBe(true);
+    expect(other?.isCurrent).toBe(false);
+  });
+
+  it('提取首条用户消息预览（超 100 字截断）', async () => {
+    const longMsg = 'a'.repeat(150);
+    const jsonl = [userLine(longMsg), assistantLine('reply')].join('\n');
+    mockReaddir.mockResolvedValue(['sess.jsonl'] as any);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 } as any);
+    mockReadFile.mockResolvedValue(jsonl);
+
+    const result = await getSessionList(workDir);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data[0].preview).toBe('a'.repeat(100) + '...');
+  });
+
+  it('统计消息数量', async () => {
+    const jsonl = [
+      userLine('q1'),
+      assistantLine('a1'),
+      userLine('q2'),
+      assistantLine('a2'),
+      JSON.stringify({ type: 'system', message: { role: 'system', content: 'init' } }),
+    ].join('\n');
+    mockReaddir.mockResolvedValue(['sess.jsonl'] as any);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 } as any);
+    mockReadFile.mockResolvedValue(jsonl);
+
+    const result = await getSessionList(workDir);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data[0].messageCount).toBe(4);
+  });
+
+  it('目录不存在时返回错误', async () => {
+    mockReaddir.mockRejectedValue(new Error('ENOENT'));
+
+    const result = await getSessionList(workDir);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe('当前工作区未找到会话记录。');
+  });
+});
+
+describe('formatSessionList', () => {
+  it('正确格式化会话列表', () => {
+    const items: SessionListItem[] = [
+      {
+        sessionId: 'session-abc',
+        mtime: new Date('2024-06-15T10:30:00Z').getTime(),
+        messageCount: 5,
+        preview: '你好，请帮我写一段代码',
+        isCurrent: true,
+      },
+      {
+        sessionId: 'session-def',
+        mtime: new Date('2024-06-14T08:00:00Z').getTime(),
+        messageCount: 12,
+        preview: '分析一下这个 bug',
+        isCurrent: false,
+      },
+    ];
+
+    const output = formatSessionList(items);
+
+    // 标题
+    expect(output).toContain('📋 会话列表');
+    // 编号
+    expect(output).toContain('1.');
+    expect(output).toContain('2.');
+    // 消息数
+    expect(output).toContain('5条');
+    expect(output).toContain('12条');
+    // 预览内容
+    expect(output).toContain('你好，请帮我写一段代码');
+    expect(output).toContain('分析一下这个 bug');
+    // 当前会话标记
+    expect(output).toContain('▶ 当前会话');
+    // 使用提示
+    expect(output).toContain('使用 /resume <序号> 恢复会话');
+    // 日期格式 MM-DD HH:mm
+    expect(output).toMatch(/\d{2}-\d{2} \d{2}:\d{2}/);
   });
 });

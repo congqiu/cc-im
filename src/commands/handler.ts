@@ -9,7 +9,7 @@ import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { ThreadContext, CostRecord, MessageSender } from '../shared/types.js';
-import { getHistory, formatHistoryPage } from '../shared/history.js';
+import { getHistory, formatHistoryPage, getSessionList, formatSessionList } from '../shared/history.js';
 
 export type { ThreadContext, CostRecord, MessageSender };
 
@@ -88,6 +88,9 @@ export class CommandHandler {
     if (trimmed === '/history' || trimmed.startsWith('/history ')) {
       return this.handleHistory(chatId, userId, trimmed.slice(8).trim(), threadCtx);
     }
+    if (trimmed === '/resume' || trimmed.startsWith('/resume ')) {
+      return this.handleResume(chatId, userId, trimmed.slice(7).trim(), threadCtx);
+    }
 
     // 仅终端可用的命令
     const cmdName = trimmed.split(/\s+/)[0];
@@ -124,7 +127,8 @@ export class CommandHandler {
       '/cd <路径>      - 切换工作目录',
       '/pwd            - 查看当前工作目录',
       '/list           - 列出所有工作区',
-      '/history [页码]  - 浏览会话历史记录',
+      '/history [页码]  - 查看当前会话聊天记录',
+      '/resume [序号]   - 浏览/恢复历史会话',
       threadsCmd,
       stopCmd,
       '/allow (/y)     - 允许权限请求（按钮不可用时的备选）',
@@ -405,7 +409,7 @@ export class CommandHandler {
    * 处理 /history 命令 - 浏览会话历史
    */
   async handleHistory(chatId: string, userId: string, args: string, threadCtx?: ThreadContext): Promise<boolean> {
-    const page = parseInt(args, 10) || 1;
+    const page = args ? (parseInt(args, 10) || 1) : 0;
     const workDir = threadCtx
       ? this.deps.sessionManager.getWorkDirForThread(userId, threadCtx.threadId)
       : this.deps.sessionManager.getWorkDir(userId);
@@ -419,6 +423,45 @@ export class CommandHandler {
     } else {
       await this.deps.sender.sendTextReply(chatId, formatHistoryPage(result.data), threadCtx);
     }
+    return true;
+  }
+
+  /**
+   * 处理 /resume 命令 - 浏览/恢复历史会话
+   */
+  async handleResume(chatId: string, userId: string, args: string, threadCtx?: ThreadContext): Promise<boolean> {
+    const workDir = threadCtx
+      ? this.deps.sessionManager.getWorkDirForThread(userId, threadCtx.threadId)
+      : this.deps.sessionManager.getWorkDir(userId);
+    const currentSessionId = threadCtx
+      ? this.deps.sessionManager.getSessionIdForThread(userId, threadCtx.threadId)
+      : this.deps.sessionManager.getSessionIdForConv(userId, this.deps.sessionManager.getConvId(userId));
+
+    const listResult = await getSessionList(workDir, currentSessionId);
+    if (!listResult.ok) {
+      await this.deps.sender.sendTextReply(chatId, listResult.error, threadCtx);
+      return true;
+    }
+
+    if (!args) {
+      await this.deps.sender.sendTextReply(chatId, formatSessionList(listResult.data), threadCtx);
+      return true;
+    }
+
+    const index = parseInt(args, 10) - 1;
+    if (isNaN(index) || index < 0 || index >= listResult.data.length) {
+      await this.deps.sender.sendTextReply(chatId, `无效的序号 ${args}，共 ${listResult.data.length} 个会话。`, threadCtx);
+      return true;
+    }
+
+    const target = listResult.data[index];
+    if (target.isCurrent) {
+      await this.deps.sender.sendTextReply(chatId, '该会话已是当前会话。', threadCtx);
+      return true;
+    }
+
+    this.deps.sessionManager.resumeSession(userId, target.sessionId);
+    await this.deps.sender.sendTextReply(chatId, `已恢复会话: ${target.preview}\n后续消息将延续该会话上下文。`, threadCtx);
     return true;
   }
 

@@ -19,7 +19,7 @@ vi.mock('../../../src/hook/permission-server.js', () => ({
 vi.mock('../../../src/constants.js', () => ({
   APP_HOME: '/tmp/cc-im-test',
   TERMINAL_ONLY_COMMANDS: new Set([
-    '/context', '/rewind', '/resume', '/copy', '/export',
+    '/context', '/rewind', '/copy', '/export',
     '/config', '/init', '/memory', '/permissions', '/theme',
     '/vim', '/statusline', '/terminal-setup', '/debug',
     '/tasks', '/mcp', '/teleport', '/add-dir',
@@ -43,6 +43,8 @@ vi.mock('node:child_process', () => ({
 vi.mock('../../../src/shared/history.js', () => ({
   getHistory: vi.fn(),
   formatHistoryPage: vi.fn(() => 'formatted history'),
+  getSessionList: vi.fn(),
+  formatSessionList: vi.fn(() => 'mock session list'),
 }));
 
 // Import after mocks
@@ -54,7 +56,7 @@ import { resolveLatestPermission, getPendingCount } from '../../../src/hook/perm
 import { readFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
-import { getHistory } from '../../../src/shared/history.js';
+import { getHistory, getSessionList, formatSessionList } from '../../../src/shared/history.js';
 
 // ─── Helper factories ───
 
@@ -97,6 +99,7 @@ function createMockSessionManager() {
     listThreads: vi.fn(() => []),
     getThreadSession: vi.fn(),
     setThreadSession: vi.fn(),
+    resumeSession: vi.fn(() => true),
     addTurns: vi.fn(),
     addTurnsForThread: vi.fn(),
   };
@@ -940,10 +943,104 @@ describe('CommandHandler', () => {
       expect(getHistory).toHaveBeenCalledWith('/work', 'session-abc', 3);
     });
 
-    it('should default to page 1 when no arg', async () => {
+    it('should default to page 0 (last page) when no arg', async () => {
       vi.mocked(getHistory).mockResolvedValue({ ok: false, error: 'no' });
       await handler.dispatch('/history', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
-      expect(getHistory).toHaveBeenCalledWith('/work', 'session-abc', 1);
+      expect(getHistory).toHaveBeenCalledWith('/work', 'session-abc', 0);
+    });
+  });
+
+  // ─── /resume ───
+
+  describe('handleResume', () => {
+    it('should route /resume in dispatch', async () => {
+      vi.mocked(getSessionList).mockResolvedValue({
+        ok: true,
+        data: [],
+      });
+      // getSessionList returns empty but ok, formatSessionList will be called
+      const result = await handler.dispatch('/resume', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      expect(result).toBe(true);
+    });
+
+    it('should show session list when no args', async () => {
+      vi.mocked(getSessionList).mockResolvedValue({
+        ok: true,
+        data: [
+          { sessionId: 'abc', mtime: Date.now(), messageCount: 5, preview: 'hello', isCurrent: true },
+        ],
+      });
+      vi.mocked(formatSessionList).mockReturnValue('mock session list');
+      await handler.dispatch('/resume', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
+        CHAT_ID,
+        'mock session list',
+        undefined,
+      );
+    });
+
+    it('should resume session by index', async () => {
+      vi.mocked(getSessionList).mockResolvedValue({
+        ok: true,
+        data: [
+          { sessionId: 'newest', mtime: 3000, messageCount: 5, preview: 'msg3', isCurrent: false },
+          { sessionId: 'middle', mtime: 2000, messageCount: 3, preview: 'msg2', isCurrent: true },
+          { sessionId: 'oldest', mtime: 1000, messageCount: 1, preview: 'msg1', isCurrent: false },
+        ],
+      });
+      await handler.dispatch('/resume 1', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      expect(deps.sessionManager.resumeSession).toHaveBeenCalledWith(USER_ID, 'newest');
+      expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
+        CHAT_ID,
+        expect.stringContaining('已恢复'),
+        undefined,
+      );
+    });
+
+    it('should reject out-of-range index', async () => {
+      vi.mocked(getSessionList).mockResolvedValue({
+        ok: true,
+        data: [
+          { sessionId: 'only', mtime: 1000, messageCount: 1, preview: 'msg', isCurrent: true },
+        ],
+      });
+      await handler.dispatch('/resume 99', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
+        CHAT_ID,
+        expect.stringContaining('无效的序号'),
+        undefined,
+      );
+    });
+
+    it('should reject index 0', async () => {
+      vi.mocked(getSessionList).mockResolvedValue({
+        ok: true,
+        data: [
+          { sessionId: 'only', mtime: 1000, messageCount: 1, preview: 'msg', isCurrent: true },
+        ],
+      });
+      await handler.dispatch('/resume 0', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
+        CHAT_ID,
+        expect.stringContaining('无效的序号'),
+        undefined,
+      );
+    });
+
+    it('should warn when resuming current session', async () => {
+      vi.mocked(getSessionList).mockResolvedValue({
+        ok: true,
+        data: [
+          { sessionId: 'current-sess', mtime: 1000, messageCount: 5, preview: 'msg', isCurrent: true },
+        ],
+      });
+      await handler.dispatch('/resume 1', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
+        CHAT_ID,
+        expect.stringContaining('当前会话'),
+        undefined,
+      );
+      expect(deps.sessionManager.resumeSession).not.toHaveBeenCalled();
     });
   });
 });

@@ -173,6 +173,22 @@ export class SessionManager {
     return false;
   }
 
+  resumeSession(userId: string, sessionId: string): boolean {
+    const session = this.sessions.get(userId);
+    if (!session) return false;
+    // 转存旧 convId 的 sessionId，供仍在运行的旧任务使用
+    if (session.activeConvId && session.sessionId) {
+      this.convSessionMap.set(`${userId}:${session.activeConvId}`, session.sessionId);
+      this.pruneConvSessionMap();
+    }
+    session.sessionId = sessionId;
+    session.activeConvId = this.generateConvId();
+    session.totalTurns = 0;
+    this.flushSync();
+    log.info(`Resumed session for user ${userId}: ${sessionId}`);
+    return true;
+  }
+
   addTurns(userId: string, turns: number): number {
     const session = this.sessions.get(userId);
     if (!session) return 0;
