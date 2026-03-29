@@ -62,12 +62,10 @@ export async function main() {
   }
   log.info(`Allowed base dirs: ${config.allowedBaseDirs.length} dirs configured`);
 
-  let permissionServer: { port: number; close: () => Promise<void> } | null = null;
-  if (!config.claudeSkipPermissions) {
-    ensureHookConfigured();
-    permissionServer = await startPermissionServer(config.hookPort);
-    log.info(`Permission hook server started on port ${permissionServer.port}`);
-  }
+  // Hook 注册和 HTTP 服务器始终启动（watch 功能不依赖权限设置）
+  ensureHookConfigured();
+  const permissionServer = await startPermissionServer(config.hookPort);
+  log.info(`Hook server started on port ${permissionServer.port}${config.claudeSkipPermissions ? ' (permissions skipped, watch-only)' : ''}`);
 
   // 创建共享的 SessionManager 单例
   const sessionManager = new SessionManager(config.claudeWorkDir, config.allowedBaseDirs);
@@ -202,7 +200,7 @@ export async function main() {
     if (config.enabledPlatforms.includes('wecom')) {
       stopWecom();
     }
-    permissionServer?.close();
+    permissionServer.close();
 
     // 持久化会话和活跃聊天数据
     sessionManager.destroy();

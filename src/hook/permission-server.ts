@@ -2,6 +2,10 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { createLogger } from '../logger.js';
 import { PERMISSION_REQUEST_TIMEOUT_MS, MAX_BODY_SIZE } from '../constants.js';
 import type { ThreadContext } from '../shared/types.js';
+import {
+  getWatchEntries, formatWatchNotify,
+  type WatchEventName,
+} from './watch.js';
 
 export type { ThreadContext };
 
@@ -16,6 +20,16 @@ const senders = new Map<string, PermissionSender>();
 
 export function registerPermissionSender(platform: string, s: PermissionSender) {
   senders.set(platform, s);
+}
+
+export interface WatchNotifySender {
+  sendWatchNotify(chatId: string, text: string, threadCtx?: ThreadContext): Promise<void>;
+}
+
+const watchSenders = new Map<string, WatchNotifySender>();
+
+export function registerWatchSender(platform: string, s: WatchNotifySender) {
+  watchSenders.set(platform, s);
 }
 
 export interface PendingRequest {
@@ -235,6 +249,43 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
       sendJson(res, 200, { id, decision });
     } catch (err) {
       log.error('Error handling permission request:', err);
+      sendJson(res, 500, { error: 'Internal error' });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/watch-notify') {
+    try {
+      const body = JSON.parse(await readBody(req));
+      const { cwd, eventName, sessionId } = body;
+      if (!cwd || !eventName) {
+        sendJson(res, 400, { error: 'cwd and eventName required' });
+        return;
+      }
+      const validEvents: WatchEventName[] = ['PostToolUse', 'Stop', 'SubagentStart', 'SubagentStop'];
+      if (!validEvents.includes(eventName)) {
+        sendJson(res, 200, { sent: 0 });
+        return;
+      }
+      const entries = getWatchEntries(cwd, eventName as WatchEventName, sessionId);
+      if (entries.length === 0) {
+        sendJson(res, 200, { sent: 0 });
+        return;
+      }
+      const message = formatWatchNotify(body);
+      let sent = 0;
+      for (const entry of entries) {
+        const sender = watchSenders.get(entry.platform);
+        if (sender) {
+          sender.sendWatchNotify(entry.chatId, message, entry.threadCtx).catch((err) => {
+            log.warn(`Failed to send watch notify to ${entry.chatId}:`, err);
+          });
+          sent++;
+        }
+      }
+      sendJson(res, 200, { sent });
+    } catch (err) {
+      log.error('Error handling watch notify:', err);
       sendJson(res, 500, { error: 'Internal error' });
     }
     return;

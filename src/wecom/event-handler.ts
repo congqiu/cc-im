@@ -2,13 +2,13 @@ import { join } from 'node:path';
 import { mkdir, writeFile } from 'node:fs/promises';
 import type { WSClient } from './client.js';
 import type { WecomEventHandlerHandle } from './client.js';
-import { createWecomSender, type WecomSender, type WsFrame } from './message-sender.js';
+import { createWecomSender, sendTextReply as wecomSendText, type WecomSender, type WsFrame } from './message-sender.js';
 import type { Config } from '../config.js';
 import type { SessionManager } from '../session/session-manager.js';
 import { AccessControl } from '../access/access-control.js';
 import { RequestQueue } from '../queue/request-queue.js';
 import { CommandHandler, type CostRecord } from '../commands/handler.js';
-import { registerPermissionSender, resolvePermissionById } from '../hook/permission-server.js';
+import { registerPermissionSender, registerWatchSender, resolvePermissionById } from '../hook/permission-server.js';
 import { runClaudeTask, type TaskRunState } from '../shared/claude-task.js';
 import { startTaskCleanup } from '../shared/task-cleanup.js';
 import { MessageDedup } from '../shared/message-dedup.js';
@@ -91,6 +91,11 @@ export function setupWecomHandlers(
     sendPermissionCard: (chatId, requestId, toolName, toolInput) =>
       sender.sendPermissionCard(chatId, requestId, toolName, toolInput),
     updatePermissionCard: (params) => sender.updatePermissionCard(params),
+  });
+
+  // 注册 watch 通知发送器
+  registerWatchSender('wecom', {
+    sendWatchNotify: (chatId, text) => wecomSendText(chatId, text),
   });
 
   /**

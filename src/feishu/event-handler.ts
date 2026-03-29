@@ -8,6 +8,7 @@ import { RequestQueue } from '../queue/request-queue.js';
 import { sendTextReply, fetchThreadDescription, type ThreadContext } from './message-sender.js';
 import { getClient, getBotOpenId } from './client.js';
 import { registerFeishuPermissionSender, handlePermissionAction } from './permission-handler.js';
+import { registerWatchSender } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord } from '../commands/handler.js';
 import { safeStringify } from '../shared/utils.js';
 import { startTaskCleanup } from '../shared/task-cleanup.js';
@@ -121,6 +122,11 @@ export function createEventDispatcher(config: Config, sessionManager: SessionMan
 
   // Register feishu permission sender
   registerFeishuPermissionSender();
+
+  // Register feishu watch sender
+  registerWatchSender('feishu', {
+    sendWatchNotify: (chatId, text, threadCtx) => sendTextReply(chatId, text, threadCtx),
+  });
 
   // ─── 内部函数（闭包访问 runningTasks 等） ───
 

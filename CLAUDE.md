@@ -189,6 +189,7 @@ claude -p \
 **命令分类**：
 - 会话管理：`/new`、`/compact`、`/resume`
 - 工作目录：`/cd`、`/pwd`、`/list`
+- 监控：`/watch`（终端 Claude Code 实时状态推送）
 - 状态查询：`/status`、`/cost`、`/doctor`、`/history`
 - 权限管理：`/allow`、`/deny`（按钮不可用时的 fallback）
 - 模型切换：`/model`（按用户/话题粒度，存储在 SessionManager 中，不修改全局配置）

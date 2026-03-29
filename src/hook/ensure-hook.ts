@@ -8,6 +8,7 @@ const log = createLogger('Hook');
 
 const CLAUDE_SETTINGS_PATH = join(homedir(), '.claude', 'settings.json');
 const HOOK_MATCHER = 'Bash|Write|Edit';
+const WATCH_EVENTS = ['PostToolUse', 'Stop', 'SubagentStart', 'SubagentStop'];
 
 type HookEntry = { matcher?: string; hooks?: Array<{ type?: string; command?: string }> };
 
@@ -20,6 +21,15 @@ function getHookScriptPath(): string {
   // thisFile = <project>/(dist|src)/hook/ensure-hook.(js|ts)
   const projectRoot = dirname(dirname(dirname(thisFile)));
   return join(projectRoot, 'dist', 'hook', 'hook-script.js');
+}
+
+/**
+ * 获取 watch-script.js 的绝对路径。
+ */
+function getWatchScriptPath(): string {
+  const thisFile = fileURLToPath(import.meta.url);
+  const projectRoot = dirname(dirname(dirname(thisFile)));
+  return join(projectRoot, 'dist', 'hook', 'watch-script.js');
 }
 
 /** 判断一个 hook command 是否指向本项目的 hook-script.js */
@@ -85,6 +95,26 @@ export function ensureHookConfigured(): boolean {
   }
 
   hooks.PreToolUse = preToolUse;
+
+  // Watch hook 注册（PostToolUse, Stop, SubagentStart, SubagentStop）
+  const watchScriptPath = getWatchScriptPath();
+  if (existsSync(watchScriptPath)) {
+    for (const eventName of WATCH_EVENTS) {
+      const eventHooks = (hooks[eventName] ?? []) as HookEntry[];
+      const hasOurHook = eventHooks.some(entry =>
+        entry.hooks?.some(h => isOurHook(h.command, watchScriptPath))
+      );
+      if (!hasOurHook) {
+        eventHooks.push({
+          matcher: '',
+          hooks: [{ type: 'command', command: watchScriptPath }],
+        });
+        hooks[eventName] = eventHooks;
+        needsWrite = true;
+      }
+    }
+  }
+
   settings.hooks = hooks;
 
   try {

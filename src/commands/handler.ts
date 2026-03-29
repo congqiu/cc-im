@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { ThreadContext, CostRecord, MessageSender } from '../shared/types.js';
 import { getHistory, formatHistoryPage, getSessionList, formatSessionList } from '../shared/history.js';
+import { registerWatch, unregisterWatch, getWatchStatus, muteSession, unmuteSession, type WatchLevel } from '../hook/watch.js';
 
 export type { ThreadContext, CostRecord, MessageSender };
 
@@ -91,6 +92,9 @@ export class CommandHandler {
     if (trimmed === '/resume' || trimmed.startsWith('/resume ')) {
       return this.handleResume(chatId, userId, trimmed.slice(7).trim(), threadCtx);
     }
+    if (trimmed === '/watch' || trimmed.startsWith('/watch ')) {
+      return this.handleWatch(chatId, userId, trimmed.slice(6).trim(), platform, threadCtx);
+    }
 
     // 仅终端可用的命令
     const cmdName = trimmed.split(/\s+/)[0];
@@ -129,6 +133,7 @@ export class CommandHandler {
       '/list           - 列出所有工作区',
       '/history [页码]  - 查看当前会话聊天记录',
       '/resume [序号]   - 浏览/恢复历史会话',
+      '/watch [级别]   - 监控终端 Claude Code 状态',
       threadsCmd,
       stopCmd,
       '/allow (/y)     - 允许权限请求（按钮不可用时的备选）',
@@ -223,7 +228,7 @@ export class CommandHandler {
       const current = threadCtx
         ? this.deps.sessionManager.getWorkDirForThread(userId, threadCtx.threadId)
         : this.deps.sessionManager.getWorkDir(userId);
-      const lines = dirs.map((d, i) => (d === current ? `▶ ${i + 1}. ${d}` : `  ${i + 1}. ${d}`));
+      const lines = dirs.map((d, i) => (d === current ? `${i + 1}. ▶ ${d}` : `${i + 1}. ${d}`));
       await this.deps.sender.sendTextReply(chatId, `Claude Code 工作区列表:\n${lines.join('\n')}\n\n使用 /cd <序号> 或 /cd <路径> 切换`, threadCtx);
     }
     return true;
@@ -462,6 +467,73 @@ export class CommandHandler {
 
     this.deps.sessionManager.resumeSession(userId, target.sessionId);
     await this.deps.sender.sendTextReply(chatId, `已恢复会话: ${target.preview}\n后续消息将延续该会话上下文。`, threadCtx);
+    return true;
+  }
+
+  /**
+   * 处理 /watch 命令 - 监控终端 Claude Code 状态
+   */
+  async handleWatch(chatId: string, userId: string, args: string, platform: Platform, threadCtx?: ThreadContext): Promise<boolean> {
+    const workDir = threadCtx
+      ? this.deps.sessionManager.getWorkDirForThread(userId, threadCtx.threadId)
+      : this.deps.sessionManager.getWorkDir(userId);
+    const threadId = threadCtx?.threadId;
+
+    if (!args) {
+      const status = getWatchStatus(chatId, threadId);
+      if (status) {
+        const mutedList = status.mutedSessions?.size
+          ? `\n屏蔽: ${[...status.mutedSessions].map(s => `[${s}]`).join(' ')}`
+          : '';
+        await this.deps.sender.sendTextReply(chatId, `📡 监控中 [${status.level}]\n工作区: ${status.workDir}${mutedList}`, threadCtx);
+      } else {
+        await this.deps.sender.sendTextReply(chatId, '📡 未开启监控\n\n使用 /watch <级别> 开启：\n  stop - 仅完成事件\n  tool - 工具调用 + 完成\n  full - 全量（含子代理）', threadCtx);
+      }
+      return true;
+    }
+
+    if (args === 'off') {
+      unregisterWatch(workDir, chatId, threadId);
+      await this.deps.sender.sendTextReply(chatId, '📡 已关闭监控', threadCtx);
+      return true;
+    }
+
+    if (args.startsWith('mute ')) {
+      const sid = args.slice(5).trim();
+      if (!sid) {
+        await this.deps.sender.sendTextReply(chatId, '请指定要屏蔽的会话 ID 后 4 位，如: /watch mute a1b2', threadCtx);
+        return true;
+      }
+      if (muteSession(workDir, chatId, sid, threadId)) {
+        await this.deps.sender.sendTextReply(chatId, `📡 已屏蔽会话 [${sid}]`, threadCtx);
+      } else {
+        await this.deps.sender.sendTextReply(chatId, '未找到活跃的监控，请先 /watch <级别> 开启。', threadCtx);
+      }
+      return true;
+    }
+
+    if (args.startsWith('unmute ')) {
+      const sid = args.slice(7).trim();
+      if (!sid) {
+        await this.deps.sender.sendTextReply(chatId, '请指定要取消屏蔽的会话 ID，如: /watch unmute a1b2', threadCtx);
+        return true;
+      }
+      if (unmuteSession(workDir, chatId, sid, threadId)) {
+        await this.deps.sender.sendTextReply(chatId, `📡 已取消屏蔽会话 [${sid}]`, threadCtx);
+      } else {
+        await this.deps.sender.sendTextReply(chatId, '未找到该屏蔽记录。', threadCtx);
+      }
+      return true;
+    }
+
+    const validLevels: WatchLevel[] = ['stop', 'tool', 'full'];
+    if (!validLevels.includes(args as WatchLevel)) {
+      await this.deps.sender.sendTextReply(chatId, `无效的监控级别: ${args}\n可选: stop / tool / full / off / mute <id> / unmute <id>`, threadCtx);
+      return true;
+    }
+
+    registerWatch(workDir, { chatId, platform, threadCtx, level: args as WatchLevel });
+    await this.deps.sender.sendTextReply(chatId, `📡 已开启监控 [${args}]\n工作区: ${workDir}\n\n在此工作区启动的终端 Claude Code 的事件将推送到此处。\n使用 /watch off 关闭`, threadCtx);
     return true;
   }
 

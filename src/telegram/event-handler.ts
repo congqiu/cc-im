@@ -7,7 +7,7 @@ import { AccessControl } from '../access/access-control.js';
 import type { SessionManager } from '../session/session-manager.js';
 import { RequestQueue } from '../queue/request-queue.js';
 import { sendThinkingMessage, updateMessage, sendFinalMessages, sendTextReply, sendPermissionMessage, updatePermissionMessage, startTypingLoop, sendImageReply } from './message-sender.js';
-import { registerPermissionSender, resolvePermissionById } from '../hook/permission-server.js';
+import { registerPermissionSender, registerWatchSender, resolvePermissionById } from '../hook/permission-server.js';
 import { CommandHandler, type CostRecord } from '../commands/handler.js';
 import type { ThreadContext } from '../shared/types.js';
 import { getBotUsername } from './client.js';
@@ -61,6 +61,11 @@ export function setupTelegramHandlers(bot: Telegraf, config: Config, sessionMana
     sendPermissionCard: sendPermissionMessage,
     updatePermissionCard: ({ messageId, chatId, toolName, decision }) =>
       updatePermissionMessage(chatId, messageId, toolName, decision),
+  });
+
+  // Register telegram watch sender
+  registerWatchSender('telegram', {
+    sendWatchNotify: (chatId, text) => sendTextReply(chatId, text),
   });
 
   async function handleClaudeRequest(

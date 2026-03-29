@@ -57,6 +57,7 @@ import { readFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { getHistory, getSessionList, formatSessionList } from '../../../src/shared/history.js';
+import { clearAllWatches } from '../../../src/hook/watch.js';
 
 // ─── Helper factories ───
 
@@ -143,6 +144,7 @@ describe('CommandHandler', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    clearAllWatches();
     // Restore execFile default mock (may have been overridden by individual tests)
     vi.mocked(execFile as any).mockImplementation((_p: any, _a: any, _o: any, cb: any) => {
       cb(null, 'v1.0.0', '');
@@ -235,6 +237,16 @@ describe('CommandHandler', () => {
     it('should route /history with page number', async () => {
       vi.mocked(getHistory).mockResolvedValue({ ok: false, error: 'no history' });
       const result = await handler.dispatch('/history 2', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      expect(result).toBe(true);
+    });
+
+    it('should route /watch to handleWatch and return true', async () => {
+      const result = await handler.dispatch('/watch', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      expect(result).toBe(true);
+    });
+
+    it('should route /watch with args', async () => {
+      const result = await handler.dispatch('/watch tool', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
       expect(result).toBe(true);
     });
 
@@ -361,6 +373,7 @@ describe('CommandHandler', () => {
       expect(text).toContain('/status');
       expect(text).toContain('/compact');
       expect(text).toContain('/history');
+      expect(text).toContain('/watch');
       expect(text).toContain('/allow');
       expect(text).toContain('/deny');
     });
@@ -869,7 +882,7 @@ describe('CommandHandler', () => {
       await handler.dispatch('/list', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
       const text = vi.mocked(deps.sender.sendTextReply).mock.calls[0][1];
       // Current dir '/work' should be marked
-      expect(text).toMatch(/▶\s+\d+\.\s+\/work/);
+      expect(text).toMatch(/\d+\.\s+▶\s+\/work/);
     });
 
     it('should handle readFileSync error gracefully', async () => {
@@ -1041,6 +1054,71 @@ describe('CommandHandler', () => {
         undefined,
       );
       expect(deps.sessionManager.resumeSession).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── /watch ───
+
+  describe('handleWatch', () => {
+    it('should show "未开启" when no watch active and no args', async () => {
+      await handler.dispatch('/watch', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
+        CHAT_ID,
+        expect.stringContaining('未开启监控'),
+        undefined,
+      );
+    });
+
+    it('should register watch with /watch tool', async () => {
+      await handler.dispatch('/watch tool', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
+        CHAT_ID,
+        expect.stringContaining('已开启监控 [tool]'),
+        undefined,
+      );
+    });
+
+    it('should show current status after registering', async () => {
+      await handler.dispatch('/watch stop', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      vi.mocked(deps.sender.sendTextReply).mockClear();
+      await handler.dispatch('/watch', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
+        CHAT_ID,
+        expect.stringContaining('监控中 [stop]'),
+        undefined,
+      );
+    });
+
+    it('should unregister watch with /watch off', async () => {
+      // Register first
+      await handler.dispatch('/watch full', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      vi.mocked(deps.sender.sendTextReply).mockClear();
+
+      // Unregister
+      await handler.dispatch('/watch off', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
+        CHAT_ID,
+        expect.stringContaining('已关闭监控'),
+        undefined,
+      );
+
+      // Verify it's gone
+      vi.mocked(deps.sender.sendTextReply).mockClear();
+      await handler.dispatch('/watch', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
+        CHAT_ID,
+        expect.stringContaining('未开启监控'),
+        undefined,
+      );
+    });
+
+    it('should show error for invalid level', async () => {
+      await handler.dispatch('/watch invalid', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
+        CHAT_ID,
+        expect.stringContaining('无效的监控级别'),
+        undefined,
+      );
     });
   });
 });

@@ -109,4 +109,66 @@ describe('ensureHookConfigured', () => {
     expect(result).toBe(true);
     expect(writeFileSync).toHaveBeenCalledOnce();
   });
+
+  it('should register watch hook events when watch-script.js exists', async () => {
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ model: 'opus' }));
+    vi.mocked(writeFileSync).mockImplementation(() => {});
+    vi.mocked(existsSync).mockReturnValue(true);
+
+    const { ensureHookConfigured } = await loadModule();
+    const result = ensureHookConfigured();
+
+    expect(result).toBe(true);
+    expect(writeFileSync).toHaveBeenCalledOnce();
+
+    const written = JSON.parse(vi.mocked(writeFileSync).mock.calls[0][1] as string);
+    const watchEvents = ['PostToolUse', 'Stop', 'SubagentStart', 'SubagentStop'];
+    for (const event of watchEvents) {
+      expect(written.hooks[event]).toHaveLength(1);
+      expect(written.hooks[event][0].hooks[0].command).toMatch(/dist\/hook\/watch-script\.js$/);
+    }
+  });
+
+  it('should skip watch hooks when watch-script.js does not exist', async () => {
+    // hook-script.js 存在，watch-script.js 不存在
+    vi.mocked(existsSync).mockImplementation((p) => {
+      return String(p).includes('watch-script') ? false : true;
+    });
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({}));
+    vi.mocked(writeFileSync).mockImplementation(() => {});
+
+    const { ensureHookConfigured } = await loadModule();
+    const result = ensureHookConfigured();
+
+    expect(result).toBe(true);
+    expect(writeFileSync).toHaveBeenCalledOnce();
+
+    const written = JSON.parse(vi.mocked(writeFileSync).mock.calls[0][1] as string);
+    expect(written.hooks.PreToolUse).toHaveLength(1);
+    // watch 事件不应被注册
+    expect(written.hooks.PostToolUse).toBeUndefined();
+    expect(written.hooks.Stop).toBeUndefined();
+    expect(written.hooks.SubagentStart).toBeUndefined();
+    expect(written.hooks.SubagentStop).toBeUndefined();
+  });
+
+  it('should not duplicate watch hooks when already registered', async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(writeFileSync).mockImplementation(() => {});
+
+    const { ensureHookConfigured } = await loadModule();
+
+    // First call: register everything
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({}));
+    ensureHookConfigured();
+    const firstWrite = JSON.parse(vi.mocked(writeFileSync).mock.calls[0][1] as string);
+
+    // Second call: pass the previously written config back
+    vi.mocked(writeFileSync).mockClear();
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify(firstWrite));
+    const result = ensureHookConfigured();
+
+    expect(result).toBe(true);
+    expect(writeFileSync).not.toHaveBeenCalled();
+  });
 });

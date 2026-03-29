@@ -24,6 +24,7 @@
 - **轮次追踪**：累计对话轮次，上下文过长时自动提醒压缩
 - **生命周期通知**：服务启动/关闭时通知活跃用户（含版本信息和运行时长）
 - **守护进程模式**：支持 `-d` 后台运行和 `stop` 停止
+- **终端监控**：通过 `/watch` 命令实时监控终端 Claude Code 的运行状态（工具调用、完成事件）
 - **版本更新检查**：启动时自动检查 npm 最新版本，有更新时提示
 - **日志等级配置**：支持 DEBUG/INFO/WARN/ERROR 四级日志
 
@@ -141,6 +142,8 @@ cc-im stop
 | `/doctor` | 运行 Claude 诊断 |
 | `/compact [topic]` | 压缩当前对话上下文 |
 | `/history [page]` | 查看当前会话的对话历史 |
+| `/resume [n]` | 浏览/恢复历史会话 |
+| `/watch [level]` | 监控终端 Claude Code（stop/tool/full/off） |
 | `/threads` | 列出所有话题会话（飞书） |
 | `/stop` | 停止当前运行的任务（企业微信） |
 | `/allow` 或 `/y` | 允许权限请求（按钮不可用时的备选） |
@@ -291,8 +294,11 @@ src/
 │   ├── event-handler.ts      # 企业微信事件处理
 │   └── message-sender.ts     # 企业微信消息发送（流式回复、权限卡片）
 ├── hook/
-│   ├── permission-server.ts  # 权限确认 HTTP 服务
-│   └── hook-script.ts        # Claude Code PreToolUse Hook
+│   ├── permission-server.ts  # 权限确认 HTTP 服务 + 监控通知端点
+│   ├── hook-script.ts        # Claude Code PreToolUse Hook
+│   ├── watch-script.ts       # Claude Code 监控 Hook（PostToolUse/Stop 等）
+│   ├── watch.ts              # 监控状态管理与消息格式化
+│   └── ensure-hook.ts        # Hook 自动配置
 ├── shared/
 │   ├── active-chats.ts          # 活跃聊天记录（生命周期通知）
 │   ├── claude-task.ts           # 共享 Claude 任务执行层（节流、统计、竞态保护）

@@ -40,6 +40,7 @@ vi.mock('../../../src/queue/request-queue.js', () => ({
 
 vi.mock('../../../src/hook/permission-server.js', () => ({
   registerPermissionSender: vi.fn(),
+  registerWatchSender: vi.fn(),
   resolvePermissionById: vi.fn(),
 }));
 
@@ -79,6 +80,7 @@ vi.mock('../../../src/wecom/message-sender.js', () => ({
     updatePermissionCard: vi.fn().mockResolvedValue(undefined),
     sendImage: vi.fn().mockResolvedValue(undefined),
   })),
+  sendTextReply: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../../../src/commands/handler.js', () => ({

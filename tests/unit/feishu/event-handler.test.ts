@@ -117,6 +117,7 @@ vi.mock('node:child_process', () => ({
 
 vi.mock('../../../src/hook/permission-server.js', () => ({
   registerPermissionSender: vi.fn(),
+  registerWatchSender: vi.fn(),
 }));
 
 vi.mock('../../../src/shared/active-chats.js', () => ({

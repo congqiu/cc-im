@@ -52,6 +52,7 @@ vi.mock('../../../src/telegram/message-sender.js', () => ({
 
 vi.mock('../../../src/hook/permission-server.js', () => ({
   registerPermissionSender: vi.fn(),
+  registerWatchSender: vi.fn(),
 }));
 
 vi.mock('../../../src/shared/active-chats.js', () => ({

@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### 新功能
+
+- `/watch` 命令：实时监控终端 Claude Code 的运行状态，支持 stop/tool/full 三个级别
+
 ## [1.5.0] - 2026-03-15
 
 ### 新功能
