@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-03-29
+
 ### 新功能
 
 - `/watch` 命令：实时监控终端 Claude Code 的运行状态，支持 stop/tool/full 三个级别
@@ -16,6 +18,14 @@
 
 - 企业微信群聊会话隔离：群聊与单聊共用 workDir/sessionId 导致互相串联，现每个群聊拥有独立的会话上下文
 - 企业微信群聊中命令无法识别的问题：群聊消息包含 `@机器人名` 标记导致 `/list` 等命令匹配失败，新增 `WECOM_BOT_NAME` 可选配置项支持精确匹配
+
+### 其他
+
+- 常量集中化：散落在各模块的常量移入 `constants.ts`
+- 添加 Biome lint 工具并集成到 CI
+- 补充 `executeClaudeTask` 测试覆盖
+- 添加全局 `unhandledRejection`/`uncaughtException` 处理
+- 清理死代码和未使用的 imports
 
 ## [1.5.0] - 2026-03-15
 
