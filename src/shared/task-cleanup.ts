@@ -1,10 +1,8 @@
 import type { TaskRunState } from './claude-task.js';
+import { TASK_TIMEOUT_MS, TASK_CLEANUP_INTERVAL_MS } from '../constants.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('TaskCleanup');
-
-const TASK_TIMEOUT_MS = 30 * 60 * 1000;
-const TASK_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
 
 /**
  * 启动定期任务清理（30分钟超时，每10分钟检查一次）

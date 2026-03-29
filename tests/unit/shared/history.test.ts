@@ -451,7 +451,6 @@ describe('formatHistoryPage', () => {
 
 describe('getSessionList', () => {
   const workDir = '/home/user/project';
-  const projectDir = '/mock-home/.claude/projects/-home-user-project';
 
   it('按时间倒序返回会话列表', async () => {
     mockReaddir.mockResolvedValue(['old.jsonl', 'new.jsonl'] as any);

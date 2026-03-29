@@ -454,7 +454,7 @@ export class CommandHandler {
     }
 
     const index = parseInt(args, 10) - 1;
-    if (isNaN(index) || index < 0 || index >= listResult.data.length) {
+    if (Number.isNaN(index) || index < 0 || index >= listResult.data.length) {
       await this.deps.sender.sendTextReply(chatId, `无效的序号 ${args}，共 ${listResult.data.length} 个会话。`, threadCtx);
       return true;
     }

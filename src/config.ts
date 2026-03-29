@@ -158,7 +158,7 @@ export function loadConfig(): Config {
     // 绝对路径或包含目录分隔符：直接用 accessSync 验证
     try {
       accessSync(claudeCliPath, constants.F_OK | constants.X_OK);
-    } catch (err) {
+    } catch (_err) {
       throw new Error(
         `Claude CLI 不可访问或不可执行: ${claudeCliPath}\n` +
         `请检查：\n` +
@@ -171,7 +171,7 @@ export function loadConfig(): Config {
     // 裸命令名（如 "claude"）：在 PATH 中查找
     try {
       execFileSync('which', [claudeCliPath], { stdio: 'pipe' });
-    } catch (err) {
+    } catch (_err) {
       throw new Error(
         `Claude CLI 在 PATH 中未找到: ${claudeCliPath}\n` +
         `请检查：\n` +

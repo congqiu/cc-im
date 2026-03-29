@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, } from 'vitest';
 
 // Mock @wecom/aibot-node-sdk
 vi.mock('@wecom/aibot-node-sdk', async () => {

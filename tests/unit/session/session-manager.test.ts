@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, } from 'vitest';
 
 // Mock logger
 vi.mock('../../../src/logger.js', () => ({
@@ -31,7 +31,6 @@ import * as fsPromises from 'node:fs/promises';
 const mockReadFileSync = vi.mocked(fs.readFileSync);
 const mockWriteFileSync = vi.mocked(fs.writeFileSync);
 const mockExistsSync = vi.mocked(fs.existsSync);
-const mockMkdirSync = vi.mocked(fs.mkdirSync);
 const mockRealpath = vi.mocked(fsPromises.realpath);
 
 describe('SessionManager', () => {

@@ -2,13 +2,10 @@ import { getBot } from './client.js';
 import { createReadStream } from 'node:fs';
 import { createLogger } from '../logger.js';
 import { splitLongContent, buildInputSummary, truncateText } from '../shared/utils.js';
-import { MAX_TELEGRAM_MESSAGE_LENGTH } from '../constants.js';
+import { MAX_TELEGRAM_MESSAGE_LENGTH, TELEGRAM_MAX_RETRIES, TELEGRAM_RATE_LIMIT_MAX_WAIT_SEC } from '../constants.js';
 import { withRetry } from '../shared/retry.js';
 
 const log = createLogger('TgSender');
-
-const MAX_RETRIES = 3;
-const RATE_LIMIT_MAX_WAIT_SEC = 60; // Cap retry wait time to avoid excessive blocking
 const COOLDOWN_CLEANUP_INTERVAL_MS = 3600000; // Clean up cooldown map every hour
 const TYPING_INTERVAL_MS = 4000; // Telegram typing status expires after ~5s
 
@@ -69,9 +66,9 @@ async function callWithRetry<T>(chatId: string, label: string, fn: () => Promise
   }
 
   return withRetry(fn, {
-    maxRetries: MAX_RETRIES - 1, // withRetry counts retries after first attempt
+    maxRetries: TELEGRAM_MAX_RETRIES - 1, // withRetry counts retries after first attempt
     baseDelayMs: 1000,
-    maxDelayMs: RATE_LIMIT_MAX_WAIT_SEC * 1000,
+    maxDelayMs: TELEGRAM_RATE_LIMIT_MAX_WAIT_SEC * 1000,
     shouldRetry: (err) => {
       const retryAfter = parseRetryAfter(err);
       if (retryAfter !== null) {
@@ -192,7 +189,7 @@ export async function updateMessage(chatId: string, messageId: string, content: 
         if (isStreaming) {
           log.debug(`Rate limited updating message ${messageId}, cooling down for ${retryAfter ?? '?'}s`);
         } else {
-          log.error(`Failed to deliver final message ${messageId} after ${MAX_RETRIES} retries (rate limited)`);
+          log.error(`Failed to deliver final message ${messageId} after ${TELEGRAM_MAX_RETRIES} retries (rate limited)`);
         }
       } else {
         log.error('Failed to update message:', err);

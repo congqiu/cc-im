@@ -161,14 +161,12 @@ vi.mock('../../../src/constants.js', () => ({
 }));
 
 vi.mock('../../../src/commands/handler.js', () => {
-  const { sendTextReply } = vi.importActual('../../../src/feishu/message-sender.js') as any;
-
   return {
     CommandHandler: vi.fn().mockImplementation(function (this: any, deps: any) {
       this.deps = deps;
 
       // Mock handlers that actually call sendTextReply so tests can verify them
-      this.handleHelp = vi.fn(async (chatId: string, platform: string) => {
+      this.handleHelp = vi.fn(async (chatId: string, _platform: string) => {
         await deps.sender.sendTextReply(chatId, '可用命令:\n...');
         return true;
       });
@@ -262,7 +260,6 @@ import { createEventDispatcher, parsePostContent } from '../../../src/feishu/eve
 import * as messageSender from '../../../src/feishu/message-sender.js';
 import * as cardkitManager from '../../../src/feishu/cardkit-manager.js';
 import { executeClaudeTask } from '../../../src/feishu/task-executor.js';
-import { handlePermissionAction } from '../../../src/feishu/permission-handler.js';
 
 describe('Event Handler', () => {
   const mockConfig = {
@@ -298,8 +295,6 @@ describe('Event Handler', () => {
     getModel: vi.fn(),
     removeThreadByRootMessageId: vi.fn(() => false),
   };
-
-  let mockDispatcher: any;
 
   beforeEach(() => {
     vi.clearAllMocks();

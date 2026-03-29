@@ -176,7 +176,6 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
       const platformSender = senders.get(resolvedPlatform);
 
       const id = `perm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      let savedMessageId = '';
 
       const decision = await new Promise<'allow' | 'deny'>((resolve) => {
         if (!platformSender) {
@@ -193,8 +192,6 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
         };
 
         platformSender.sendPermissionCard(chatId, id, toolName, toolInput ?? {}, threadCtx).then((messageId) => {
-          savedMessageId = messageId;
-
           // 超时定时器在卡片发送成功后才启动，确保用户有完整的决策时间
           const timeout = setTimeout(() => {
             if (pendingRequests.has(id)) {

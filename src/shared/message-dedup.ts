@@ -1,6 +1,4 @@
-import { DEDUP_TTL_MS } from '../constants.js';
-
-const MAX_DEDUP_SIZE = 1000;
+import { DEDUP_TTL_MS, MAX_DEDUP_SIZE } from '../constants.js';
 
 /**
  * 消息去重器

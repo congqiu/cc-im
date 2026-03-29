@@ -123,3 +123,33 @@ export const WECOM_STREAM_TIMEOUT_MS = 330_000;
  * 为安全起见，以字符计限制在 4000
  */
 export const MAX_WECOM_MESSAGE_LENGTH = 4000;
+
+/**
+ * 请求队列最大排队数
+ */
+export const MAX_QUEUE_SIZE = 3;
+
+/**
+ * 消息去重最大容量
+ */
+export const MAX_DEDUP_SIZE = 1000;
+
+/**
+ * 任务超时时间（毫秒），超时自动清理
+ */
+export const TASK_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * 任务清理检查间隔（毫秒）
+ */
+export const TASK_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+
+/**
+ * Telegram 消息发送最大重试次数
+ */
+export const TELEGRAM_MAX_RETRIES = 3;
+
+/**
+ * Telegram 限频最大等待秒数
+ */
+export const TELEGRAM_RATE_LIMIT_MAX_WAIT_SEC = 60;

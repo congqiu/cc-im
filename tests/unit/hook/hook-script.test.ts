@@ -15,15 +15,15 @@ import type { ClientRequest, IncomingMessage } from 'node:http';
 
 describe('hook-script', () => {
   let originalEnv: NodeJS.ProcessEnv;
-  let stdoutWrite: ReturnType<typeof vi.spyOn>;
-  let stderrWrite: ReturnType<typeof vi.spyOn>;
-  let processExit: ReturnType<typeof vi.spyOn>;
+  let _stdoutWrite: ReturnType<typeof vi.spyOn>;
+  let _stderrWrite: ReturnType<typeof vi.spyOn>;
+  let _processExit: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     originalEnv = { ...process.env };
-    stdoutWrite = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-    processExit = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
+    _stdoutWrite = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    _stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    _processExit = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
     vi.resetModules();
   });
 

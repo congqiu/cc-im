@@ -47,6 +47,14 @@ async function sendLifecycleNotification(activeBots: string[], message: string) 
 }
 
 export async function main() {
+  process.on('unhandledRejection', (reason) => {
+    log.error('Unhandled rejection:', reason);
+  });
+  process.on('uncaughtException', (err) => {
+    log.error('Uncaught exception:', err);
+    process.exit(1);
+  });
+
   const config = loadConfig();
   initLogger(config.logDir, config.logLevel);
   loadActiveChats();
@@ -164,11 +172,11 @@ export async function main() {
     `Claude CLI: ${claudeVer}`,
     `Node: ${process.version}`,
   ].filter(Boolean).join('\n');
-  sendLifecycleNotification(activeBots, startupMsg).catch(() => {});
-  checkForUpdate(APP_VERSION).catch(() => {});
+  sendLifecycleNotification(activeBots, startupMsg).catch((e) => log.warn('Startup notification failed:', e?.message ?? e));
+  checkForUpdate(APP_VERSION).catch((e) => log.warn('Update check failed:', e?.message ?? e));
 
   const imageCleanupTimer = setInterval(() => {
-    cleanOldImages().then((n) => { if (n > 0) log.info(`Cleaned ${n} old image(s)`); }).catch(() => {});
+    cleanOldImages().then((n) => { if (n > 0) log.info(`Cleaned ${n} old image(s)`); }).catch((e) => log.warn('Image cleanup failed:', e?.message ?? e));
   }, 10 * 60 * 1000);
   imageCleanupTimer.unref();
 

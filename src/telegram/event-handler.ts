@@ -11,7 +11,7 @@ import { registerPermissionSender, registerWatchSender, resolvePermissionById } 
 import { CommandHandler, type CostRecord } from '../commands/handler.js';
 import type { ThreadContext } from '../shared/types.js';
 import { getBotUsername } from './client.js';
-import { runClaudeTask, type TaskRunState, type TaskDeps } from '../shared/claude-task.js';
+import { runClaudeTask, type TaskRunState, } from '../shared/claude-task.js';
 import { startTaskCleanup } from '../shared/task-cleanup.js';
 import { MessageDedup } from '../shared/message-dedup.js';
 import { THROTTLE_MS, IMAGE_DIR } from '../constants.js';

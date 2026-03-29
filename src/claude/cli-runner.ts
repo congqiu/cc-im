@@ -97,7 +97,7 @@ export function runClaude(
   let accumulatedThinking = '';
   let completed = false;
   let model = '';
-  let toolStats: Record<string, number> = {};
+  const toolStats: Record<string, number> = {};
   let timeoutHandle: NodeJS.Timeout | null = null;
   const pendingToolInputs = new Map<number, { name: string; json: string }>();
 

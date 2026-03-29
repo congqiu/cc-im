@@ -1,4 +1,5 @@
 import { createLogger } from '../logger.js';
+import { MAX_QUEUE_SIZE } from '../constants.js';
 
 const log = createLogger('Queue');
 
@@ -12,8 +13,6 @@ interface UserQueue {
   running: boolean;
   tasks: QueuedTask[];
 }
-
-const MAX_QUEUE_SIZE = 3;
 
 export type EnqueueResult = 'running' | 'queued' | 'rejected';
 

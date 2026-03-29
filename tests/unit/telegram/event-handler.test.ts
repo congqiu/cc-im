@@ -145,7 +145,6 @@ import { setupTelegramHandlers } from '../../../src/telegram/event-handler.js';
 import * as messageSender from '../../../src/telegram/message-sender.js';
 import { runClaudeTask } from '../../../src/shared/claude-task.js';
 import { setActiveChatId } from '../../../src/shared/active-chats.js';
-import { startTaskCleanup } from '../../../src/shared/task-cleanup.js';
 
 // Helper to create a mock bot and capture handlers
 function createMockBot() {

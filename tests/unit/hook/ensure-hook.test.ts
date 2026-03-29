@@ -1,7 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, } from 'vitest';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 
 vi.mock('../../../src/logger.js', () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
@@ -11,8 +9,6 @@ vi.mock('node:fs', async () => {
   const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
   return { ...actual, readFileSync: vi.fn(), writeFileSync: vi.fn(), mkdirSync: vi.fn(), existsSync: vi.fn() };
 });
-
-const SETTINGS_PATH = join(homedir(), '.claude', 'settings.json');
 
 describe('ensureHookConfigured', () => {
   beforeEach(() => {
@@ -132,7 +128,7 @@ describe('ensureHookConfigured', () => {
   it('should skip watch hooks when watch-script.js does not exist', async () => {
     // hook-script.js 存在，watch-script.js 不存在
     vi.mocked(existsSync).mockImplementation((p) => {
-      return String(p).includes('watch-script') ? false : true;
+      return !String(p).includes('watch-script');
     });
     vi.mocked(readFileSync).mockReturnValue(JSON.stringify({}));
     vi.mocked(writeFileSync).mockImplementation(() => {});

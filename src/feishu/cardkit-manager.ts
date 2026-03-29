@@ -126,7 +126,7 @@ export async function streamContent(
   const seq = nextSeq(cardId);
   if (seq === -1) return; // session already destroyed
 
-  let res;
+  let res: { code?: number; msg?: string } | undefined;
   try {
     res = await call(seq);
   } catch (err: unknown) {

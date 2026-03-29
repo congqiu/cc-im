@@ -1,7 +1,7 @@
 {
   "name": "cc-im",
   "version": "1.5.0",
-  "description": "Multi-platform bot bridge (Feishu & Telegram) for Claude Code CLI",
+  "description": "Multi-platform bot bridge (Feishu & Telegram & WeCom) for Claude Code CLI",
   "repository": {
     "type": "git",
     "url": "https://github.com/congqiu/cc-im.git"
@@ -21,6 +21,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "prepublishOnly": "npm run build",
+    "lint": "biome check src/ tests/",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -28,6 +29,8 @@
     "feishu",
     "lark",
     "telegram",
+    "wecom",
+    "wechat-work",
     "claude",
     "claude-code",
     "bot",
@@ -40,6 +43,7 @@
     "telegraf": "^4.16.3"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.9",
     "@types/node": "^25.3.0",
     "@vitest/coverage-v8": "^4.0.18",
     "dotenv": "^17.3.1",

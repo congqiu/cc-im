@@ -20,11 +20,10 @@ vi.mock('telegraf', () => ({
     launch = mockLaunch;
     stop = mockStop;
     on = mockOn;
-    constructor() {}
   },
 }));
 
-import { getBot, initTelegram, stopTelegram } from '../../../src/telegram/client.js';
+import { initTelegram, stopTelegram } from '../../../src/telegram/client.js';
 import type { Config } from '../../../src/config.js';
 
 const baseConfig = {
