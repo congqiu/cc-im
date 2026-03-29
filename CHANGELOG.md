@@ -9,6 +9,13 @@
 ### 新功能
 
 - `/watch` 命令：实时监控终端 Claude Code 的运行状态，支持 stop/tool/full 三个级别
+- systemd 开机自启：`cc-im install` 注册为用户级 systemd 服务，`cc-im uninstall` 卸载，`cc-im status` 查看运行状态
+- `CC_IM_SKIP_PERMISSIONS` 环境变量：hook 脚本支持跳过权限模式，兼容新版 Claude Code 不再跳过 hooks 的行为
+
+### 修复
+
+- 企业微信群聊会话隔离：群聊与单聊共用 workDir/sessionId 导致互相串联，现每个群聊拥有独立的会话上下文
+- 企业微信群聊中命令无法识别的问题：群聊消息包含 `@机器人名` 标记导致 `/list` 等命令匹配失败，新增 `WECOM_BOT_NAME` 可选配置项支持精确匹配
 
 ## [1.5.0] - 2026-03-15
 

@@ -126,6 +126,13 @@ describe('CLI Runner', () => {
     expect(env[envKey]).toBe(envValue);
   });
 
+  it('skipPermissions 时应该设置 CC_IM_SKIP_PERMISSIONS 环境变量', () => {
+    const callbacks = { onText: vi.fn(), onComplete: vi.fn(), onError: vi.fn() };
+    runClaude('/claude', 'prompt', undefined, '/work', callbacks, { skipPermissions: true });
+    const env = mockSpawn.mock.calls[0][2].env;
+    expect(env.CC_IM_SKIP_PERMISSIONS).toBe('1');
+  });
+
   it('收到 init 事件应该回调 onSessionId', async () => {
     const onSessionId = vi.fn();
     const callbacks = {

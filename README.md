@@ -23,7 +23,7 @@
 - **模型切换**：支持按用户和按话题粒度切换模型
 - **轮次追踪**：累计对话轮次，上下文过长时自动提醒压缩
 - **生命周期通知**：服务启动/关闭时通知活跃用户（含版本信息和运行时长）
-- **守护进程模式**：支持 `-d` 后台运行和 `stop` 停止
+- **守护进程模式**：支持 `-d` 后台运行和 `stop` 停止，`install` 注册为 systemd 开机自启服务
 - **终端监控**：通过 `/watch` 命令实时监控终端 Claude Code 的运行状态（工具调用、完成事件）
 - **版本更新检查**：启动时自动检查 npm 最新版本，有更新时提示
 - **日志等级配置**：支持 DEBUG/INFO/WARN/ERROR 四级日志
@@ -122,9 +122,24 @@ cc-im -d
 
 # 停止服务
 cc-im stop
+
+# 查看运行状态
+cc-im status
 ```
 
 日志输出到 `~/.cc-im/logs/daemon.log`。
+
+### 开机自启（systemd）
+
+在 Linux 上可注册为用户级 systemd 服务，开机自动启动：
+
+```bash
+# 注册并启动服务
+cc-im install
+
+# 卸载服务
+cc-im uninstall
+```
 
 ## 命令列表
 
@@ -158,6 +173,7 @@ cc-im stop
 | `TELEGRAM_BOT_TOKEN` | Telegram Bot Token | Telegram 平台必填 |
 | `WECOM_BOT_ID` | 企业微信机器人 Bot ID | 企业微信平台必填 |
 | `WECOM_BOT_SECRET` | 企业微信机器人 Secret | 企业微信平台必填 |
+| `WECOM_BOT_NAME` | 企业微信机器人显示名称，用于精确去除群聊 @提及 | 空（启发式匹配） |
 | `ALLOWED_USER_IDS` | 白名单用户 ID，逗号分隔，留空不限制 | 空（不限制） |
 | `CLAUDE_CLI_PATH` | Claude CLI 可执行文件路径 | `claude` |
 | `CLAUDE_WORK_DIR` | 默认工作目录 | 当前目录 |
@@ -187,6 +203,7 @@ cc-im stop
   "telegramBotToken": "your_bot_token",
   "wecomBotId": "",
   "wecomBotSecret": "",
+  "wecomBotName": "",
   "allowedUserIds": ["123456789"],
   "claudeCliPath": "/usr/local/bin/claude",
   "claudeWorkDir": "/home/user/projects",
@@ -270,7 +287,7 @@ src/
 ├── constants.ts              # 系统常量（节流、长度限制、错误码等）
 ├── logger.ts                 # 带标签的日志系统（自动脱敏）
 ├── sanitize.ts               # 日志脱敏规则
-├── cli.ts                    # CLI 入口（前台/守护进程/停止）
+├── cli.ts                    # CLI 入口（前台/守护进程/systemd 服务管理）
 ├── access/
 │   └── access-control.ts     # 白名单访问控制
 ├── claude/

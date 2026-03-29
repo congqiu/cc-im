@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { cleanGroupText } from '../../../src/wecom/event-handler.js';
 
 // Mock all dependencies at the top level BEFORE imports
 
@@ -26,6 +27,11 @@ vi.mock('../../../src/session/session-manager.js', () => ({
     this.getSessionIdForConv = vi.fn(() => 'session-abc');
     this.setSessionIdForConv = vi.fn();
     this.getModel = vi.fn();
+    this.getWorkDirForThread = vi.fn(() => '/work');
+    this.getThreadSession = vi.fn(() => undefined);
+    this.setThreadSession = vi.fn();
+    this.getSessionIdForThread = vi.fn(() => undefined);
+    this.setSessionIdForThread = vi.fn();
   }),
 }));
 
@@ -171,6 +177,11 @@ const mockSessionManager = {
   getSessionIdForConv: vi.fn(() => 'session-abc'),
   setSessionIdForConv: vi.fn(),
   getModel: vi.fn(),
+  getWorkDirForThread: vi.fn(() => '/work'),
+  getThreadSession: vi.fn(() => undefined),
+  setThreadSession: vi.fn(),
+  getSessionIdForThread: vi.fn(() => undefined),
+  setSessionIdForThread: vi.fn(),
 };
 
 describe('WeChat Work (WeCom) Event Handler', () => {
@@ -361,6 +372,174 @@ describe('WeChat Work (WeCom) Event Handler', () => {
 
       await vi.waitFor(() => {
         expect(setActiveChatId).toHaveBeenCalledWith('wecom', 'group-chat-1');
+      });
+    });
+
+    it('should eagerly create thread session for group chat to isolate workDir from private chat', async () => {
+      // 模拟群聊没有 thread session（首次消息），用 Once 避免影响后续测试
+      mockSessionManager.getThreadSession.mockReturnValueOnce(undefined);
+      mockSessionManager.getWorkDir.mockReturnValueOnce('/private-work');
+
+      setupWecomHandlers(mockClient as any, mockConfig as any, mockSessionManager as any);
+
+      emitTextMessage(mockClient, {
+        msgid: 'msg-group-iso-1',
+        chattype: 'group',
+        chatid: 'group-iso-1',
+        text: { content: '群聊消息' },
+      });
+
+      await vi.waitFor(() => {
+        // 应在处理消息时立即创建 thread session，而不是等到 Claude 任务执行时
+        expect(mockSessionManager.setThreadSession).toHaveBeenCalledWith(
+          'user1',
+          'group-iso-1',
+          expect.objectContaining({
+            workDir: '/private-work',
+            threadId: 'group-iso-1',
+          }),
+        );
+      });
+    });
+
+    it('should not recreate thread session if already exists for group chat', async () => {
+      // 模拟群聊已有 thread session（用 Once 避免影响后续测试）
+      mockSessionManager.getThreadSession.mockReturnValueOnce({
+        workDir: '/group-work',
+        rootMessageId: '',
+        threadId: 'group-exist-1',
+      });
+
+      setupWecomHandlers(mockClient as any, mockConfig as any, mockSessionManager as any);
+
+      emitTextMessage(mockClient, {
+        msgid: 'msg-group-exist-1',
+        chattype: 'group',
+        chatid: 'group-exist-1',
+        text: { content: '群聊消息' },
+      });
+
+      await vi.waitFor(() => {
+        expect(runClaudeTask).toHaveBeenCalled();
+      });
+
+      // 不应重新创建 thread session
+      expect(mockSessionManager.setThreadSession).not.toHaveBeenCalled();
+    });
+
+    it('should strip @mention from group chat command (command before @)', async () => {
+      setupWecomHandlers(mockClient as any, mockConfig as any, mockSessionManager as any);
+
+      const { CommandHandler } = await import('../../../src/commands/handler.js');
+      const cmdInstance = vi.mocked(CommandHandler).mock.results[0]?.value;
+
+      emitTextMessage(mockClient, {
+        msgid: 'msg-group-cmd-1',
+        chattype: 'group',
+        chatid: 'group-1',
+        text: { content: '/list @Claude Code' },
+      });
+
+      await vi.waitFor(() => {
+        expect(cmdInstance.dispatch).toHaveBeenCalledWith(
+          '/list',
+          expect.any(String),
+          expect.any(String),
+          'wecom',
+          expect.any(Function),
+          expect.objectContaining({ threadId: 'group-1' }),
+        );
+      });
+    });
+
+    it('should strip @mention from group chat command (@ before command)', async () => {
+      setupWecomHandlers(mockClient as any, mockConfig as any, mockSessionManager as any);
+
+      const { CommandHandler } = await import('../../../src/commands/handler.js');
+      const cmdInstance = vi.mocked(CommandHandler).mock.results[0]?.value;
+
+      emitTextMessage(mockClient, {
+        msgid: 'msg-group-cmd-2',
+        chattype: 'group',
+        chatid: 'group-2',
+        text: { content: '@Claude Code /help' },
+      });
+
+      await vi.waitFor(() => {
+        expect(cmdInstance.dispatch).toHaveBeenCalledWith(
+          '/help',
+          expect.any(String),
+          expect.any(String),
+          'wecom',
+          expect.any(Function),
+          expect.objectContaining({ threadId: 'group-2' }),
+        );
+      });
+    });
+
+    it('should strip @mention using exact botName from config', async () => {
+      const configWithBotName = { ...mockConfig, wecomBotName: 'Claude Code' };
+      setupWecomHandlers(mockClient as any, configWithBotName as any, mockSessionManager as any);
+
+      const { CommandHandler } = await import('../../../src/commands/handler.js');
+      const cmdInstance = vi.mocked(CommandHandler).mock.results[0]?.value;
+
+      emitTextMessage(mockClient, {
+        msgid: 'msg-group-cmd-3',
+        chattype: 'group',
+        chatid: 'group-3',
+        text: { content: '/list @Claude Code' },
+      });
+
+      await vi.waitFor(() => {
+        expect(cmdInstance.dispatch).toHaveBeenCalledWith(
+          '/list',
+          expect.any(String),
+          expect.any(String),
+          'wecom',
+          expect.any(Function),
+          expect.objectContaining({ threadId: 'group-3' }),
+        );
+      });
+    });
+
+    it('should strip @mention from non-command group text with botName', async () => {
+      const configWithBotName = { ...mockConfig, wecomBotName: 'Claude Code' };
+      setupWecomHandlers(mockClient as any, configWithBotName as any, mockSessionManager as any);
+
+      emitTextMessage(mockClient, {
+        msgid: 'msg-group-text-1',
+        chattype: 'group',
+        chatid: 'group-4',
+        text: { content: '@Claude Code 你好' },
+      });
+
+      await vi.waitFor(() => {
+        expect(runClaudeTask).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ threadId: 'group-4' }),
+          '你好',
+          expect.anything(),
+        );
+      });
+    });
+
+    it('should not strip @mention from single chat messages', async () => {
+      setupWecomHandlers(mockClient as any, mockConfig as any, mockSessionManager as any);
+
+      emitTextMessage(mockClient, {
+        msgid: 'msg-single-at-1',
+        chattype: 'single',
+        text: { content: '@someone 请帮忙' },
+      });
+
+      await vi.waitFor(() => {
+        expect(runClaudeTask).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          '@someone 请帮忙',
+          expect.anything(),
+        );
       });
     });
   });
@@ -644,6 +823,54 @@ describe('WeChat Work (WeCom) Event Handler', () => {
             main_title: { title: '请求已过期' },
           }),
         );
+      });
+    });
+  });
+
+  // --- cleanGroupText pure function ---
+
+  describe('cleanGroupText', () => {
+    describe('with botName (exact match)', () => {
+      it('should remove @BotName from beginning', () => {
+        expect(cleanGroupText('@Claude Code 你好', 'Claude Code')).toBe('你好');
+      });
+
+      it('should remove @BotName from end', () => {
+        expect(cleanGroupText('/list @Claude Code', 'Claude Code')).toBe('/list');
+      });
+
+      it('should remove @BotName case-insensitively', () => {
+        expect(cleanGroupText('@claude code /help', 'Claude Code')).toBe('/help');
+      });
+
+      it('should preserve other @ mentions', () => {
+        expect(cleanGroupText('@Claude Code 给 @someone 发邮件', 'Claude Code')).toBe('给 @someone 发邮件');
+      });
+
+      it('should handle botName with special regex chars', () => {
+        expect(cleanGroupText('@Bot (test) hello', 'Bot (test)')).toBe('hello');
+      });
+    });
+
+    describe('without botName (heuristic)', () => {
+      it('should extract /command before @mention', () => {
+        expect(cleanGroupText('/list @SomeBot', undefined)).toBe('/list');
+      });
+
+      it('should extract /command when @ is before command', () => {
+        expect(cleanGroupText('@SomeBot /help', undefined)).toBe('/help');
+      });
+
+      it('should strip leading @word from non-command text', () => {
+        expect(cleanGroupText('@Bot 你好世界', undefined)).toBe('你好世界');
+      });
+
+      it('should return empty string for @-only text', () => {
+        expect(cleanGroupText('@Bot', undefined)).toBe('');
+      });
+
+      it('should preserve text without @ or /', () => {
+        expect(cleanGroupText('hello world', undefined)).toBe('hello world');
       });
     });
   });

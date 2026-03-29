@@ -21,8 +21,17 @@ pnpm start
 # 守护进程模式运行（后台）
 cc-im -d
 
-# 停止守护进程
+# 停止服务（自动检测 systemd 或守护进程）
 cc-im stop
+
+# 注册为 systemd 开机自启服务
+cc-im install
+
+# 卸载 systemd 服务
+cc-im uninstall
+
+# 查看运行状态
+cc-im status
 
 # 运行测试
 pnpm test
@@ -60,6 +69,7 @@ pnpm test:watch
   - 思考→文本切换：结束思考流（`finish=true`，保留为独立消息），开启新流输出文本
   - 等待状态追踪：首次内容前显示等待提示，工具执行期间检测停滞并保持流活跃
   - 支持私聊和群聊，群聊需 @机器人触发
+  - 群聊会话隔离：每个群聊拥有独立的 workDir 和 sessionId（通过 `resolveSessionContext` 构建 ThreadContext）
   - 图片消息通过 `downloadFile()` 下载并 AES 解密
   - 语音消息自动转文字（`voice.content`）
   - 权限确认使用模板卡片按钮（`sendMessage` 主动推送 + `updateTemplateCard` 更新）
@@ -162,6 +172,7 @@ claude -p \
 - `CC_IM_THREAD_ROOT_MSG_ID`：话题根消息 ID（飞书话题会话）
 - `CC_IM_THREAD_ID`：话题 ID
 - `CC_IM_PLATFORM`：当前平台标识（`feishu` / `telegram` / `wecom`）
+- `CC_IM_SKIP_PERMISSIONS`：设为 `1` 时 hook 脚本自动放行所有工具（兼容新版 Claude Code 不再跳过 hooks 的行为）
 - `HTTPS_PROXY` / `HTTP_PROXY`：代理地址（由 `PROXY_URL` 配置项注入）
 
 **流式输出处理**：
@@ -293,6 +304,7 @@ pnpm test -- tests/unit/queue/request-queue.test.ts
 - `TELEGRAM_BOT_TOKEN`：Telegram 机器人 Token
 - `WECOM_BOT_ID`：企业微信机器人 ID
 - `WECOM_BOT_SECRET`：企业微信机器人 Secret
+- `WECOM_BOT_NAME`：企业微信机器人显示名称（可选），用于精确去除群聊消息中的 `@机器人名` 标记
 - `ALLOWED_USER_IDS`：允许的用户 ID 列表（逗号分隔）
 - `CLAUDE_CLI_PATH`：Claude CLI 可执行文件路径，默认 `claude`
 - `CLAUDE_WORK_DIR`：默认工作目录，默认当前目录

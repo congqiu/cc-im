@@ -17,6 +17,7 @@ export interface Config {
   telegramBotToken: string;
   wecomBotId: string;
   wecomBotSecret: string;
+  wecomBotName?: string;
   allowedUserIds: string[];
   claudeCliPath: string;
   claudeWorkDir: string;
@@ -36,6 +37,7 @@ interface FileConfig {
   telegramBotToken?: string;
   wecomBotId?: string;
   wecomBotSecret?: string;
+  wecomBotName?: string;
   allowedUserIds?: string[];
   claudeCliPath?: string;
   claudeWorkDir?: string;
@@ -123,6 +125,7 @@ export function loadConfig(): Config {
   // 企业微信配置
   const wecomBotId = process.env.WECOM_BOT_ID ?? file.wecomBotId ?? '';
   const wecomBotSecret = process.env.WECOM_BOT_SECRET ?? file.wecomBotSecret ?? '';
+  const wecomBotName = process.env.WECOM_BOT_NAME ?? file.wecomBotName;
 
   const allowedUserIds =
     process.env.ALLOWED_USER_IDS !== undefined
@@ -196,6 +199,7 @@ export function loadConfig(): Config {
     telegramBotToken,
     wecomBotId,
     wecomBotSecret,
+    wecomBotName,
     allowedUserIds,
     claudeCliPath,
     claudeWorkDir,

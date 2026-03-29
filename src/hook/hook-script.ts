@@ -99,6 +99,14 @@ async function main() {
     process.exit(HOOK_EXIT_CODES.SUCCESS);
   }
 
+  // Skip permissions mode - auto-allow all tools
+  // 新版 Claude Code 的 --dangerously-skip-permissions 不再跳过 hooks，
+  // 需要通过环境变量让 hook 脚本自行放行
+  if (process.env.CC_IM_SKIP_PERMISSIONS === '1') {
+    process.stdout.write(JSON.stringify({ permissionDecision: 'allow' }));
+    process.exit(HOOK_EXIT_CODES.SUCCESS);
+  }
+
   const threadRootMsgId = process.env.CC_IM_THREAD_ROOT_MSG_ID;
   const threadId = process.env.CC_IM_THREAD_ID;
   const platform = process.env.CC_IM_PLATFORM;

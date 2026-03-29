@@ -8,6 +8,7 @@ import type { SessionManager } from '../session/session-manager.js';
 import { AccessControl } from '../access/access-control.js';
 import { RequestQueue } from '../queue/request-queue.js';
 import { CommandHandler, type CostRecord } from '../commands/handler.js';
+import type { ThreadContext } from '../shared/types.js';
 import { registerPermissionSender, registerWatchSender, resolvePermissionById } from '../hook/permission-server.js';
 import { runClaudeTask, type TaskRunState } from '../shared/claude-task.js';
 import { startTaskCleanup } from '../shared/task-cleanup.js';
@@ -39,12 +40,33 @@ function extractInfo(body: Record<string, any>): {
 }
 
 /**
- * 清理群聊消息文本
+ * 清理群聊消息文本：去掉 @机器人名 标记
  * 企业微信智能机器人 SDK 在群聊中只会推送 @机器人的消息，
  * 所以只要收到群聊消息，就一定是被 mention 的，无需额外检查。
+ * 但 text.content 中仍包含 @机器人名 文本，需要去掉。
  */
-function cleanGroupText(text: string): string {
-  return text.trim();
+export function cleanGroupText(text: string, botName?: string): string {
+  let cleaned = text;
+
+  if (botName) {
+    // 精确匹配机器人名称（大小写不敏感）
+    const escaped = botName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    cleaned = cleaned.replace(new RegExp(`@${escaped}\\s*`, 'gi'), '');
+  } else {
+    // 启发式去除 @ 提及（降级方案，推荐配置 WECOM_BOT_NAME 以精确匹配）
+    // 局限：若命令参数中包含 @（如 /ask 给 @someone 发邮件 @Bot），
+    // 正则会从第一个 @ 开始截断，导致参数丢失。
+    const slashIdx = cleaned.indexOf('/');
+    if (slashIdx >= 0) {
+      const cmdPart = cleaned.substring(slashIdx);
+      cleaned = cmdPart.replace(/\s*@.*$/s, '');
+    } else {
+      // 非命令文本：去掉开头的 @word（无法完美处理多词名称）
+      cleaned = cleaned.replace(/^@\S+\s*/, '');
+    }
+  }
+
+  return cleaned.trim();
 }
 
 /**
@@ -77,6 +99,31 @@ export function setupWecomHandlers(
   let accepting = true;
   let taskCounter = 0;
 
+  /**
+   * 构建群聊/私聊的会话上下文（threadCtx、workDir、convId、queueKey）
+   */
+  function resolveSessionContext(userId: string, chatId: string, isGroup: boolean) {
+    // 企业微信没有话题根消息概念，rootMessageId 留空
+    const threadCtx = isGroup ? { threadId: chatId, rootMessageId: '' } as ThreadContext : undefined;
+
+    // 群聊：提前创建 thread session，确保 workDir 独立于单聊
+    // 避免 getWorkDirForThread 回退到用户单聊 workDir 导致两者联动
+    if (threadCtx && !sessionManager.getThreadSession(userId, threadCtx.threadId)) {
+      sessionManager.setThreadSession(userId, threadCtx.threadId, {
+        workDir: sessionManager.getWorkDir(userId),
+        rootMessageId: '',
+        threadId: threadCtx.threadId,
+      });
+    }
+
+    const workDir = threadCtx
+      ? sessionManager.getWorkDirForThread(userId, threadCtx.threadId)
+      : sessionManager.getWorkDir(userId);
+    const convId = threadCtx ? undefined : sessionManager.getConvId(userId);
+    const queueKey = threadCtx ? threadCtx.threadId : (convId ?? userId);
+    return { threadCtx, workDir, convId, queueKey };
+  }
+
   const commandHandler = new CommandHandler({
     config,
     sessionManager,
@@ -108,8 +155,11 @@ export function setupWecomHandlers(
     workDir: string,
     convId: string | undefined,
     frame?: WsFrame,
+    threadCtx?: ThreadContext,
   ) {
-    const sessionId = convId ? sessionManager.getSessionIdForConv(userId, convId) : undefined;
+    const sessionId = threadCtx
+      ? sessionManager.getSessionIdForThread(userId, threadCtx.threadId)
+      : convId ? sessionManager.getSessionIdForConv(userId, convId) : undefined;
 
     log.info(`Running Claude for user ${userId}, convId=${convId}, workDir=${workDir}, sessionId=${sessionId ?? 'new'}`);
 
@@ -134,6 +184,7 @@ export function setupWecomHandlers(
         workDir,
         sessionId,
         convId,
+        threadId: threadCtx?.threadId,
         platform: 'wecom',
         taskKey,
       },
@@ -227,9 +278,9 @@ export function setupWecomHandlers(
 
   // CommandHandler 使用的签名（无 frame）
   async function handleClaudeRequest(
-    userId: string, chatId: string, prompt: string, workDir: string, convId?: string,
+    userId: string, chatId: string, prompt: string, workDir: string, convId?: string, threadCtx?: ThreadContext,
   ) {
-    await handleClaudeRequestCore(userId, chatId, prompt, workDir, convId);
+    await handleClaudeRequestCore(userId, chatId, prompt, workDir, convId, undefined, threadCtx);
   }
 
   /**
@@ -262,9 +313,9 @@ export function setupWecomHandlers(
 
     let cleanText = text.trim();
 
-    // 群聊文本清理（企业微信 SDK 只推送 @机器人的消息，无需检查 mention）
+    // 群聊文本清理：去掉 @机器人名 标记
     if (isGroup) {
-      cleanText = cleanGroupText(cleanText);
+      cleanText = cleanGroupText(cleanText, config.wecomBotName);
     }
 
     if (!cleanText) return;
@@ -298,17 +349,17 @@ export function setupWecomHandlers(
       return;
     }
 
+    // 构建会话上下文（群聊隔离 workDir/sessionId）
+    const { threadCtx, workDir, convId, queueKey } = resolveSessionContext(userId, chatId, isGroup);
+
     // 统一命令分发
-    if (await commandHandler.dispatch(cleanText, chatId, userId, 'wecom', handleClaudeRequest)) {
+    if (await commandHandler.dispatch(cleanText, chatId, userId, 'wecom', handleClaudeRequest, threadCtx)) {
       return;
     }
 
     // 路由到 Claude
-    const workDirSnapshot = sessionManager.getWorkDir(userId);
-    const convIdSnapshot = sessionManager.getConvId(userId);
-
-    const enqueueResult = requestQueue.enqueue(userId, convIdSnapshot, cleanText, async (prompt) => {
-      await handleClaudeRequestCore(userId, chatId, prompt, workDirSnapshot, convIdSnapshot, frame);
+    const enqueueResult = requestQueue.enqueue(userId, queueKey, cleanText, async (prompt) => {
+      await handleClaudeRequestCore(userId, chatId, prompt, workDir, convId, frame, threadCtx);
     });
 
     if (enqueueResult === 'rejected') {
@@ -365,11 +416,10 @@ export function setupWecomHandlers(
     const prompt = `用户发送了一张图片，已保存到 ${imagePath}。请用 Read 工具查看并分析图片内容。`;
     log.info(`User ${userId} [image]: ${prompt.slice(0, 100)}...`);
 
-    const workDirSnapshot = sessionManager.getWorkDir(userId);
-    const convIdSnapshot = sessionManager.getConvId(userId);
+    const { threadCtx, workDir, convId, queueKey } = resolveSessionContext(userId, chatId, isGroup);
 
-    const enqueueResult = requestQueue.enqueue(userId, convIdSnapshot, prompt, async (p) => {
-      await handleClaudeRequestCore(userId, chatId, p, workDirSnapshot, convIdSnapshot, frame);
+    const enqueueResult = requestQueue.enqueue(userId, queueKey, prompt, async (p) => {
+      await handleClaudeRequestCore(userId, chatId, p, workDir, convId, frame, threadCtx);
     });
 
     if (enqueueResult === 'rejected') {
@@ -404,9 +454,9 @@ export function setupWecomHandlers(
       }
     }
 
-    // 群聊文本清理（企业微信 SDK 只推送 @机器人的消息，无需检查 mention）
+    // 群聊文本清理：去掉 @机器人名 标记
     const textContent = isGroup
-      ? cleanGroupText(textParts.join(' '))
+      ? cleanGroupText(textParts.join(' '), config.wecomBotName)
       : textParts.join(' ').trim();
 
     let prompt: string;
@@ -422,11 +472,10 @@ export function setupWecomHandlers(
 
     log.info(`User ${userId} [mixed]: ${prompt.slice(0, 100)}...`);
 
-    const workDirSnapshot = sessionManager.getWorkDir(userId);
-    const convIdSnapshot = sessionManager.getConvId(userId);
+    const { threadCtx, workDir, convId, queueKey } = resolveSessionContext(userId, chatId, isGroup);
 
-    const enqueueResult = requestQueue.enqueue(userId, convIdSnapshot, prompt, async (p) => {
-      await handleClaudeRequestCore(userId, chatId, p, workDirSnapshot, convIdSnapshot, frame);
+    const enqueueResult = requestQueue.enqueue(userId, queueKey, prompt, async (p) => {
+      await handleClaudeRequestCore(userId, chatId, p, workDir, convId, frame, threadCtx);
     });
 
     if (enqueueResult === 'rejected') {

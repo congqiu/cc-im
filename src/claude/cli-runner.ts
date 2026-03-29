@@ -77,6 +77,9 @@ export function runClaude(
   if (options?.platform) {
     env.CC_IM_PLATFORM = options.platform;
   }
+  if (options?.skipPermissions) {
+    env.CC_IM_SKIP_PERMISSIONS = '1';
+  }
   if (options?.proxyUrl) {
     env.HTTPS_PROXY = options.proxyUrl;
     env.HTTP_PROXY = options.proxyUrl;
