@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { dirname, resolve, join } from 'node:path';
@@ -427,6 +427,8 @@ export class SessionManager {
     for (const [key, val] of this.sessions) {
       obj[key] = val;
     }
-    writeFileSync(SESSIONS_FILE, JSON.stringify(obj, null, 2), 'utf-8');
+    const tmpFile = SESSIONS_FILE + '.tmp';
+    writeFileSync(tmpFile, JSON.stringify(obj, null, 2), 'utf-8');
+    renameSync(tmpFile, SESSIONS_FILE);
   }
 }

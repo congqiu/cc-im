@@ -16,6 +16,7 @@ vi.mock('node:fs', () => ({
   writeFileSync: vi.fn(),
   existsSync: vi.fn(),
   mkdirSync: vi.fn(),
+  renameSync: vi.fn(),
 }));
 
 // Mock node:fs/promises
@@ -27,10 +28,12 @@ vi.mock('node:fs/promises', () => ({
 import { SessionManager } from '../../../src/session/session-manager.js';
 import * as fs from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
+import { renameSync } from 'node:fs';
 
 const mockReadFileSync = vi.mocked(fs.readFileSync);
 const mockWriteFileSync = vi.mocked(fs.writeFileSync);
 const mockExistsSync = vi.mocked(fs.existsSync);
+const mockRenameSync = vi.mocked(renameSync);
 const mockRealpath = vi.mocked(fsPromises.realpath);
 
 describe('SessionManager', () => {
@@ -646,6 +649,30 @@ describe('SessionManager', () => {
       expect(sm.getWorkDir('user1')).toBe('/work');
       expect(sm.getSessionId('user1')).toBeUndefined();
     });
+  });
+
+  it('doFlush 应使用原子写入（先写临时文件再 rename）', () => {
+    vi.useFakeTimers();
+    mockExistsSync.mockReturnValue(false);
+    const sm = new SessionManager('/work', ['/work']);
+    sm.setSessionId('user1', 'sess-1');
+
+    // 推进防抖定时器触发 doFlush
+    vi.advanceTimersByTime(1000);
+
+    // writeFileSync 应该被调用，且路径以 .tmp 结尾
+    const tmpWriteCall = mockWriteFileSync.mock.calls.find(
+      ([path]) => typeof path === 'string' && path.endsWith('.tmp')
+    );
+    expect(tmpWriteCall).toBeTruthy();
+
+    // renameSync 应该被调用
+    expect(mockRenameSync).toHaveBeenCalled();
+    const [src, dest] = mockRenameSync.mock.calls[0];
+    expect(src).toMatch(/\.tmp$/);
+    expect(dest).toMatch(/sessions\.json$/);
+
+    vi.useRealTimers();
   });
 
   describe('路径遍历安全', () => {
