@@ -361,10 +361,18 @@ describe('CommandHandler', () => {
       expect(text).not.toContain('/threads');
     });
 
+    it('should include group headings', async () => {
+      await handler.dispatch('/help', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+      const text = vi.mocked(deps.sender.sendTextReply).mock.calls[0][1];
+      expect(text).toContain('会话管理');
+      expect(text).toContain('工作区');
+      expect(text).toContain('监控与诊断');
+      expect(text).toContain('高级');
+    });
+
     it('should include common commands', async () => {
       await handler.dispatch('/help', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
       const text = vi.mocked(deps.sender.sendTextReply).mock.calls[0][1];
-      expect(text).toContain('/help');
       expect(text).toContain('/new');
       expect(text).toContain('/cd');
       expect(text).toContain('/pwd');

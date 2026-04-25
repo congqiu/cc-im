@@ -114,33 +114,40 @@ export class CommandHandler {
    * 处理 /help 命令
    */
   async handleHelp(chatId: string, platform: Platform, threadCtx?: ThreadContext): Promise<boolean> {
-    const startCmd = platform === 'telegram' ? '/start           - 显示欢迎信息\n' : '';
-    const threadsCmd = platform === 'feishu' ? '/threads        - 列出所有话题会话\n' : '';
-    const stopCmd = platform === 'wecom' ? '/stop           - 停止当前运行的任务\n' : '';
-    const helpText = [
-      '📋 可用命令:',
-      '',
-      startCmd,
-      '/help           - 显示此帮助信息',
-      '/new            - 开始新会话',
-      '/compact [说明]  - 压缩对话上下文（节省 token）',
-      '/cost           - 显示本次会话费用统计',
-      '/status         - 显示 Claude Code 状态信息',
-      '/model [模型名]  - 查看或切换模型',
-      '/doctor         - 检查 Claude Code 健康状态',
-      '/cd <路径>      - 切换工作目录',
-      '/pwd            - 查看当前工作目录',
-      '/list           - 列出所有工作区',
-      '/history [页码]  - 查看当前会话聊天记录',
-      '/resume [序号]   - 浏览/恢复历史会话',
-      '/watch [级别]   - 监控终端 Claude Code 状态',
-      threadsCmd,
-      stopCmd,
-      '/allow (/y)     - 允许权限请求（按钮不可用时的备选）',
-      '/deny (/n)      - 拒绝权限请求（按钮不可用时的备选）',
-    ].filter(Boolean).join('\n');
+    const lines: string[] = ['📋 可用命令:'];
 
-    await this.deps.sender.sendTextReply(chatId, helpText, threadCtx);
+    // 会话管理
+    lines.push('', '💬 会话管理:');
+    lines.push('/new            - 开始新会话');
+    lines.push('/compact [说明]  - 压缩对话上下文（节省 token）');
+    lines.push('/history [页码]  - 查看当前会话聊天记录');
+    lines.push('/resume [序号]   - 浏览/恢复历史会话');
+
+    // 工作区
+    lines.push('', '📁 工作区:');
+    lines.push('/cd <路径>      - 切换工作目录');
+    lines.push('/pwd            - 查看当前工作目录');
+    lines.push('/list           - 列出所有工作区');
+
+    // 监控与诊断
+    lines.push('', '📊 监控与诊断:');
+    lines.push('/status         - 显示 Claude Code 状态信息');
+    lines.push('/cost           - 显示本次会话费用统计');
+    lines.push('/doctor         - 检查 Claude Code 健康状态');
+    lines.push('/watch [级别]   - 监控终端 Claude Code 状态');
+
+    // 高级
+    lines.push('', '⚙️  高级:');
+    lines.push('/model [模型名]  - 查看或切换模型');
+    lines.push('/allow (/y)     - 允许权限请求');
+    lines.push('/deny (/n)      - 拒绝权限请求');
+
+    // 平台特有
+    if (platform === 'telegram') lines.push('/start           - 显示欢迎信息');
+    if (platform === 'feishu') lines.push('/threads        - 列出所有话题会话');
+    if (platform === 'wecom') lines.push('/stop           - 停止当前运行的任务');
+
+    await this.deps.sender.sendTextReply(chatId, lines.join('\n'), threadCtx);
     return true;
   }
 
