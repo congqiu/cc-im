@@ -100,11 +100,28 @@ function detectPlatforms(file: FileConfig): Platform[] {
 
   // 如果都没配置，抛出错误
   if (platforms.length === 0) {
+    const hints: string[] = [];
+    if (feishuAppId && !feishuAppSecret) {
+      hints.push('  飞书: 检测到 FEISHU_APP_ID 但缺少 FEISHU_APP_SECRET');
+    } else if (!feishuAppId && feishuAppSecret) {
+      hints.push('  飞书: 检测到 FEISHU_APP_SECRET 但缺少 FEISHU_APP_ID');
+    }
+    if (wecomBotId && !wecomBotSecret) {
+      hints.push('  企业微信: 检测到 WECOM_BOT_ID 但缺少 WECOM_BOT_SECRET');
+    } else if (!wecomBotId && wecomBotSecret) {
+      hints.push('  企业微信: 检测到 WECOM_BOT_SECRET 但缺少 WECOM_BOT_ID');
+    }
+
+    const hintBlock = hints.length > 0
+      ? '\n\n⚠️  检测到不完整的配置:\n' + hints.join('\n')
+      : '';
+
     throw new Error(
       '至少需要配置一个平台：\n' +
       '  Telegram: 设置 TELEGRAM_BOT_TOKEN\n' +
       '  飞书: 设置 FEISHU_APP_ID 和 FEISHU_APP_SECRET\n' +
-      '  企业微信: 设置 WECOM_BOT_ID 和 WECOM_BOT_SECRET'
+      '  企业微信: 设置 WECOM_BOT_ID 和 WECOM_BOT_SECRET' +
+      hintBlock
     );
   }
 
@@ -148,10 +165,19 @@ export function loadConfig(): Config {
       ? process.env.CLAUDE_SKIP_PERMISSIONS === 'true'
       : file.claudeSkipPermissions ?? false;
 
-  const claudeTimeoutMs =
+  const DEFAULT_TIMEOUT_MS = 600000;
+  const MIN_TIMEOUT_MS = 10_000;
+  const MAX_TIMEOUT_MS = 3_600_000;
+
+  let claudeTimeoutMs =
     process.env.CLAUDE_TIMEOUT_MS !== undefined
-      ? parseInt(process.env.CLAUDE_TIMEOUT_MS, 10) || 600000
-      : file.claudeTimeoutMs ?? 600000;
+      ? parseInt(process.env.CLAUDE_TIMEOUT_MS, 10) || DEFAULT_TIMEOUT_MS
+      : file.claudeTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+  if (claudeTimeoutMs < MIN_TIMEOUT_MS || claudeTimeoutMs > MAX_TIMEOUT_MS) {
+    logger.warn(`CLAUDE_TIMEOUT_MS=${claudeTimeoutMs} 超出合理范围 (${MIN_TIMEOUT_MS}-${MAX_TIMEOUT_MS})，使用默认值 ${DEFAULT_TIMEOUT_MS}`);
+    claudeTimeoutMs = DEFAULT_TIMEOUT_MS;
+  }
 
   // 验证 Claude CLI 路径
   if (isAbsolute(claudeCliPath) || claudeCliPath.includes('/')) {
@@ -190,7 +216,15 @@ export function loadConfig(): Config {
   const proxyUrl = process.env.PROXY_URL ?? file.proxyUrl;
 
   const logDir = process.env.LOG_DIR ?? file.logDir ?? join(APP_HOME, 'logs');
-  const logLevel = (process.env.LOG_LEVEL?.toUpperCase() ?? file.logLevel ?? 'DEBUG') as LogLevel;
+  const validLogLevels = ['DEBUG', 'INFO', 'WARN', 'ERROR'];
+  const rawLogLevel = process.env.LOG_LEVEL?.toUpperCase() ?? file.logLevel ?? 'DEBUG';
+  let logLevel: LogLevel;
+  if (validLogLevels.includes(rawLogLevel)) {
+    logLevel = rawLogLevel as LogLevel;
+  } else {
+    logger.warn(`无效的 LOG_LEVEL="${rawLogLevel}"，使用默认值 DEBUG`);
+    logLevel = 'DEBUG';
+  }
 
   return {
     enabledPlatforms,

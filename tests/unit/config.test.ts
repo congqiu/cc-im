@@ -258,6 +258,58 @@ describe('loadConfig', () => {
     const config = await loadConfigFresh();
     expect(config.telegramBotToken).toBe('token');
   });
+
+  it('CLAUDE_TIMEOUT_MS 小于 10000 应使用默认值', async () => {
+    mockReadFileSync.mockImplementation(() => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); });
+    mockExecFileSync.mockReturnValue(Buffer.from('/usr/bin/claude'));
+    setEnv({
+      TELEGRAM_BOT_TOKEN: 'test-token',
+      CLAUDE_CLI_PATH: 'claude',
+      CLAUDE_TIMEOUT_MS: '100',
+    });
+    const config = await loadConfigFresh();
+    expect(config.claudeTimeoutMs).toBe(600000);
+  });
+
+  it('CLAUDE_TIMEOUT_MS 过大应使用默认值', async () => {
+    mockReadFileSync.mockImplementation(() => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); });
+    mockExecFileSync.mockReturnValue(Buffer.from('/usr/bin/claude'));
+    setEnv({
+      TELEGRAM_BOT_TOKEN: 'test-token',
+      CLAUDE_CLI_PATH: 'claude',
+      CLAUDE_TIMEOUT_MS: '9999999999',
+    });
+    const config = await loadConfigFresh();
+    expect(config.claudeTimeoutMs).toBe(600000);
+  });
+
+  it('无效的 LOG_LEVEL 应回退到 DEBUG', async () => {
+    mockReadFileSync.mockImplementation(() => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); });
+    mockExecFileSync.mockReturnValue(Buffer.from('/usr/bin/claude'));
+    setEnv({
+      TELEGRAM_BOT_TOKEN: 'test-token',
+      CLAUDE_CLI_PATH: 'claude',
+      LOG_LEVEL: 'INVALID',
+    });
+    const config = await loadConfigFresh();
+    expect(config.logLevel).toBe('DEBUG');
+  });
+
+  it('只配置了 FEISHU_APP_ID 时错误信息应包含提示', async () => {
+    mockReadFileSync.mockImplementation(() => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); });
+    setEnv({
+      FEISHU_APP_ID: 'app-id-test',
+    });
+    await expect(loadConfigFresh()).rejects.toThrow(/FEISHU_APP_SECRET/);
+  });
+
+  it('只配置了 WECOM_BOT_ID 时错误信息应包含提示', async () => {
+    mockReadFileSync.mockImplementation(() => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); });
+    setEnv({
+      WECOM_BOT_ID: 'bot-id-test',
+    });
+    await expect(loadConfigFresh()).rejects.toThrow(/WECOM_BOT_SECRET/);
+  });
 });
 
 describe('wecom platform detection', () => {

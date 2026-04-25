@@ -55,7 +55,14 @@ export async function main() {
     process.exit(1);
   });
 
-  const config = loadConfig();
+  let config: ReturnType<typeof loadConfig>;
+  try {
+    config = loadConfig();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`\n❌ 配置加载失败:\n\n${message}\n`);
+    process.exit(1);
+  }
   initLogger(config.logDir, config.logLevel);
   loadActiveChats();
   log.info('Starting cc-im bridge service...');
@@ -153,7 +160,7 @@ export async function main() {
   }
 
   if (activeBots.length === 0) {
-    log.error('No platforms were successfully initialized!');
+    log.error('所有平台初始化失败！请检查网络连接和凭证配置后重试。');
     process.exit(1);
   }
 
