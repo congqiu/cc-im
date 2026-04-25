@@ -185,7 +185,8 @@ export class CommandHandler {
       const subdirs = await this.listSubDirs(workDir);
       const lines = [`当前工作目录: ${workDir}`];
       if (subdirs.length > 0) {
-        lines.push('', '📁 子目录:', ...subdirs.map(d => `  ${d}/`));
+        const countNote = subdirs.length >= 30 ? '（仅显示前 30 个）' : '';
+        lines.push('', `📁 子目录${countNote}:`, ...subdirs.map(d => `  ${d}/`));
         lines.push('', '使用 /cd <目录名> 切换');
       }
       await this.deps.sender.sendTextReply(chatId, lines.join('\n'), threadCtx);
@@ -208,7 +209,7 @@ export class CommandHandler {
       await this.deps.sender.sendTextReply(chatId, `工作目录已切换到: ${resolved}\n会话已重置。`, threadCtx);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      await this.deps.sender.sendTextReply(chatId, message, threadCtx);
+      await this.deps.sender.sendTextReply(chatId, `❌ 目录切换失败: ${message}`, threadCtx);
     }
     return true;
   }

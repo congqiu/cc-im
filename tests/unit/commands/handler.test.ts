@@ -449,7 +449,7 @@ describe('CommandHandler', () => {
       await handler.dispatch('/cd /forbidden', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
       expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
         CHAT_ID,
-        '目录不在允许范围内',
+        '❌ 目录切换失败: 目录不在允许范围内',
         undefined,
       );
     });
@@ -482,7 +482,7 @@ describe('CommandHandler', () => {
       await handler.dispatch('/cd /bad', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
       expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
         CHAT_ID,
-        'string error',
+        '❌ 目录切换失败: string error',
         undefined,
       );
     });
