@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { join } from 'path';
-import { existsSync, writeFileSync, unlinkSync, mkdirSync, readFileSync, openSync, closeSync } from 'fs';
+import { existsSync, writeFileSync, unlinkSync, mkdirSync, readFileSync, openSync, closeSync, statSync, renameSync } from 'fs';
 import { spawn, execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
@@ -238,6 +238,20 @@ function parseArgs() {
   return { command, daemon };
 }
 
+function rotateDaemonLog(logPath: string) {
+  try {
+    const stats = statSync(logPath);
+    if (stats.size > 10 * 1024 * 1024) { // 10MB
+      const backupPath = logPath + '.1';
+      if (existsSync(backupPath)) unlinkSync(backupPath);
+      renameSync(logPath, backupPath);
+      logger.info(`daemon.log 已轮转 (${(stats.size / 1024 / 1024).toFixed(1)}MB)`);
+    }
+  } catch {
+    // 文件不存在或其他错误，忽略
+  }
+}
+
 function startDaemon() {
   // 检查是否已在运行
   const oldPid = getPidFromFile();
@@ -250,6 +264,7 @@ function startDaemon() {
   mkdirSync(LOG_DIR, { recursive: true });
 
   const outLog = join(LOG_DIR, 'daemon.log');
+  rotateDaemonLog(outLog);
   const outFd = openSync(outLog, 'a');
 
   const scriptPath = fileURLToPath(import.meta.url);
