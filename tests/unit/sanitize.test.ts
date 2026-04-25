@@ -163,6 +163,27 @@ describe('sanitize', () => {
     });
   });
 
+  describe('多行脱敏', () => {
+    it('Error stack 中多行路径都应被脱敏', () => {
+      const input = 'Error: failed\n    at Object.<anonymous> (/home/user/secret/project/src/index.ts:10)\n    at Module._compile (/home/user/node/lib/module.js:50)';
+      const result = sanitize(input);
+      expect(result).not.toContain('/home/user/secret');
+      expect(result).not.toContain('/home/user/node');
+      // 应保留最后两段
+      expect(result).toContain('src/index.ts');
+    });
+
+    it('多行中的 UUID 都应被脱敏', () => {
+      const input = 'Session: a1b2c3d4-e5f6-7890-abcd-ef1234567890\nAnother: 11111111-2222-3333-4444-555555555555';
+      const result = sanitize(input);
+      expect(result).not.toContain('a1b2c3d4');
+      expect(result).not.toContain('11111111-2222');
+      // 应保留末4位
+      expect(result).toContain('7890');
+      expect(result).toContain('5555');
+    });
+  });
+
   describe('综合测试', () => {
     it('应该同时脱敏多种敏感信息', () => {
       const input = `
