@@ -39,7 +39,7 @@ vi.mock('../../../src/queue/request-queue.js', () => ({
   RequestQueue: vi.fn().mockImplementation(function (this: any) {
     this.enqueue = vi.fn((_userId: string, _convId: string, prompt: string, execute: (p: string) => void) => {
       execute(prompt);
-      return 'running';
+      return { status: 'running' };
     });
   }),
 }));
@@ -328,7 +328,7 @@ describe('WeChat Work (WeCom) Event Handler', () => {
       const { RequestQueue } = await import('../../../src/queue/request-queue.js');
       const rqInstance = vi.mocked(RequestQueue).mock.results[0]?.value;
       if (rqInstance) {
-        rqInstance.enqueue.mockReturnValueOnce('rejected');
+        rqInstance.enqueue.mockReturnValueOnce({ status: 'rejected', queueSize: 3 });
       }
 
       emitTextMessage(mockClient, { msgid: 'msg-rej-1', text: { content: '请求' } });
@@ -347,7 +347,7 @@ describe('WeChat Work (WeCom) Event Handler', () => {
       const { RequestQueue } = await import('../../../src/queue/request-queue.js');
       const rqInstance = vi.mocked(RequestQueue).mock.results[0]?.value;
       if (rqInstance) {
-        rqInstance.enqueue.mockReturnValueOnce('queued');
+        rqInstance.enqueue.mockReturnValueOnce({ status: 'queued', position: 1, queueSize: 3 });
       }
 
       emitTextMessage(mockClient, { msgid: 'msg-queued-1', text: { content: '请求' } });
@@ -355,7 +355,7 @@ describe('WeChat Work (WeCom) Event Handler', () => {
       await vi.waitFor(() => {
         expect(senderInstance.sendTextReply).toHaveBeenCalledWith(
           'user1',
-          expect.stringContaining('排队等待'),
+          expect.stringContaining('已排队'),
         );
       });
     });

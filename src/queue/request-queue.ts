@@ -14,7 +14,13 @@ interface UserQueue {
   tasks: QueuedTask[];
 }
 
-export type EnqueueResult = 'running' | 'queued' | 'rejected';
+export interface EnqueueResult {
+  status: 'running' | 'queued' | 'rejected';
+  /** 排队位置（从 1 开始，仅 queued 时有值） */
+  position?: number;
+  /** 队列最大容量 */
+  queueSize?: number;
+}
 
 export class RequestQueue {
   private queues: Map<string, UserQueue> = new Map();
@@ -33,19 +39,19 @@ export class RequestQueue {
     }
 
     if (queue.running && queue.tasks.length >= MAX_QUEUE_SIZE) {
-      return 'rejected';
+      return { status: 'rejected', queueSize: MAX_QUEUE_SIZE };
     }
 
     if (queue.running) {
       queue.tasks.push({ prompt, execute, enqueuedAt: Date.now() });
       log.info(`Queued task for ${queueKey}, position: ${queue.tasks.length}/${MAX_QUEUE_SIZE}`);
-      return 'queued';
+      return { status: 'queued', position: queue.tasks.length, queueSize: MAX_QUEUE_SIZE };
     }
 
     // Not running, start immediately
     queue.running = true;
     this.run(queueKey, prompt, execute);
-    return 'running';
+    return { status: 'running' };
   }
 
   private async run(queueKey: string, prompt: string, execute: (prompt: string) => Promise<void>) {

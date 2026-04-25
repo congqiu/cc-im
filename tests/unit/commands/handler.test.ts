@@ -116,7 +116,7 @@ function createMockRequestQueue() {
   return {
     enqueue: vi.fn((_userId: string, _convId: string, prompt: string, execute: (p: string) => void) => {
       execute(prompt);
-      return 'running';
+      return { status: 'running' };
     }),
   };
 }
@@ -812,7 +812,7 @@ describe('CommandHandler', () => {
 
     it('should show queue full message when rejected', async () => {
       vi.mocked(deps.sessionManager.getSessionIdForConv).mockReturnValue('session-abc');
-      vi.mocked(deps.requestQueue.enqueue).mockReturnValue('rejected');
+      vi.mocked(deps.requestQueue.enqueue).mockReturnValue({ status: 'rejected', queueSize: 3 });
       await handler.dispatch('/compact', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
       expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
         CHAT_ID,
@@ -823,11 +823,11 @@ describe('CommandHandler', () => {
 
     it('should show queued message when queued', async () => {
       vi.mocked(deps.sessionManager.getSessionIdForConv).mockReturnValue('session-abc');
-      vi.mocked(deps.requestQueue.enqueue).mockReturnValue('queued');
+      vi.mocked(deps.requestQueue.enqueue).mockReturnValue({ status: 'queued', position: 1, queueSize: 3 });
       await handler.dispatch('/compact', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
       expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
         CHAT_ID,
-        expect.stringContaining('压缩请求已排队等待'),
+        expect.stringContaining('压缩请求已排队'),
         undefined,
       );
     });

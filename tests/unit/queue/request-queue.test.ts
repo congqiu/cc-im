@@ -22,7 +22,7 @@ describe('RequestQueue', () => {
     const execute = vi.fn().mockResolvedValue(undefined);
     const result = queue.enqueue('user1', 'conv1', 'test', execute);
 
-    expect(result).toBe('running');
+    expect(result).toEqual({ status: 'running' });
     // 等待微任务队列
     await Promise.resolve();
     expect(execute).toHaveBeenCalledWith('test');
@@ -35,8 +35,10 @@ describe('RequestQueue', () => {
     const result1 = queue.enqueue('user1', 'conv1', 'test1', execute1);
     const result2 = queue.enqueue('user1', 'conv1', 'test2', execute2);
 
-    expect(result1).toBe('running');
-    expect(result2).toBe('queued');
+    expect(result1).toEqual({ status: 'running' });
+    expect(result2.status).toBe('queued');
+    expect(result2.position).toBe(1);
+    expect(result2.queueSize).toBe(3);
     expect(execute2).not.toHaveBeenCalled();
   });
 
@@ -50,7 +52,8 @@ describe('RequestQueue', () => {
     queue.enqueue('user1', 'conv1', 'test4', fastExecute);
     const result = queue.enqueue('user1', 'conv1', 'test5', fastExecute);
 
-    expect(result).toBe('rejected');
+    expect(result.status).toBe('rejected');
+    expect(result.queueSize).toBe(3);
   });
 
   it('任务完成后自动执行下一个', async () => {
@@ -79,8 +82,8 @@ describe('RequestQueue', () => {
     const result1 = queue.enqueue('user1', 'conv1', 'test1', execute1);
     const result2 = queue.enqueue('user1', 'conv2', 'test2', execute2);
 
-    expect(result1).toBe('running');
-    expect(result2).toBe('running');
+    expect(result1).toEqual({ status: 'running' });
+    expect(result2).toEqual({ status: 'running' });
 
     await Promise.resolve();
     expect(execute1).toHaveBeenCalled();
@@ -107,6 +110,19 @@ describe('RequestQueue', () => {
 
     // 再次入队应该是 running 而不是 queued (说明 Map 已清空)
     const result = queue.enqueue('user1', 'conv1', 'test2', execute);
-    expect(result).toBe('running');
+    expect(result).toEqual({ status: 'running' });
+  });
+
+  it('排队时应返回队列位置信息', async () => {
+    const slowExecute = vi.fn(() => new Promise(resolve => setTimeout(resolve, 1000)));
+    const fastExecute = vi.fn().mockResolvedValue(undefined);
+
+    const result1 = queue.enqueue('user1', 'conv1', 'test1', slowExecute);
+    const result2 = queue.enqueue('user1', 'conv1', 'test2', fastExecute);
+    const result3 = queue.enqueue('user1', 'conv1', 'test3', fastExecute);
+
+    expect(result1).toEqual({ status: 'running' });
+    expect(result2).toEqual({ status: 'queued', position: 1, queueSize: 3 });
+    expect(result3).toEqual({ status: 'queued', position: 2, queueSize: 3 });
   });
 });

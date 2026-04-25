@@ -10,6 +10,11 @@ vi.mock('../../../src/logger.js', () => ({
   }),
 }));
 
+vi.mock('../../../src/constants.js', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('../../../src/constants.js')>();
+  return { ...orig, PERMISSION_REQUEST_TIMEOUT_MS: 200 };
+});
+
 import {
   registerPermissionSender,
   resolvePermissionById,
@@ -155,6 +160,24 @@ describe('permission-server HTTP', () => {
     expect(res.status).toBe(200);
     expect(res.data.decision).toBe('deny');
   });
+
+  it('权限超时后应调用 sendTextNotify 通知用户', async () => {
+    const sender = createMockSender();
+    sender.sendTextNotify = vi.fn().mockResolvedValue(undefined);
+    registerPermissionSender('feishu', sender);
+
+    // PERMISSION_REQUEST_TIMEOUT_MS 已被 mock 为 200ms，真实等待即可超时
+    const res = await post(port, '/permission-request', {
+      chatId: 'chat-timeout-test', toolName: 'Write', platform: 'feishu',
+    });
+
+    expect(res.data.decision).toBe('deny');
+    expect(sender.sendTextNotify).toHaveBeenCalledWith(
+      'chat-timeout-test',
+      expect.stringContaining('超时'),
+      undefined,
+    );
+  }, 10_000);
 
   it('注册平台后发送权限卡片并等待决定', async () => {
     const sender = createMockSender();

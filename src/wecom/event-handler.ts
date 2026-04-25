@@ -362,11 +362,11 @@ export function setupWecomHandlers(
       await handleClaudeRequestCore(userId, chatId, prompt, workDir, convId, frame, threadCtx);
     });
 
-    if (enqueueResult === 'rejected') {
+    if (enqueueResult.status === 'rejected') {
       log.warn(`Queue full for user: ${userId}`);
       await sender.sendTextReply(chatId, '您的请求队列已满，请等待当前任务完成后再试。');
-    } else if (enqueueResult === 'queued') {
-      await sender.sendTextReply(chatId, '前面还有任务在处理中，您的请求已排队等待。');
+    } else if (enqueueResult.status === 'queued') {
+      await sender.sendTextReply(chatId, `前面还有任务在处理中，您的请求已排队（位置 ${enqueueResult.position}/${enqueueResult.queueSize}）。`);
     }
   }
 
@@ -422,10 +422,10 @@ export function setupWecomHandlers(
       await handleClaudeRequestCore(userId, chatId, p, workDir, convId, frame, threadCtx);
     });
 
-    if (enqueueResult === 'rejected') {
+    if (enqueueResult.status === 'rejected') {
       await sender.sendTextReply(chatId, '您的请求队列已满，请等待当前任务完成后再试。');
-    } else if (enqueueResult === 'queued') {
-      await sender.sendTextReply(chatId, '前面还有任务在处理中，您的请求已排队等待。');
+    } else if (enqueueResult.status === 'queued') {
+      await sender.sendTextReply(chatId, `前面还有任务在处理中，您的请求已排队（位置 ${enqueueResult.position}/${enqueueResult.queueSize}）。`);
     }
   });
 
@@ -478,10 +478,10 @@ export function setupWecomHandlers(
       await handleClaudeRequestCore(userId, chatId, p, workDir, convId, frame, threadCtx);
     });
 
-    if (enqueueResult === 'rejected') {
+    if (enqueueResult.status === 'rejected') {
       await sender.sendTextReply(chatId, '您的请求队列已满，请等待当前任务完成后再试。');
-    } else if (enqueueResult === 'queued') {
-      await sender.sendTextReply(chatId, '前面还有任务在处理中，您的请求已排队等待。');
+    } else if (enqueueResult.status === 'queued') {
+      await sender.sendTextReply(chatId, `前面还有任务在处理中，您的请求已排队（位置 ${enqueueResult.position}/${enqueueResult.queueSize}）。`);
     }
   });
 

@@ -14,6 +14,8 @@ const log = createLogger('PermissionServer');
 export interface PermissionSender {
   sendPermissionCard(chatId: string, requestId: string, toolName: string, toolInput: Record<string, unknown>, threadCtx?: ThreadContext): Promise<string>;
   updatePermissionCard(params: { messageId: string; chatId: string; toolName: string; decision: 'allow' | 'deny' }): Promise<void>;
+  /** 发送纯文本通知（权限超时等场景） */
+  sendTextNotify?(chatId: string, text: string, threadCtx?: ThreadContext): Promise<void>;
 }
 
 const senders = new Map<string, PermissionSender>();
@@ -199,6 +201,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
               removeFromIndex(chatId, id);
               log.warn(`Permission request ${id} timed out`);
               platformSender.updatePermissionCard({ messageId, chatId, toolName, decision: 'deny' }).catch(() => {});
+              platformSender.sendTextNotify?.(chatId, `⏰ 权限请求已超时（${toolName}），操作被自动拒绝`, threadCtx).catch(() => {});
             }
             safeResolve('deny');
           }, PERMISSION_REQUEST_TIMEOUT_MS);

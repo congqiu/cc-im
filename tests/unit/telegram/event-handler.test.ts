@@ -35,7 +35,7 @@ vi.mock('../../../src/queue/request-queue.js', () => ({
   RequestQueue: vi.fn().mockImplementation(function (this: any) {
     this.enqueue = vi.fn((_userId: string, _convId: string, prompt: string, execute: (p: string) => void) => {
       execute(prompt);
-      return 'running';
+      return { status: 'running' };
     });
   }),
 }));
@@ -319,7 +319,7 @@ describe('Telegram Event Handler', () => {
       const { RequestQueue } = await import('../../../src/queue/request-queue.js');
       const rqInstance = vi.mocked(RequestQueue).mock.results[0]?.value;
       if (rqInstance) {
-        rqInstance.enqueue.mockReturnValueOnce('rejected');
+        rqInstance.enqueue.mockReturnValueOnce({ status: 'rejected', queueSize: 3 });
       }
 
       const ctx = createTextCtx({ message: { message_id: 3001, text: '请求' } });
@@ -338,7 +338,7 @@ describe('Telegram Event Handler', () => {
       const { RequestQueue } = await import('../../../src/queue/request-queue.js');
       const rqInstance = vi.mocked(RequestQueue).mock.results[0]?.value;
       if (rqInstance) {
-        rqInstance.enqueue.mockReturnValueOnce('queued');
+        rqInstance.enqueue.mockReturnValueOnce({ status: 'queued', position: 1, queueSize: 3 });
       }
 
       const ctx = createTextCtx({ message: { message_id: 3002, text: '请求' } });
@@ -346,7 +346,7 @@ describe('Telegram Event Handler', () => {
 
       expect(messageSender.sendTextReply).toHaveBeenCalledWith(
         '123',
-        expect.stringContaining('排队等待'),
+        expect.stringContaining('已排队'),
       );
     });
 
@@ -482,7 +482,7 @@ describe('Telegram Event Handler', () => {
         rqInstance.enqueue.mockImplementation((_userId: string, _convId: string, prompt: string, execute: (p: string) => void) => {
           capturedPrompt = prompt;
           execute(prompt);
-          return 'running';
+          return { status: 'running' };
         });
       }
 
@@ -511,7 +511,7 @@ describe('Telegram Event Handler', () => {
       const { RequestQueue } = await import('../../../src/queue/request-queue.js');
       const rqInstance = vi.mocked(RequestQueue).mock.results[0]?.value;
       if (rqInstance) {
-        rqInstance.enqueue.mockReturnValueOnce('rejected');
+        rqInstance.enqueue.mockReturnValueOnce({ status: 'rejected', queueSize: 3 });
       }
 
       const ctx = createPhotoCtx({ message: { message_id: 6004, photo: [{ file_id: 'photo-rej', width: 800, height: 600 }] } });

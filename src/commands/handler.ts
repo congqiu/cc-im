@@ -373,10 +373,10 @@ export class CommandHandler {
     const enqueueResult = this.deps.requestQueue.enqueue(userId, queueKey, compactPrompt, async (prompt) => {
       await handleClaudeRequest(userId, chatId, prompt, workDir, undefined, threadCtx);
     });
-    if (enqueueResult === 'rejected') {
-      await this.deps.sender.sendTextReply(chatId, '请求队列已满，请等待当前任务完成后再试。', threadCtx);
-    } else if (enqueueResult === 'queued') {
-      await this.deps.sender.sendTextReply(chatId, '前面还有任务在处理中，压缩请求已排队等待。', threadCtx);
+    if (enqueueResult.status === 'rejected') {
+      await this.deps.sender.sendTextReply(chatId, `请求队列已满（${enqueueResult.queueSize}/${enqueueResult.queueSize}），请等待当前任务完成后再试。`, threadCtx);
+    } else if (enqueueResult.status === 'queued') {
+      await this.deps.sender.sendTextReply(chatId, `前面还有任务在处理中，压缩请求已排队（位置 ${enqueueResult.position}/${enqueueResult.queueSize}）。`, threadCtx);
     }
     return true;
   }

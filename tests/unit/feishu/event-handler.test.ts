@@ -57,7 +57,7 @@ vi.mock('../../../src/queue/request-queue.js', () => ({
   RequestQueue: vi.fn().mockImplementation(function (this: any) {
     this.enqueue = vi.fn((_userId: string, _convId: string, prompt: string, execute: (p: string) => void) => {
       execute(prompt);
-      return 'running';
+      return { status: 'running' };
     });
   }),
 }));
