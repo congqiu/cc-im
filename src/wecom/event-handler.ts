@@ -54,15 +54,25 @@ export function cleanGroupText(text: string, botName?: string): string {
     cleaned = cleaned.replace(new RegExp(`@${escaped}\\s*`, 'gi'), '');
   } else {
     // 启发式去除 @ 提及（降级方案，推荐配置 WECOM_BOT_NAME 以精确匹配）
-    // 局限：若命令参数中包含 @（如 /ask 给 @someone 发邮件 @Bot），
-    // 正则会从第一个 @ 开始截断，导致参数丢失。
-    const slashIdx = cleaned.indexOf('/');
-    if (slashIdx >= 0) {
-      const cmdPart = cleaned.substring(slashIdx);
-      cleaned = cmdPart.replace(/\s*@.*$/s, '');
-    } else {
-      // 非命令文本：去掉开头的 @word（无法完美处理多词名称）
-      cleaned = cleaned.replace(/^@\S+\s*/, '');
+    // 独立 @mention：@ 前面是空格或位于开头（区别于 email 中的 @）
+    const trimmed = cleaned.trimStart();
+    const slashIdx = trimmed.indexOf('/');
+
+    // 查找第一个"独立的 @"位置（开头或空格后紧跟 @）
+    const mentionMatch = trimmed.match(/(^@|\s@)/);
+    const mentionIdx = mentionMatch
+      ? mentionMatch.index! + (mentionMatch[0].startsWith('@') ? 0 : 1)
+      : -1;
+
+    if (mentionIdx === 0 && slashIdx > 0) {
+      // 开头是 @mention，后面有 /command：取 /command 及之后的全部内容
+      cleaned = trimmed.substring(slashIdx);
+    } else if (slashIdx === 0 && mentionIdx > 0) {
+      // 开头是 /command，后面有独立 @mention：截到 @mention 前
+      cleaned = trimmed.substring(0, mentionIdx).trimEnd();
+    } else if (mentionIdx === 0) {
+      // 开头是 @mention，没有 /command：去掉开头的 @word
+      cleaned = trimmed.replace(/^@\S+\s*/, '');
     }
   }
 

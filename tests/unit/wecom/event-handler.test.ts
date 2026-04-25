@@ -872,6 +872,21 @@ describe('WeChat Work (WeCom) Event Handler', () => {
       it('should preserve text without @ or /', () => {
         expect(cleanGroupText('hello world', undefined)).toBe('hello world');
       });
+
+      it('无 botName 时命令参数中的 @ 不应被截断', () => {
+        const result = cleanGroupText('@Bot /ask 给 someone@example.com 发邮件');
+        expect(result).toBe('/ask 给 someone@example.com 发邮件');
+      });
+
+      it('无 botName 时应只去除开头的 @mention', () => {
+        const result = cleanGroupText('@Bot 帮我查看 user@host 的状态');
+        expect(result).toBe('帮我查看 user@host 的状态');
+      });
+
+      it('无 botName 时带斜杠命令应完整保留参数', () => {
+        const result = cleanGroupText('@Bot /cd /home/user');
+        expect(result).toBe('/cd /home/user');
+      });
     });
   });
 
