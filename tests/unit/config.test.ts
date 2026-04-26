@@ -51,12 +51,21 @@ function setEnv(overrides: Record<string, string>) {
   delete process.env.WECOM_BOT_ID;
   delete process.env.WECOM_BOT_SECRET;
   delete process.env.ALLOWED_USER_IDS;
+  delete process.env.AGENT_PROVIDER;
+  delete process.env.AGENT_MODEL;
+  delete process.env.AGENT_SKIP_PERMISSIONS;
+  delete process.env.AGENT_TIMEOUT_MS;
   delete process.env.CLAUDE_CLI_PATH;
   delete process.env.CLAUDE_WORK_DIR;
   delete process.env.ALLOWED_BASE_DIRS;
   delete process.env.CLAUDE_SKIP_PERMISSIONS;
   delete process.env.CLAUDE_TIMEOUT_MS;
   delete process.env.CLAUDE_MODEL;
+  delete process.env.CODEX_CLI_PATH;
+  delete process.env.CODEX_MODEL;
+  delete process.env.CODEX_SANDBOX;
+  delete process.env.CODEX_APPROVAL_POLICY;
+  delete process.env.OPENCODE_CLI_PATH;
   delete process.env.HOOK_SERVER_PORT;
   delete process.env.LOG_DIR;
   delete process.env.LOG_LEVEL;
@@ -182,7 +191,7 @@ describe('loadConfig', () => {
     });
 
     const config = await loadConfigFresh();
-    expect(config.claudeSkipPermissions).toBe(true);
+    expect(config.agentSkipPermissions).toBe(true);
   });
 
   it('CLAUDE_TIMEOUT_MS 解析为数字', async () => {
@@ -195,7 +204,21 @@ describe('loadConfig', () => {
     });
 
     const config = await loadConfigFresh();
-    expect(config.claudeTimeoutMs).toBe(300000);
+    expect(config.agentTimeoutMs).toBe(300000);
+  });
+
+  it('CODEX_APPROVAL_POLICY 解析为合法值', async () => {
+    mockReadFileSync.mockImplementation(() => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); });
+    mockExecFileSync.mockReturnValue(Buffer.from('/usr/bin/codex'));
+    setEnv({
+      TELEGRAM_BOT_TOKEN: 'token',
+      AGENT_PROVIDER: 'codex',
+      CODEX_CLI_PATH: 'codex',
+      CODEX_APPROVAL_POLICY: 'never',
+    });
+
+    const config = await loadConfigFresh();
+    expect(config.codexApprovalPolicy).toBe('never');
   });
 
   it('绝对路径的 Claude CLI 验证可访问性', async () => {
@@ -268,7 +291,7 @@ describe('loadConfig', () => {
       CLAUDE_TIMEOUT_MS: '100',
     });
     const config = await loadConfigFresh();
-    expect(config.claudeTimeoutMs).toBe(600000);
+    expect(config.agentTimeoutMs).toBe(600000);
   });
 
   it('CLAUDE_TIMEOUT_MS 过大应使用默认值', async () => {
@@ -280,7 +303,7 @@ describe('loadConfig', () => {
       CLAUDE_TIMEOUT_MS: '9999999999',
     });
     const config = await loadConfigFresh();
-    expect(config.claudeTimeoutMs).toBe(600000);
+    expect(config.agentTimeoutMs).toBe(600000);
   });
 
   it('无效的 LOG_LEVEL 应回退到 DEBUG', async () => {
@@ -309,6 +332,25 @@ describe('loadConfig', () => {
       WECOM_BOT_ID: 'bot-id-test',
     });
     await expect(loadConfigFresh()).rejects.toThrow(/WECOM_BOT_SECRET/);
+  });
+
+  it('AGENT_PROVIDER=opencode 应直接抛错（暂未实现）', async () => {
+    mockReadFileSync.mockImplementation(() => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); });
+    mockExecFileSync.mockReturnValue(Buffer.from('/usr/bin/opencode'));
+    setEnv({
+      TELEGRAM_BOT_TOKEN: 'token',
+      AGENT_PROVIDER: 'opencode',
+    });
+    await expect(loadConfigFresh()).rejects.toThrow(/opencode 暂未实现/);
+  });
+
+  it('未知的 AGENT_PROVIDER 应直接抛错', async () => {
+    mockReadFileSync.mockImplementation(() => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); });
+    setEnv({
+      TELEGRAM_BOT_TOKEN: 'token',
+      AGENT_PROVIDER: 'gemini',
+    });
+    await expect(loadConfigFresh()).rejects.toThrow(/不支持的 AGENT_PROVIDER/);
   });
 });
 

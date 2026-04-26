@@ -307,6 +307,87 @@ describe('getHistory', () => {
   });
 });
 
+describe('getHistory / getSessionList for codex', () => {
+  const workDir = '/home/user/project';
+
+  beforeEach(() => {
+    mockReaddir.mockImplementation(((path: string) => {
+      const target = String(path);
+      if (target === '/mock-home/.codex/sessions') return Promise.resolve(['2026'] as any);
+      if (target === '/mock-home/.codex/sessions/2026') return Promise.resolve(['04'] as any);
+      if (target === '/mock-home/.codex/sessions/2026/04') return Promise.resolve(['26'] as any);
+      if (target === '/mock-home/.codex/sessions/2026/04/26') return Promise.resolve(['rollout-a.jsonl', 'rollout-b.jsonl'] as any);
+      return Promise.resolve([] as any);
+    }) as any);
+
+    mockStat.mockImplementation(((path: string) => {
+      const target = String(path);
+      if (target.endsWith('/sessions') || target.endsWith('/2026') || target.endsWith('/04') || target.endsWith('/26')) {
+        return Promise.resolve({ isDirectory: () => true, mtimeMs: 0 });
+      }
+      if (target.endsWith('rollout-a.jsonl')) return Promise.resolve({ isDirectory: () => false, mtimeMs: 1000 });
+      if (target.endsWith('rollout-b.jsonl')) return Promise.resolve({ isDirectory: () => false, mtimeMs: 2000 });
+      return Promise.resolve({ isDirectory: () => false, mtimeMs: 0 });
+    }) as any);
+  });
+
+  it('parses codex history and picks the latest session', async () => {
+    mockReadFile.mockImplementation(((path: string) => {
+      const target = String(path);
+      if (target.endsWith('rollout-a.jsonl')) {
+        return Promise.resolve([
+          JSON.stringify({ type: 'session_meta', payload: { id: 'sess-a', cwd: workDir } }),
+          JSON.stringify({ type: 'event_msg', timestamp: '2026-04-26T10:00:00Z', payload: { type: 'user_message', message: 'hello a' } }),
+        ].join('\n'));
+      }
+      if (target.endsWith('rollout-b.jsonl')) {
+        return Promise.resolve([
+          JSON.stringify({ type: 'session_meta', payload: { id: 'sess-b', cwd: workDir } }),
+          JSON.stringify({ type: 'response_item', timestamp: '2026-04-26T10:01:00Z', payload: { type: 'message', role: 'user', content: [{ type: 'output_text', text: 'hello b' }] } }),
+          JSON.stringify({ type: 'response_item', timestamp: '2026-04-26T10:02:00Z', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hi b' }] } }),
+        ].join('\n'));
+      }
+      return Promise.resolve('');
+    }) as any);
+
+    const result = await getHistory(workDir, undefined, 1, 'codex');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.sessionId).toBe('sess-b');
+    expect(result.data.entries.map(entry => entry.text)).toEqual(['hello b', 'hi b']);
+  });
+
+  it('lists codex sessions for the current workspace', async () => {
+    mockReadFile.mockImplementation(((path: string) => {
+      const target = String(path);
+      if (target.endsWith('rollout-a.jsonl')) {
+        return Promise.resolve([
+          JSON.stringify({ type: 'session_meta', payload: { id: 'sess-a', cwd: workDir } }),
+          JSON.stringify({ type: 'event_msg', timestamp: '2026-04-26T10:00:00Z', payload: { type: 'user_message', message: 'first prompt' } }),
+        ].join('\n'));
+      }
+      if (target.endsWith('rollout-b.jsonl')) {
+        return Promise.resolve([
+          JSON.stringify({ type: 'session_meta', payload: { id: 'sess-b', cwd: workDir } }),
+          JSON.stringify({ type: 'response_item', timestamp: '2026-04-26T10:01:00Z', payload: { type: 'message', role: 'user', content: [{ type: 'output_text', text: 'second prompt' }] } }),
+          JSON.stringify({ type: 'response_item', timestamp: '2026-04-26T10:02:00Z', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'done' }] } }),
+        ].join('\n'));
+      }
+      return Promise.resolve('');
+    }) as any);
+
+    const result = await getSessionList(workDir, 'sess-a', 'codex');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toHaveLength(2);
+    expect(result.data[0].sessionId).toBe('sess-b');
+    expect(result.data[1].isCurrent).toBe(true);
+    expect(result.data[0].preview).toBe('second prompt');
+  });
+});
+
 describe('formatHistoryPage', () => {
   it('正确格式化带 user/assistant 前缀和时间戳', () => {
     const page: HistoryPage = {

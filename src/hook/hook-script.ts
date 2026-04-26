@@ -23,6 +23,19 @@
 import { request } from 'node:http';
 import { READ_ONLY_TOOLS, HOOK_EXIT_CODES } from '../constants.js';
 
+function writeCodexPermissionDecision(decision: 'allow' | 'deny', message?: string): never {
+  const output = {
+    hookSpecificOutput: {
+      hookEventName: 'PermissionRequest',
+      decision: decision === 'allow'
+        ? { behavior: 'allow' }
+        : { behavior: 'deny', ...(message ? { message } : {}) },
+    },
+  };
+  process.stdout.write(JSON.stringify(output));
+  process.exit(HOOK_EXIT_CODES.SUCCESS);
+}
+
 function readStdin(): Promise<string> {
   return new Promise((resolve) => {
     let data = '';
@@ -68,21 +81,27 @@ function httpPost(port: number, path: string, body: unknown): Promise<{ status: 
   });
 }
 
-async function main() {
+async function main(readInput: () => Promise<string> = readStdin) {
   const chatId = process.env.CC_IM_CHAT_ID;
   const port = parseInt(process.env.CC_IM_HOOK_PORT ?? '18900', 10);
 
   // No chat ID configured - deny by default for security
   if (!chatId) {
     process.stderr.write('Warning: CC_IM_CHAT_ID not set, denying by default. Check hook configuration.\n');
+    if (process.env.CC_IM_AGENT_PROVIDER === 'codex') {
+      writeCodexPermissionDecision('deny', 'CC_IM_CHAT_ID not set');
+    }
     process.stdout.write(JSON.stringify({ permissionDecision: 'deny' }));
     process.exit(HOOK_EXIT_CODES.SUCCESS);
   }
 
   let input: { tool_name?: string; tool_input?: Record<string, unknown> };
+  let eventName: string | undefined;
   try {
-    const raw = await readStdin();
-    input = raw.trim() ? JSON.parse(raw) : {};
+    const raw = await readInput();
+    const parsed = raw.trim() ? JSON.parse(raw) : {};
+    input = parsed;
+    eventName = typeof parsed.hook_event_name === 'string' ? parsed.hook_event_name : undefined;
   } catch (err) {
     // Cannot parse input - allow by default to avoid blocking legitimate operations
     process.stderr.write(`Warning: Failed to parse hook input, allowing by default: ${err}\n`);
@@ -92,9 +111,11 @@ async function main() {
 
   const toolName = input.tool_name ?? 'unknown';
   const toolInput = input.tool_input ?? {};
+  const isCodexPermissionRequest = process.env.CC_IM_AGENT_PROVIDER === 'codex' && eventName === 'PermissionRequest';
 
   // Skip permission check for read-only tools - allow immediately
   if (READ_ONLY_TOOLS.includes(toolName)) {
+    if (isCodexPermissionRequest) writeCodexPermissionDecision('allow');
     process.stdout.write(JSON.stringify({ permissionDecision: 'allow' }));
     process.exit(HOOK_EXIT_CODES.SUCCESS);
   }
@@ -103,6 +124,7 @@ async function main() {
   // 新版 Claude Code 的 --dangerously-skip-permissions 不再跳过 hooks，
   // 需要通过环境变量让 hook 脚本自行放行
   if (process.env.CC_IM_SKIP_PERMISSIONS === '1') {
+    if (isCodexPermissionRequest) writeCodexPermissionDecision('allow');
     process.stdout.write(JSON.stringify({ permissionDecision: 'allow' }));
     process.exit(HOOK_EXIT_CODES.SUCCESS);
   }
@@ -124,6 +146,10 @@ async function main() {
     const data = result.data as { decision?: string };
     const decision = data?.decision ?? 'deny';
 
+    if (isCodexPermissionRequest) {
+      writeCodexPermissionDecision(decision === 'allow' ? 'allow' : 'deny');
+    }
+
     // Output the decision as JSON to stdout
     const output = JSON.stringify({ permissionDecision: decision === 'allow' ? 'allow' : 'deny' });
     process.stdout.write(output);
@@ -134,6 +160,10 @@ async function main() {
     const errorMessage = err instanceof Error ? err.message : String(err);
     process.stderr.write(`Error: Permission server unreachable (port ${port}): ${errorMessage}\n`);
     process.stderr.write('Denying operation by default for security. Please check if cc-im is running.\n');
+
+    if (isCodexPermissionRequest) {
+      writeCodexPermissionDecision('deny', 'Permission server unreachable');
+    }
 
     // Write deny decision to stdout
     process.stdout.write(JSON.stringify({ permissionDecision: 'deny' }));

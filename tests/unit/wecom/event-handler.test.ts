@@ -162,8 +162,8 @@ const mockConfig = {
   claudeCliPath: '/claude',
   claudeWorkDir: '/work',
   allowedBaseDirs: ['/work'],
-  claudeSkipPermissions: false,
-  claudeTimeoutMs: 600000,
+  agentSkipPermissions: false,
+  agentTimeoutMs: 600000,
   hookPort: 18900,
 };
 

@@ -64,6 +64,11 @@ import { clearAllWatches } from '../../../src/hook/watch.js';
 function createMockConfig(overrides?: Partial<Config>): Config {
   return {
     enabledPlatforms: ['feishu'],
+    agentProvider: 'claude',
+    agentCliPath: '/usr/bin/claude',
+    agentModel: 'sonnet',
+    agentSkipPermissions: false,
+    agentTimeoutMs: 300000,
     feishuAppId: 'test-app-id',
     feishuAppSecret: 'test-secret',
     telegramBotToken: '',
@@ -71,8 +76,12 @@ function createMockConfig(overrides?: Partial<Config>): Config {
     claudeCliPath: '/usr/bin/claude',
     claudeWorkDir: '/work',
     allowedBaseDirs: ['/work'],
-    claudeSkipPermissions: false,
-    claudeTimeoutMs: 300000,
+    codexCliPath: '/usr/bin/codex',
+    codexSandbox: 'workspace-write',
+    codexApprovalPolicy: 'on-request',
+    opencodeCliPath: '/usr/bin/opencode',
+    wecomBotId: '',
+    wecomBotSecret: '',
     hookPort: 18900,
     logDir: '/tmp/logs',
     logLevel: 'DEBUG',
@@ -550,7 +559,7 @@ describe('CommandHandler', () => {
   describe('handleModel', () => {
     it('should show current model when no arg (no user model set, no global default)', async () => {
       vi.mocked(deps.sessionManager.getModel).mockReturnValue(undefined);
-      deps.config.claudeModel = undefined;
+      deps.config.agentModel = undefined;
       await handler.dispatch('/model', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
       const text = vi.mocked(deps.sender.sendTextReply).mock.calls[0][1];
       expect(text).toContain('当前模型');
@@ -564,9 +573,9 @@ describe('CommandHandler', () => {
       expect(text).toContain('当前模型: sonnet');
     });
 
-    it('should show global claudeModel as fallback when no user model set', async () => {
+    it('should show global agentModel as fallback when no user model set', async () => {
       vi.mocked(deps.sessionManager.getModel).mockReturnValue(undefined);
-      deps.config.claudeModel = 'opus';
+      deps.config.agentModel = 'opus';
       await handler.dispatch('/model', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
       const text = vi.mocked(deps.sender.sendTextReply).mock.calls[0][1];
       expect(text).toContain('当前模型: opus');
@@ -855,7 +864,7 @@ describe('CommandHandler', () => {
   // ─── /list ───
 
   describe('handleList', () => {
-    it('should show "no projects" when no Claude projects found', async () => {
+    it('should show "no projects" when no agent projects found', async () => {
       vi.mocked(readFileSync as any).mockReturnValue('{}');
       await handler.dispatch('/list', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
       expect(deps.sender.sendTextReply).toHaveBeenCalledWith(
@@ -961,13 +970,23 @@ describe('CommandHandler', () => {
     it('should pass page number from args', async () => {
       vi.mocked(getHistory).mockResolvedValue({ ok: false, error: 'no' });
       await handler.dispatch('/history 3', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
-      expect(getHistory).toHaveBeenCalledWith('/work', 'session-abc', 3);
+      expect(getHistory).toHaveBeenCalledWith('/work', 'session-abc', 3, 'claude');
     });
 
     it('should default to page 0 (last page) when no arg', async () => {
       vi.mocked(getHistory).mockResolvedValue({ ok: false, error: 'no' });
       await handler.dispatch('/history', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
-      expect(getHistory).toHaveBeenCalledWith('/work', 'session-abc', 0);
+      expect(getHistory).toHaveBeenCalledWith('/work', 'session-abc', 0, 'claude');
+    });
+
+    it('should support codex history', async () => {
+      deps.config = createMockConfig({ agentProvider: 'codex' });
+      handler = new CommandHandler(deps);
+      vi.mocked(getHistory).mockResolvedValue({ ok: false, error: 'no' });
+
+      await handler.dispatch('/history', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+
+      expect(getHistory).toHaveBeenCalledWith('/work', 'session-abc', 0, 'codex');
     });
   });
 
@@ -998,6 +1017,7 @@ describe('CommandHandler', () => {
         'mock session list',
         undefined,
       );
+      expect(getSessionList).toHaveBeenCalledWith('/work', 'session-abc', 'claude');
     });
 
     it('should resume session by index', async () => {
@@ -1062,6 +1082,16 @@ describe('CommandHandler', () => {
         undefined,
       );
       expect(deps.sessionManager.resumeSession).not.toHaveBeenCalled();
+    });
+
+    it('should support codex resume', async () => {
+      deps.config = createMockConfig({ agentProvider: 'codex' });
+      handler = new CommandHandler(deps);
+      vi.mocked(getSessionList).mockResolvedValue({ ok: true, data: [] });
+
+      await handler.dispatch('/resume', CHAT_ID, USER_ID, 'feishu', mockHandleClaudeRequest);
+
+      expect(getSessionList).toHaveBeenCalledWith('/work', 'session-abc', 'codex');
     });
   });
 

@@ -6,6 +6,22 @@
 
 ## [Unreleased]
 
+### 新功能
+
+- 多 Agent 运行时支持：在 Claude Code 基础上新增 Codex CLI 运行时，通过 `AGENT_PROVIDER` 环境变量切换
+  - `AGENT_PROVIDER=claude`（默认）：使用 Claude Code CLI
+  - `AGENT_PROVIDER=codex`：使用 Codex CLI，支持 `--sandbox`、`--approval-policy` 等 Codex 特有参数
+  - `AGENT_PROVIDER=opencode`：预留接口，暂未实现
+- 统一 Agent 配置层：新增 `AGENT_*` 通用配置（`AGENT_PROVIDER`、`AGENT_MODEL`、`AGENT_SKIP_PERMISSIONS`、`AGENT_TIMEOUT_MS`），保留 `CLAUDE_*` 向后兼容
+- Codex CLI Hook 支持：权限确认、watch 监控、停止信号均兼容 Codex 的 hooks 格式
+- `/history` 和 `/resume` 支持 Codex 会话目录（`~/.codex/sessions`）
+- 命令响应文本动态适配当前 runtime（Claude Code / Codex / OpenCode）
+
+### 重构
+
+- 引入 `AgentRuntime` 抽象层：`src/agent/` 模块封装 `claude` / `codex` 运行时，统一 `run()` 接口
+- `ClaudeTask` 日志标签改为 `AgentTask`，内部调用改为 `runtime.run()`
+
 ## [1.6.0] - 2026-03-29
 
 ### 新功能

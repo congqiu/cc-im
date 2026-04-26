@@ -46,7 +46,7 @@ import { runClaudeTask } from '../../../src/shared/claude-task.js';
 
 function makeDeps(overrides?: Partial<TaskExecutorDeps>): TaskExecutorDeps {
   return {
-    config: { claudeCliPath: 'claude', claudeSkipPermissions: false, claudeTimeoutMs: 600000, hookPort: 18900 } as any,
+    config: { agentCliPath: 'claude', agentSkipPermissions: false, agentTimeoutMs: 600000, hookPort: 18900 } as any,
     sessionManager: {
       getSessionIdForThread: vi.fn(() => 'thread-sid'),
       getSessionIdForConv: vi.fn(() => 'conv-sid'),

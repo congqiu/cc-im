@@ -150,9 +150,27 @@ pnpm test:watch
 - sessionId 回写到 SessionManager
 - 费用追踪与轮次累加
 
-### 6. Claude CLI 集成
+### 6. Agent Runtime 抽象层
 
-位置：`src/claude/cli-runner.ts`
+位置：`src/agent/`
+
+将各平台重复的 Claude CLI 调用逻辑抽象为统一的 `AgentRuntime` 接口，支持多种 Agent CLI 后端。
+
+**核心接口**：
+- `AgentRuntime` — 运行时定义，包含 `provider` 标识和 `run()` 方法
+- `AgentRunOptions` — 统一的运行参数（cliPath、prompt、sessionId、workDir、timeoutMs 等）
+- `AgentRunCallbacks` — 统一的回调接口（onText、onThinking、onToolUse、onComplete、onError、onSessionId）
+- `AgentRunHandle` — 返回进程句柄和 abort 方法
+
+**已有实现**：
+- `claudeRuntime`（`src/agent/providers/claude.ts`）：适配原有 `runClaude()` 函数，调用 `claude -p --output-format stream-json`
+- `codexRuntime`（`src/agent/providers/codex.ts`）：实现 Codex CLI 的 JSON 流式解析，支持 `--sandbox`、`--approval-policy`、`--model` 等参数
+
+运行时选择：`getAgentRuntime(config.agentProvider)` 根据配置返回对应运行时。
+
+### 7. Claude Code CLI 运行时
+
+位置：`src/claude/cli-runner.ts`（通过 `src/agent/providers/claude.ts` 适配为 `AgentRuntime`）
 
 **关键参数**：
 ```bash
@@ -172,7 +190,8 @@ claude -p \
 - `CC_IM_THREAD_ROOT_MSG_ID`：话题根消息 ID（飞书话题会话）
 - `CC_IM_THREAD_ID`：话题 ID
 - `CC_IM_PLATFORM`：当前平台标识（`feishu` / `telegram` / `wecom`）
-- `CC_IM_SKIP_PERMISSIONS`：设为 `1` 时 hook 脚本自动放行所有工具（兼容新版 Claude Code 不再跳过 hooks 的行为）
+- `CC_IM_AGENT_PROVIDER`：当前 Agent 运行时标识（`claude` / `codex` / `opencode`）
+- `CC_IM_SKIP_PERMISSIONS`：设为 `1` 时 hook 脚本自动放行所有工具
 - `HTTPS_PROXY` / `HTTP_PROXY`：代理地址（由 `PROXY_URL` 配置项注入）
 
 **流式输出处理**：
@@ -186,7 +205,7 @@ claude -p \
 
 **错误处理**：
 - stderr 保留首尾部分（前 4KB + 后 6KB），避免超长错误信息导致内存溢出
-- 超时控制：默认 10 分钟（`CLAUDE_TIMEOUT_MS`）
+- 超时控制：默认 10 分钟（`AGENT_TIMEOUT_MS`）
 
 ### 7. 命令系统
 
@@ -306,13 +325,22 @@ pnpm test -- tests/unit/queue/request-queue.test.ts
 - `WECOM_BOT_SECRET`：企业微信机器人 Secret
 - `WECOM_BOT_NAME`：企业微信机器人显示名称（可选），用于精确去除群聊消息中的 `@机器人名` 标记
 - `ALLOWED_USER_IDS`：允许的用户 ID 列表（逗号分隔）
+- `AGENT_PROVIDER`：Agent 运行时（`claude` / `codex` / `opencode`），默认 `claude`
+- `AGENT_MODEL`：当前 Agent 默认模型（可被用户 `/model` 命令覆盖）
+- `AGENT_CLI_PATH`：Agent CLI 可执行文件路径（自动根据 provider 推断，也可显式指定）
+- `AGENT_SKIP_PERMISSIONS`：是否跳过权限确认，默认 `false`
+- `AGENT_TIMEOUT_MS`：Agent CLI 超时时间（毫秒），默认 600000（10分钟）
 - `CLAUDE_CLI_PATH`：Claude CLI 可执行文件路径，默认 `claude`
+- `CODEX_CLI_PATH`：Codex CLI 可执行文件路径，默认 `codex`
+- `CODEX_MODEL`：Codex 默认模型
+- `CODEX_SANDBOX`：Codex sandbox 模式（`read-only` / `workspace-write` / `danger-full-access`），默认 `workspace-write`
+- `CODEX_APPROVAL_POLICY`：Codex 审批策略（`untrusted` / `on-request` / `never`），默认 `on-request`
 - `CLAUDE_WORK_DIR`：默认工作目录，默认当前目录
 - `ALLOWED_BASE_DIRS`：允许的基础目录列表（逗号分隔）
-- `CLAUDE_SKIP_PERMISSIONS`：是否跳过权限确认，默认 `false`
-- `CLAUDE_TIMEOUT_MS`：Claude CLI 超时时间（毫秒），默认 600000（10分钟）
-- `CLAUDE_MODEL`：Claude 模型名（如 `sonnet`、`opus`，可被用户 `/model` 命令覆盖）
-- `PROXY_URL`：代理地址（可选），传递给 Claude CLI 子进程的 `HTTPS_PROXY`/`HTTP_PROXY` 环境变量
+- `CLAUDE_SKIP_PERMISSIONS`：是否跳过权限确认（`AGENT_SKIP_PERMISSIONS` 的向后兼容别名）
+- `CLAUDE_TIMEOUT_MS`：超时时间（`AGENT_TIMEOUT_MS` 的向后兼容别名）
+- `CLAUDE_MODEL`：Claude 模型名（如 `sonnet`、`opus`）
+- `PROXY_URL`：代理地址（可选），传递给 Agent CLI 子进程的 `HTTPS_PROXY`/`HTTP_PROXY` 环境变量
 - `HOOK_SERVER_PORT`：权限服务器端口，默认 18900
 - `LOG_LEVEL`：日志等级（`DEBUG`/`INFO`/`WARN`/`ERROR`），默认 `DEBUG`
 
@@ -325,9 +353,9 @@ pnpm test -- tests/unit/queue/request-queue.test.ts
 
 ## 权限系统配置
 
-### 1. Claude CLI Hook 配置
+### 1. Claude Code CLI Hook 配置
 
-**必须**：在 Claude CLI 配置文件中添加 PreToolUse hook，使权限确认功能正常工作。
+**必须**（使用 `AGENT_PROVIDER=claude` 时）：在 Claude CLI 配置文件中添加 PreToolUse hook，使权限确认功能正常工作。
 
 编辑 `~/.claude/settings.json`，在 `hooks` 中添加 `PreToolUse` 配置：
 
@@ -349,14 +377,62 @@ pnpm test -- tests/unit/queue/request-queue.test.ts
 }
 ```
 
+### 2. Codex CLI Hook 配置
+
+**必须**（使用 `AGENT_PROVIDER=codex` 时）：启用 Codex hooks 功能并配置 PermissionRequest 事件。
+
+1. 确保 `~/.codex/config.toml` 中已启用 hooks：
+```toml
+[features]
+codex_hooks = true
+```
+
+2. 编辑 `~/.codex/hooks.json` 添加 PermissionRequest hook：
+```json
+{
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<your-project-path>/dist/hook/hook-script.js"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<your-project-path>/dist/hook/watch-script.js"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<your-project-path>/dist/hook/watch-script.js"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
 **注意**：
 - 将 `<your-project-path>` 替换为实际的项目路径（使用绝对路径）
-- hook 脚本文件需要有执行权限（`chmod +x dist/hook/hook-script.js`）
-- 配置修改后需要完全退出 Claude Code 会话（`exit`）并重新启动才能生效
+- hook 脚本文件需要有执行权限（`chmod +x dist/hook/hook-script.js dist/hook/watch-script.js`）
+- 配置修改后需要完全退出 Claude Code / Codex 会话（`exit`）并重新启动才能生效
 
-### 2. 权限服务器
+### 3. 权限服务器
 
-当 `CLAUDE_SKIP_PERMISSIONS=false`（默认）时：
+当 `AGENT_SKIP_PERMISSIONS=false`（默认）时：
 - 权限服务器自动启动（默认端口 18900）
 - 用户发送消息触发敏感工具时，会收到权限确认卡片
 - 用户收到权限确认卡片后，可直接点击"允许"或"拒绝"按钮，也可使用 `/allow` / `/deny` 命令

@@ -19,6 +19,7 @@ import { checkForUpdate } from './shared/update-check.js';
 import { initLogger, createLogger, closeLogger } from './logger.js';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { getAgentRuntime } from './agent/runtime.js';
 
 const require = createRequire(import.meta.url);
 const { version: APP_VERSION } = require('../package.json');
@@ -68,19 +69,26 @@ export async function main() {
   log.info('Starting cc-im bridge service...');
   log.info(`Enabled platforms: ${config.enabledPlatforms.join(', ')}`);
   log.info(`Allowed users: ${config.allowedUserIds.length === 0 ? 'ALL (dev mode)' : config.allowedUserIds.length + ' users configured'}`);
-  log.info(`Claude CLI: ${config.claudeCliPath}`);
+  log.info(`Agent provider: ${config.agentProvider}`);
+  log.info(`Agent CLI: ${config.agentCliPath}`);
   log.info(`Default work directory: ${config.claudeWorkDir}`);
-  log.info(`Skip permissions: ${config.claudeSkipPermissions}`);
-  log.info(`Timeout: ${config.claudeTimeoutMs}ms`);
+  log.info(`Skip permissions: ${config.agentSkipPermissions}`);
+  log.info(`Timeout: ${config.agentTimeoutMs}ms`);
+  if (config.agentProvider === 'codex') {
+    log.info(`Codex sandbox: ${config.codexSandbox}`);
+    log.info(`Codex approval policy: ${config.codexApprovalPolicy}`);
+  }
   if (config.proxyUrl) {
     log.info(`Proxy: ${config.proxyUrl}`);
   }
   log.info(`Allowed base dirs: ${config.allowedBaseDirs.length} dirs configured`);
 
   // Hook 注册和 HTTP 服务器始终启动（watch 功能不依赖权限设置）
-  ensureHookConfigured();
+  if (config.agentProvider === 'claude' || config.agentProvider === 'codex') {
+    ensureHookConfigured(config.agentProvider);
+  }
   const permissionServer = await startPermissionServer(config.hookPort);
-  log.info(`Hook server started on port ${permissionServer.port}${config.claudeSkipPermissions ? ' (permissions skipped, watch-only)' : ''}`);
+  log.info(`Hook server started on port ${permissionServer.port}${config.agentSkipPermissions ? ' (permissions skipped, watch-only)' : ''}`);
 
   // 创建共享的 SessionManager 单例
   const sessionManager = new SessionManager(config.claudeWorkDir, config.allowedBaseDirs);
@@ -168,15 +176,17 @@ export async function main() {
 
   // 发送启动通知
   const startedAt = Date.now();
-  const claudeVer = getClaudeVersion(config.claudeCliPath);
+  const runtime = getAgentRuntime(config.agentProvider);
+  const agentVer = getClaudeVersion(config.agentCliPath);
   const startupMsg = [
     `🟢 cc-im v${APP_VERSION} 服务已启动`,
     '',
     `平台: ${activeBots.join(' + ')}`,
+    `Runtime: ${config.agentProvider}`,
     `工作目录: ${config.claudeWorkDir}`,
-    `权限确认: ${config.claudeSkipPermissions ? '已跳过' : '已启用'}`,
-    config.claudeModel ? `模型: ${config.claudeModel}` : '',
-    `Claude CLI: ${claudeVer}`,
+    `权限确认: ${config.agentSkipPermissions ? '已跳过' : '已启用'}`,
+    config.agentModel ? `模型: ${config.agentModel}` : '',
+    `${runtime.provider} CLI: ${agentVer}`,
     `Node: ${process.version}`,
   ].filter(Boolean).join('\n');
   sendLifecycleNotification(activeBots, startupMsg).catch((e) => log.warn('Startup notification failed:', e?.message ?? e));

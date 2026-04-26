@@ -1,24 +1,14 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { parseStreamLine, extractTextDelta, extractThinkingDelta, extractResult, type ParsedResult } from './stream-parser.js';
+import { parseStreamLine, extractTextDelta, extractThinkingDelta, extractResult } from './stream-parser.js';
 import { isStreamInit, isContentBlockStart, isContentBlockDelta, isContentBlockStop } from './types.js';
+import type { AgentRunCallbacks, AgentRunHandle } from '../agent/types.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('CliRunner');
 
-export interface ClaudeRunCallbacks {
-  onText: (accumulated: string) => void;
-  onThinking?: (accumulated: string) => void;
-  onToolUse?: (toolName: string, toolInput?: Record<string, unknown>) => void;
-  onComplete: (result: ParsedResult) => void;
-  onError: (error: string) => void;
-  onSessionId?: (sessionId: string) => void;
-}
-
-export interface ClaudeRunHandle {
-  process: ChildProcess;
-  abort: () => void;
-}
+export type ClaudeRunCallbacks = AgentRunCallbacks;
+export type ClaudeRunHandle = AgentRunHandle;
 
 export interface ClaudeRunOptions {
   skipPermissions?: boolean;

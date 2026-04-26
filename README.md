@@ -1,8 +1,8 @@
 # cc-im
 
-多平台（飞书 & Telegram & 企业微信）机器人 ↔ Claude Code CLI 桥接服务。
+多平台（飞书 & Telegram & 企业微信）机器人 ↔ 本地 Agent CLI 桥接服务。
 
-用户在飞书、Telegram 或企业微信中发消息，服务器接收后调用 Claude Code 执行，并将输出实时流式推送回聊天窗口。
+用户在飞书、Telegram 或企业微信中发消息，服务器接收后调用本地 Agent CLI 执行，并将输出实时流式推送回聊天窗口。
 
 ## 功能
 
@@ -30,7 +30,7 @@
 
 ## 快速开始
 
-> 要求：Node.js >= 20，需要预先安装 [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
+> 要求：Node.js >= 20。默认使用 Claude Code CLI，也支持切换到 Codex CLI。
 
 ### 同时运行多个平台
 
@@ -175,12 +175,20 @@ cc-im uninstall
 | `WECOM_BOT_SECRET` | 企业微信机器人 Secret | 企业微信平台必填 |
 | `WECOM_BOT_NAME` | 企业微信机器人显示名称，用于精确去除群聊 @提及 | 空（启发式匹配） |
 | `ALLOWED_USER_IDS` | 白名单用户 ID，逗号分隔，留空不限制 | 空（不限制） |
+| `AGENT_PROVIDER` | 当前运行时（`claude`/`codex`/`opencode`） | `claude` |
+| `AGENT_MODEL` | 当前运行时默认模型 | 空（由 runtime 决定） |
 | `CLAUDE_CLI_PATH` | Claude CLI 可执行文件路径 | `claude` |
+| `CODEX_CLI_PATH` | Codex CLI 可执行文件路径 | `codex` |
 | `CLAUDE_WORK_DIR` | 默认工作目录 | 当前目录 |
 | `ALLOWED_BASE_DIRS` | 允许 `/cd` 切换的基础目录，逗号分隔 | 同 `CLAUDE_WORK_DIR` |
+| `AGENT_SKIP_PERMISSIONS` | 跳过权限检查 | `false` |
+| `AGENT_TIMEOUT_MS` | 执行超时（毫秒） | `600000`（10分钟） |
 | `CLAUDE_SKIP_PERMISSIONS` | 跳过权限检查（生产环境建议 `false`） | `false` |
 | `CLAUDE_TIMEOUT_MS` | 执行超时（毫秒） | `600000`（10分钟） |
 | `CLAUDE_MODEL` | 默认模型（如 `sonnet`、`opus`、`haiku`） | 空（由 Claude Code 决定） |
+| `CODEX_MODEL` | Codex 默认模型 | 空（由 Codex 决定） |
+| `CODEX_SANDBOX` | Codex sandbox（`read-only`/`workspace-write`/`danger-full-access`） | `workspace-write` |
+| `CODEX_APPROVAL_POLICY` | Codex 审批策略（`untrusted`/`on-request`/`never`） | `on-request` |
 | `PROXY_URL` | 代理地址，传递给 Claude CLI（如 `http://127.0.0.1:7890`） | 空 |
 | `HOOK_SERVER_PORT` | 权限确认 Hook 服务端口 | `18900` |
 | `LOG_DIR` | 日志文件存储目录 | `~/.cc-im/logs` |
@@ -205,12 +213,19 @@ cc-im uninstall
   "wecomBotSecret": "",
   "wecomBotName": "",
   "allowedUserIds": ["123456789"],
+  "agentProvider": "claude",
+  "agentModel": "sonnet",
   "claudeCliPath": "/usr/local/bin/claude",
+  "codexCliPath": "/usr/local/bin/codex",
   "claudeWorkDir": "/home/user/projects",
   "allowedBaseDirs": ["/home/user/projects", "/tmp"],
+  "agentSkipPermissions": false,
+  "agentTimeoutMs": 600000,
   "claudeSkipPermissions": false,
   "claudeTimeoutMs": 600000,
   "claudeModel": "sonnet",
+  "codexSandbox": "workspace-write",
+  "codexApprovalPolicy": "on-request",
   "proxyUrl": "http://127.0.0.1:7890",
   "hookPort": 18900,
   "logDir": "/var/log/cc-im",
@@ -219,6 +234,12 @@ cc-im uninstall
 ```
 
 环境变量优先级高于配置文件。
+
+### Runtime 说明
+
+- `claude`：当前最完整，支持本地历史读取、`/resume`、Hook 权限确认。
+- `codex`：已接入非交互执行、流式输出、本地历史读取、`/resume` 恢复，以及 `PermissionRequest` / `PostToolUse` / `Stop` hook 链路。
+- `opencode`：当前仅保留配置与架构扩展位，尚未实现执行器。
 
 ## 应用数据目录
 

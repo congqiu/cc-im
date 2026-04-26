@@ -167,4 +167,32 @@ describe('ensureHookConfigured', () => {
     expect(result).toBe(true);
     expect(writeFileSync).not.toHaveBeenCalled();
   });
+
+  it('should configure codex hooks and enable codex_hooks feature', async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockImplementation((path) => {
+      const value = String(path);
+      if (value.endsWith('/.codex/config.toml')) return 'model = "gpt-5.4"\n';
+      throw new Error('ENOENT');
+    });
+    vi.mocked(writeFileSync).mockImplementation(() => {});
+
+    const { ensureHookConfigured } = await loadModule();
+    const result = ensureHookConfigured('codex');
+
+    expect(result).toBe(true);
+    expect(writeFileSync).toHaveBeenCalledTimes(2);
+
+    const configWrite = vi.mocked(writeFileSync).mock.calls.find(([path]) => String(path).endsWith('/.codex/config.toml'));
+    const hooksWrite = vi.mocked(writeFileSync).mock.calls.find(([path]) => String(path).endsWith('/.codex/hooks.json'));
+
+    expect(configWrite).toBeTruthy();
+    expect(String(configWrite?.[1])).toContain('codex_hooks = true');
+
+    const writtenHooks = JSON.parse(String(hooksWrite?.[1]));
+    expect(writtenHooks.hooks.PermissionRequest).toHaveLength(1);
+    expect(writtenHooks.hooks.PermissionRequest[0].hooks[0].command).toMatch(/dist\/hook\/hook-script\.js$/);
+    expect(writtenHooks.hooks.PostToolUse[0].hooks[0].command).toMatch(/dist\/hook\/watch-script\.js$/);
+    expect(writtenHooks.hooks.Stop[0].hooks[0].command).toMatch(/dist\/hook\/watch-script\.js$/);
+  });
 });

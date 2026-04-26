@@ -9,9 +9,17 @@ import { APP_HOME } from './constants.js';
 const logger = createLogger('Config');
 
 export type Platform = 'feishu' | 'telegram' | 'wecom';
+export type AgentProvider = 'claude' | 'codex' | 'opencode';
+export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access';
+export type CodexApprovalPolicy = 'untrusted' | 'on-request' | 'never';
 
 export interface Config {
   enabledPlatforms: Platform[]; // 改为支持多平台
+  agentProvider: AgentProvider;
+  agentCliPath: string;
+  agentModel?: string;
+  agentSkipPermissions: boolean;
+  agentTimeoutMs: number;
   feishuAppId: string;
   feishuAppSecret: string;
   telegramBotToken: string;
@@ -22,9 +30,11 @@ export interface Config {
   claudeCliPath: string;
   claudeWorkDir: string;
   allowedBaseDirs: string[];
-  claudeSkipPermissions: boolean;
-  claudeTimeoutMs: number;
-  claudeModel?: string;
+  codexCliPath: string;
+  codexModel?: string;
+  codexSandbox: CodexSandboxMode;
+  codexApprovalPolicy: CodexApprovalPolicy;
+  opencodeCliPath: string;
   proxyUrl?: string;
   hookPort: number;
   logDir: string;
@@ -32,6 +42,10 @@ export interface Config {
 }
 
 interface FileConfig {
+  agentProvider?: AgentProvider;
+  agentModel?: string;
+  agentSkipPermissions?: boolean;
+  agentTimeoutMs?: number;
   feishuAppId?: string;
   feishuAppSecret?: string;
   telegramBotToken?: string;
@@ -45,6 +59,11 @@ interface FileConfig {
   claudeSkipPermissions?: boolean;
   claudeTimeoutMs?: number;
   claudeModel?: string;
+  codexCliPath?: string;
+  codexModel?: string;
+  codexSandbox?: CodexSandboxMode;
+  codexApprovalPolicy?: CodexApprovalPolicy;
+  opencodeCliPath?: string;
   proxyUrl?: string;
   hookPort?: number;
   logDir?: string;
@@ -73,6 +92,47 @@ function loadFileConfig(): FileConfig {
 
 function parseCommaSeparated(value: string): string[] {
   return value.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+function isValidAgentProvider(value: string): value is AgentProvider {
+  return value === 'claude' || value === 'codex' || value === 'opencode';
+}
+
+function isValidCodexSandbox(value: string): value is CodexSandboxMode {
+  return value === 'read-only' || value === 'workspace-write' || value === 'danger-full-access';
+}
+
+function isValidCodexApprovalPolicy(value: string): value is CodexApprovalPolicy {
+  return value === 'untrusted' || value === 'on-request' || value === 'never';
+}
+
+function validateCliPath(cliPath: string, displayName: string): void {
+  if (isAbsolute(cliPath) || cliPath.includes('/')) {
+    try {
+      accessSync(cliPath, constants.F_OK | constants.X_OK);
+    } catch (_err) {
+      throw new Error(
+        `${displayName} 不可访问或不可执行: ${cliPath}\n` +
+        `请检查：\n` +
+        '  1. 文件是否存在\n' +
+        '  2. 是否有执行权限\n' +
+        `  3. ${displayName.toUpperCase().replace(/\s+/g, '_')}_PATH 环境变量或 ${APP_HOME} 配置是否正确`
+      );
+    }
+    return;
+  }
+
+  try {
+    execFileSync('which', [cliPath], { stdio: 'pipe' });
+  } catch (_err) {
+    throw new Error(
+      `${displayName} 在 PATH 中未找到: ${cliPath}\n` +
+      `请检查：\n` +
+      `  1. 是否已安装 ${displayName}\n` +
+      '  2. 命令是否在 PATH 环境变量中\n' +
+      `  3. 或通过 ${displayName.toUpperCase().replace(/\s+/g, '_')}_PATH 指定完整路径`
+    );
+  }
 }
 
 function detectPlatforms(file: FileConfig): Platform[] {
@@ -131,6 +191,14 @@ function detectPlatforms(file: FileConfig): Platform[] {
 export function loadConfig(): Config {
   const file = loadFileConfig();
   const enabledPlatforms = detectPlatforms(file);
+  const rawAgentProvider = process.env.AGENT_PROVIDER ?? file.agentProvider ?? 'claude';
+  if (!isValidAgentProvider(rawAgentProvider)) {
+    throw new Error(`不支持的 AGENT_PROVIDER: ${rawAgentProvider}，可选值: claude / codex`);
+  }
+  if (rawAgentProvider === 'opencode') {
+    throw new Error('AGENT_PROVIDER=opencode 暂未实现，目前可选: claude / codex');
+  }
+  const agentProvider = rawAgentProvider;
 
   // 飞书配置
   const appId = process.env.FEISHU_APP_ID ?? file.feishuAppId ?? '';
@@ -150,6 +218,8 @@ export function loadConfig(): Config {
       : file.allowedUserIds ?? [];
 
   const claudeCliPath = process.env.CLAUDE_CLI_PATH ?? file.claudeCliPath ?? 'claude';
+  const codexCliPath = process.env.CODEX_CLI_PATH ?? file.codexCliPath ?? 'codex';
+  const opencodeCliPath = process.env.OPENCODE_CLI_PATH ?? file.opencodeCliPath ?? 'opencode';
   const claudeWorkDir = process.env.CLAUDE_WORK_DIR ?? file.claudeWorkDir ?? process.cwd();
 
   const allowedBaseDirs =
@@ -160,53 +230,48 @@ export function loadConfig(): Config {
     allowedBaseDirs.push(claudeWorkDir);
   }
 
-  const claudeSkipPermissions =
-    process.env.CLAUDE_SKIP_PERMISSIONS !== undefined
-      ? process.env.CLAUDE_SKIP_PERMISSIONS === 'true'
-      : file.claudeSkipPermissions ?? false;
+  const agentSkipPermissions =
+    process.env.AGENT_SKIP_PERMISSIONS !== undefined
+      ? process.env.AGENT_SKIP_PERMISSIONS === 'true'
+      : process.env.CLAUDE_SKIP_PERMISSIONS !== undefined
+        ? process.env.CLAUDE_SKIP_PERMISSIONS === 'true'
+        : file.agentSkipPermissions ?? file.claudeSkipPermissions ?? false;
 
   const DEFAULT_TIMEOUT_MS = 600000;
   const MIN_TIMEOUT_MS = 10_000;
   const MAX_TIMEOUT_MS = 3_600_000;
 
-  let claudeTimeoutMs =
-    process.env.CLAUDE_TIMEOUT_MS !== undefined
-      ? parseInt(process.env.CLAUDE_TIMEOUT_MS, 10) || DEFAULT_TIMEOUT_MS
-      : file.claudeTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+  let agentTimeoutMs =
+    process.env.AGENT_TIMEOUT_MS !== undefined
+      ? parseInt(process.env.AGENT_TIMEOUT_MS, 10) || DEFAULT_TIMEOUT_MS
+      : process.env.CLAUDE_TIMEOUT_MS !== undefined
+        ? parseInt(process.env.CLAUDE_TIMEOUT_MS, 10) || DEFAULT_TIMEOUT_MS
+        : file.agentTimeoutMs ?? file.claudeTimeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-  if (claudeTimeoutMs < MIN_TIMEOUT_MS || claudeTimeoutMs > MAX_TIMEOUT_MS) {
-    logger.warn(`CLAUDE_TIMEOUT_MS=${claudeTimeoutMs} 超出合理范围 (${MIN_TIMEOUT_MS}-${MAX_TIMEOUT_MS})，使用默认值 ${DEFAULT_TIMEOUT_MS}`);
-    claudeTimeoutMs = DEFAULT_TIMEOUT_MS;
+  if (agentTimeoutMs < MIN_TIMEOUT_MS || agentTimeoutMs > MAX_TIMEOUT_MS) {
+    logger.warn(`AGENT_TIMEOUT_MS=${agentTimeoutMs} 超出合理范围 (${MIN_TIMEOUT_MS}-${MAX_TIMEOUT_MS})，使用默认值 ${DEFAULT_TIMEOUT_MS}`);
+    agentTimeoutMs = DEFAULT_TIMEOUT_MS;
   }
 
-  // 验证 Claude CLI 路径
-  if (isAbsolute(claudeCliPath) || claudeCliPath.includes('/')) {
-    // 绝对路径或包含目录分隔符：直接用 accessSync 验证
-    try {
-      accessSync(claudeCliPath, constants.F_OK | constants.X_OK);
-    } catch (_err) {
-      throw new Error(
-        `Claude CLI 不可访问或不可执行: ${claudeCliPath}\n` +
-        `请检查：\n` +
-        `  1. 文件是否存在\n` +
-        `  2. 是否有执行权限\n` +
-        `  3. CLAUDE_CLI_PATH 环境变量或 ${APP_HOME} 配置是否正确`
-      );
-    }
-  } else {
-    // 裸命令名（如 "claude"）：在 PATH 中查找
-    try {
-      execFileSync('which', [claudeCliPath], { stdio: 'pipe' });
-    } catch (_err) {
-      throw new Error(
-        `Claude CLI 在 PATH 中未找到: ${claudeCliPath}\n` +
-        `请检查：\n` +
-        `  1. 是否已安装 Claude CLI\n` +
-        `  2. 命令是否在 PATH 环境变量中\n` +
-        `  3. 或通过 CLAUDE_CLI_PATH 指定完整路径`
-      );
-    }
+  const claudeModel = process.env.CLAUDE_MODEL ?? file.claudeModel;
+  const codexModel = process.env.CODEX_MODEL ?? file.codexModel;
+  const agentModel = process.env.AGENT_MODEL ?? file.agentModel ?? (agentProvider === 'codex' ? codexModel : claudeModel);
+
+  const rawCodexSandbox = process.env.CODEX_SANDBOX ?? file.codexSandbox ?? 'workspace-write';
+  const codexSandbox = isValidCodexSandbox(rawCodexSandbox) ? rawCodexSandbox : 'workspace-write';
+  if (!isValidCodexSandbox(rawCodexSandbox)) {
+    logger.warn(`无效的 CODEX_SANDBOX="${rawCodexSandbox}"，使用默认值 workspace-write`);
   }
+
+  const rawCodexApprovalPolicy = process.env.CODEX_APPROVAL_POLICY ?? file.codexApprovalPolicy ?? 'on-request';
+  const codexApprovalPolicy = isValidCodexApprovalPolicy(rawCodexApprovalPolicy) ? rawCodexApprovalPolicy : 'on-request';
+  if (!isValidCodexApprovalPolicy(rawCodexApprovalPolicy)) {
+    logger.warn(`无效的 CODEX_APPROVAL_POLICY="${rawCodexApprovalPolicy}"，使用默认值 on-request`);
+  }
+
+  const activeCliPath = agentProvider === 'codex' ? codexCliPath : claudeCliPath;
+  const activeCliName = agentProvider === 'codex' ? 'Codex CLI' : 'Claude CLI';
+  validateCliPath(activeCliPath, activeCliName);
 
   const hookPort =
     process.env.HOOK_SERVER_PORT !== undefined
@@ -228,6 +293,11 @@ export function loadConfig(): Config {
 
   return {
     enabledPlatforms,
+    agentProvider,
+    agentCliPath: activeCliPath,
+    agentModel,
+    agentSkipPermissions,
+    agentTimeoutMs,
     feishuAppId: appId,
     feishuAppSecret: appSecret,
     telegramBotToken,
@@ -238,9 +308,11 @@ export function loadConfig(): Config {
     claudeCliPath,
     claudeWorkDir,
     allowedBaseDirs,
-    claudeSkipPermissions,
-    claudeTimeoutMs,
-    claudeModel: process.env.CLAUDE_MODEL ?? file.claudeModel,
+    codexCliPath,
+    codexModel,
+    codexSandbox,
+    codexApprovalPolicy,
+    opencodeCliPath,
     proxyUrl,
     hookPort,
     logDir,

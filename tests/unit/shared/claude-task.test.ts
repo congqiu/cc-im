@@ -41,10 +41,16 @@ import { runClaude } from '../../../src/claude/cli-runner.js';
 
 function makeConfig(overrides?: Partial<any>) {
   return {
+    agentProvider: 'claude',
+    agentCliPath: '/usr/bin/claude',
+    agentSkipPermissions: false,
+    agentTimeoutMs: 300000,
+    agentModel: 'sonnet',
     claudeCliPath: '/usr/bin/claude',
-    claudeSkipPermissions: false,
-    claudeTimeoutMs: 300000,
-    claudeModel: 'sonnet',
+    codexCliPath: '/usr/bin/codex',
+    codexSandbox: 'workspace-write',
+    codexApprovalPolicy: 'on-request',
+    opencodeCliPath: '/usr/bin/opencode',
     hookPort: 18900,
     ...overrides,
   };
@@ -827,7 +833,7 @@ describe('runClaudeTask', () => {
       const ctx = makeCtx({ sessionId: 'sess-1', workDir: '/my/project' });
 
       const promise = runClaudeTask(
-        makeDeps({ config: makeConfig({ claudeCliPath: '/custom/claude' }) }),
+        makeDeps({ config: makeConfig({ agentCliPath: '/custom/claude', claudeCliPath: '/custom/claude' }) }),
         ctx, 'write code', adapter,
       );
 
@@ -855,7 +861,7 @@ describe('runClaudeTask', () => {
       const adapter = makeAdapter();
 
       const promise = runClaudeTask(
-        makeDeps({ config: makeConfig({ claudeModel: 'sonnet' }), sessionManager: sm }),
+        makeDeps({ config: makeConfig({ agentModel: 'sonnet' }), sessionManager: sm }),
         makeCtx(), 'hello', adapter,
       );
 
@@ -870,7 +876,7 @@ describe('runClaudeTask', () => {
       const adapter = makeAdapter();
 
       const promise = runClaudeTask(
-        makeDeps({ config: makeConfig({ claudeModel: 'haiku' }), sessionManager: sm }),
+        makeDeps({ config: makeConfig({ agentModel: 'haiku' }), sessionManager: sm }),
         makeCtx(), 'hello', adapter,
       );
 
@@ -900,7 +906,7 @@ describe('runClaudeTask', () => {
       const adapter = makeAdapter();
 
       const promise = runClaudeTask(
-        makeDeps({ config: makeConfig({ claudeSkipPermissions: true }) }),
+        makeDeps({ config: makeConfig({ agentSkipPermissions: true }) }),
         makeCtx(), 'hello', adapter,
       );
 

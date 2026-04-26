@@ -44,6 +44,18 @@ export type ClaudeRequestHandler = (
 export class CommandHandler {
   constructor(private deps: CommandHandlerDeps) {}
 
+  private getAgentLabel(): string {
+    return this.deps.config.agentProvider === 'codex'
+      ? 'Codex'
+      : this.deps.config.agentProvider === 'opencode'
+        ? 'OpenCode'
+        : 'Claude Code';
+  }
+
+  private supportsLocalHistory(): boolean {
+    return this.deps.config.agentProvider === 'claude' || this.deps.config.agentProvider === 'codex';
+  }
+
   /**
    * 统一命令分发：识别并处理所有命令，返回 true 表示已处理
    */
@@ -59,7 +71,8 @@ export class CommandHandler {
 
     // 平台特有命令
     if (platform === 'telegram' && trimmed === '/start') {
-      await this.deps.sender.sendTextReply(chatId, '欢迎使用 Claude Code Bot!\n\n发送消息与 Claude Code 交互，输入 /help 查看帮助。');
+      const label = this.getAgentLabel();
+      await this.deps.sender.sendTextReply(chatId, `欢迎使用 ${label} Bot!\n\n发送消息与 ${label} 交互，输入 /help 查看帮助。`);
       return true;
     }
     if (platform === 'feishu' && trimmed === '/threads') {
@@ -131,10 +144,10 @@ export class CommandHandler {
 
     // 监控与诊断
     lines.push('', '📊 监控与诊断:');
-    lines.push('/status         - 显示 Claude Code 状态信息');
+    lines.push('/status         - 显示当前 Agent 状态信息');
     lines.push('/cost           - 显示本次会话费用统计');
-    lines.push('/doctor         - 检查 Claude Code 健康状态');
-    lines.push('/watch [级别]   - 监控终端 Claude Code 状态');
+    lines.push('/doctor         - 检查当前 Agent 健康状态');
+    lines.push('/watch [级别]   - 监控终端 Agent 状态');
 
     // 高级
     lines.push('', '⚙️  高级:');
@@ -231,13 +244,13 @@ export class CommandHandler {
   async handleList(chatId: string, userId: string, threadCtx?: ThreadContext): Promise<boolean> {
     const dirs = this.listClaudeProjects();
     if (dirs.length === 0) {
-      await this.deps.sender.sendTextReply(chatId, '未找到 Claude Code 工作区记录。', threadCtx);
+      await this.deps.sender.sendTextReply(chatId, `未找到 ${this.getAgentLabel()} 工作区记录。`, threadCtx);
     } else {
       const current = threadCtx
         ? this.deps.sessionManager.getWorkDirForThread(userId, threadCtx.threadId)
         : this.deps.sessionManager.getWorkDir(userId);
       const lines = dirs.map((d, i) => (d === current ? `${i + 1}. ▶ ${d}` : `${i + 1}. ${d}`));
-      await this.deps.sender.sendTextReply(chatId, `Claude Code 工作区列表:\n${lines.join('\n')}\n\n使用 /cd <序号> 或 /cd <路径> 切换`, threadCtx);
+      await this.deps.sender.sendTextReply(chatId, `${this.getAgentLabel()} 工作区列表:\n${lines.join('\n')}\n\n使用 /cd <序号> 或 /cd <路径> 切换`, threadCtx);
     }
     return true;
   }
@@ -276,15 +289,20 @@ export class CommandHandler {
       : this.deps.sessionManager.getSessionIdForConv(userId, this.deps.sessionManager.getConvId(userId));
     const record = this.deps.userCosts.get(userId);
     const lines = [
-      '📊 Claude Code 状态:',
+      `📊 ${this.getAgentLabel()} 状态:`,
       '',
+      `Runtime: ${this.deps.config.agentProvider}`,
       `版本: ${version}`,
       `工作目录: ${workDir}`,
       `会话 ID: ${sessionId ?? '（无）'}`,
-      `跳过权限: ${this.deps.config.claudeSkipPermissions ? '是' : '否'}`,
-      `超时设置: ${this.deps.config.claudeTimeoutMs / 1000}s`,
+      `跳过权限: ${this.deps.config.agentSkipPermissions ? '是' : '否'}`,
+      `超时设置: ${this.deps.config.agentTimeoutMs / 1000}s`,
       `累计费用: $${record?.totalCost.toFixed(4) ?? '0.0000'}`,
     ];
+    if (this.deps.config.agentProvider === 'codex') {
+      lines.splice(6, 0, `Sandbox: ${this.deps.config.codexSandbox}`);
+      lines.splice(7, 0, `审批策略: ${this.deps.config.codexApprovalPolicy}`);
+    }
     await this.deps.sender.sendTextReply(chatId, lines.join('\n'), threadCtx);
     return true;
   }
@@ -312,7 +330,7 @@ export class CommandHandler {
       const scope = threadId ? '当前话题' : '当前';
       await this.deps.sender.sendTextReply(
         chatId,
-        `${scope}模型: ${currentModel ?? this.deps.config.claudeModel ?? '默认 (由 Claude Code 决定)'}\n\n可选模型: sonnet, opus, haiku 或完整模型名\n用法: /model <模型名>`,
+        `${scope}模型: ${currentModel ?? this.deps.config.agentModel ?? `默认 (由 ${this.getAgentLabel()} 决定)`}\n\n用法: /model <模型名>`,
         threadCtx,
       );
     } else {
@@ -340,9 +358,10 @@ export class CommandHandler {
       ? this.deps.sessionManager.getWorkDirForThread(userId, threadCtx.threadId)
       : this.deps.sessionManager.getWorkDir(userId);
     const lines = [
-      '🏥 Claude Code 健康检查:',
+      `🏥 ${this.getAgentLabel()} 健康检查:`,
       '',
-      `CLI 路径: ${this.deps.config.claudeCliPath}`,
+      `Runtime: ${this.deps.config.agentProvider}`,
+      `CLI 路径: ${this.deps.config.agentCliPath}`,
       `版本: ${version}`,
       `工作目录: ${workDir}`,
       `允许的基础目录: ${this.deps.config.allowedBaseDirs.join(', ')}`,
@@ -422,6 +441,10 @@ export class CommandHandler {
    * 处理 /history 命令 - 浏览会话历史
    */
   async handleHistory(chatId: string, userId: string, args: string, threadCtx?: ThreadContext): Promise<boolean> {
+    if (!this.supportsLocalHistory()) {
+      await this.deps.sender.sendTextReply(chatId, `当前 runtime (${this.deps.config.agentProvider}) 暂未实现 /history。`, threadCtx);
+      return true;
+    }
     const page = args ? (parseInt(args, 10) || 1) : 0;
     const workDir = threadCtx
       ? this.deps.sessionManager.getWorkDirForThread(userId, threadCtx.threadId)
@@ -430,7 +453,7 @@ export class CommandHandler {
       ? this.deps.sessionManager.getSessionIdForThread(userId, threadCtx.threadId)
       : this.deps.sessionManager.getSessionIdForConv(userId, this.deps.sessionManager.getConvId(userId));
 
-    const result = await getHistory(workDir, sessionId, page);
+    const result = await getHistory(workDir, sessionId, page, this.deps.config.agentProvider);
     if (!result.ok) {
       await this.deps.sender.sendTextReply(chatId, result.error, threadCtx);
     } else {
@@ -443,6 +466,10 @@ export class CommandHandler {
    * 处理 /resume 命令 - 浏览/恢复历史会话
    */
   async handleResume(chatId: string, userId: string, args: string, threadCtx?: ThreadContext): Promise<boolean> {
+    if (!this.supportsLocalHistory()) {
+      await this.deps.sender.sendTextReply(chatId, `当前 runtime (${this.deps.config.agentProvider}) 暂未实现 /resume。`, threadCtx);
+      return true;
+    }
     const workDir = threadCtx
       ? this.deps.sessionManager.getWorkDirForThread(userId, threadCtx.threadId)
       : this.deps.sessionManager.getWorkDir(userId);
@@ -450,7 +477,7 @@ export class CommandHandler {
       ? this.deps.sessionManager.getSessionIdForThread(userId, threadCtx.threadId)
       : this.deps.sessionManager.getSessionIdForConv(userId, this.deps.sessionManager.getConvId(userId));
 
-    const listResult = await getSessionList(workDir, currentSessionId);
+    const listResult = await getSessionList(workDir, currentSessionId, this.deps.config.agentProvider);
     if (!listResult.ok) {
       await this.deps.sender.sendTextReply(chatId, listResult.error, threadCtx);
       return true;
@@ -479,7 +506,7 @@ export class CommandHandler {
   }
 
   /**
-   * 处理 /watch 命令 - 监控终端 Claude Code 状态
+   * 处理 /watch 命令 - 监控终端 Agent 状态
    */
   async handleWatch(chatId: string, userId: string, args: string, platform: Platform, threadCtx?: ThreadContext): Promise<boolean> {
     const workDir = threadCtx
@@ -541,7 +568,7 @@ export class CommandHandler {
     }
 
     registerWatch(workDir, { chatId, platform, threadCtx, level: args as WatchLevel });
-    await this.deps.sender.sendTextReply(chatId, `📡 已开启监控 [${args}]\n工作区: ${workDir}\n\n在此工作区启动的终端 Claude Code 的事件将推送到此处。\n使用 /watch off 关闭`, threadCtx);
+    await this.deps.sender.sendTextReply(chatId, `📡 已开启监控 [${args}]\n工作区: ${workDir}\n\n在此工作区启动的终端 ${this.getAgentLabel()} 事件将推送到此处。\n使用 /watch off 关闭`, threadCtx);
     return true;
   }
 
@@ -602,7 +629,7 @@ export class CommandHandler {
    */
   private getClaudeVersion(): Promise<string> {
     return new Promise((resolve) => {
-      execFile(this.deps.config.claudeCliPath, ['--version'], { timeout: 5000 }, (err, stdout) => {
+      execFile(this.deps.config.agentCliPath, ['--version'], { timeout: 5000 }, (err, stdout) => {
         if (err) {
           resolve('未知');
         } else {

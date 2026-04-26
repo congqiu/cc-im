@@ -97,4 +97,22 @@ describe('hook-script', () => {
       await expect(httpPost(18900, '/test', {})).rejects.toThrow('ECONNREFUSED');
     });
   });
+
+  describe('codex permission request output', () => {
+    it('returns codex allow payload for PermissionRequest', async () => {
+      process.env.CC_IM_AGENT_PROVIDER = 'codex';
+      process.env.CC_IM_CHAT_ID = 'chat-1';
+      mockHttpResponse(200, '{"decision":"allow"}');
+
+      const { main } = await importMain();
+
+      await expect(main(async () => JSON.stringify({
+        hook_event_name: 'PermissionRequest',
+        tool_name: 'Bash',
+        tool_input: { command: 'ls' },
+      }))).rejects.toThrow('process.exit');
+      expect(_stdoutWrite).toHaveBeenCalledWith(expect.stringContaining('"hookEventName":"PermissionRequest"'));
+      expect(_stdoutWrite).toHaveBeenCalledWith(expect.stringContaining('"behavior":"allow"'));
+    });
+  });
 });

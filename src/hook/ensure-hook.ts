@@ -3,12 +3,17 @@ import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createLogger } from '../logger.js';
+import type { AgentProvider } from '../config.js';
 
 const log = createLogger('Hook');
 
 const CLAUDE_SETTINGS_PATH = join(homedir(), '.claude', 'settings.json');
+const CODEX_CONFIG_PATH = join(homedir(), '.codex', 'config.toml');
+const CODEX_HOOKS_PATH = join(homedir(), '.codex', 'hooks.json');
 const HOOK_MATCHER = 'Bash|Write|Edit';
 const WATCH_EVENTS = ['PostToolUse', 'Stop', 'SubagentStart', 'SubagentStop'];
+const CODEX_PERMISSION_EVENTS = ['PermissionRequest'];
+const CODEX_WATCH_EVENTS = ['PostToolUse', 'Stop'];
 
 type HookEntry = { matcher?: string; hooks?: Array<{ type?: string; command?: string }> };
 
@@ -41,12 +46,102 @@ function isOurHook(command: string | undefined, projectHookPath: string): boolea
   return command === srcVariant;
 }
 
+function ensureCodexFeatureEnabled(): boolean {
+  let content = '';
+  try {
+    content = readFileSync(CODEX_CONFIG_PATH, 'utf-8');
+  } catch {
+    content = '';
+  }
+
+  let next = content;
+  if (/\bcodex_hooks\s*=/.test(content)) {
+    next = content.replace(/codex_hooks\s*=\s*(true|false)/, 'codex_hooks = true');
+  } else if (/\[features\]/.test(content)) {
+    next = content.replace(/\[features\]\s*\n?/, (match) => `${match}codex_hooks = true\n`);
+  } else {
+    next = `${content.trimEnd()}${content.trim() ? '\n\n' : ''}[features]\ncodex_hooks = true\n`;
+  }
+
+  if (next === content) return true;
+
+  try {
+    mkdirSync(dirname(CODEX_CONFIG_PATH), { recursive: true });
+    writeFileSync(CODEX_CONFIG_PATH, next);
+    return true;
+  } catch (err) {
+    log.error(`Failed to write Codex config to ${CODEX_CONFIG_PATH}:`, err);
+    return false;
+  }
+}
+
+function ensureCodexHooksJson(hookScriptPath: string, watchScriptPath: string): boolean {
+  let settings: Record<string, unknown>;
+  try {
+    settings = JSON.parse(readFileSync(CODEX_HOOKS_PATH, 'utf-8'));
+  } catch {
+    settings = {};
+  }
+
+  const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>;
+  let needsWrite = false;
+
+  const ensureEventHook = (eventName: string, command: string) => {
+    const eventHooks = (hooks[eventName] ?? []) as HookEntry[];
+    const hasOurHook = eventHooks.some(entry =>
+      entry.hooks?.some(h => isOurHook(h.command, command))
+    );
+    if (hasOurHook) return;
+    eventHooks.push({
+      matcher: '',
+      hooks: [{ type: 'command', command }],
+    });
+    hooks[eventName] = eventHooks;
+    needsWrite = true;
+  };
+
+  for (const eventName of CODEX_PERMISSION_EVENTS) ensureEventHook(eventName, hookScriptPath);
+  if (existsSync(watchScriptPath)) {
+    for (const eventName of CODEX_WATCH_EVENTS) ensureEventHook(eventName, watchScriptPath);
+  }
+
+  if (!needsWrite) {
+    log.info('Codex hooks already configured');
+    return true;
+  }
+
+  settings.hooks = hooks;
+  try {
+    mkdirSync(dirname(CODEX_HOOKS_PATH), { recursive: true });
+    writeFileSync(CODEX_HOOKS_PATH, JSON.stringify(settings, null, 2) + '\n');
+    log.info(`Codex hooks auto-configured → ${CODEX_HOOKS_PATH}`);
+    return true;
+  } catch (err) {
+    log.error(`Failed to write Codex hooks to ${CODEX_HOOKS_PATH}:`, err);
+    return false;
+  }
+}
+
 /**
  * 确保 Claude CLI 的 PreToolUse hook 已配置。
  * 如果 ~/.claude/settings.json 中缺少对应 hook，自动写入。
  * 如果存在指向 src/ 的旧条目，自动修正为 dist/。
  */
-export function ensureHookConfigured(): boolean {
+export function ensureHookConfigured(provider: AgentProvider = 'claude'): boolean {
+  if (provider === 'codex') {
+    const hookScriptPath = getHookScriptPath();
+    const watchScriptPath = getWatchScriptPath();
+
+    if (!existsSync(hookScriptPath)) {
+      log.warn(`Hook script not found at ${hookScriptPath}, run "pnpm build" first`);
+      return false;
+    }
+
+    const configOk = ensureCodexFeatureEnabled();
+    const hooksOk = ensureCodexHooksJson(hookScriptPath, watchScriptPath);
+    return configOk && hooksOk;
+  }
+
   const hookScriptPath = getHookScriptPath();
 
   if (!existsSync(hookScriptPath)) {

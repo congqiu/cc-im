@@ -7,13 +7,14 @@ import { access } from 'node:fs/promises';
 import { resolve as pathResolve } from 'node:path';
 import type { Config } from '../config.js';
 import type { SessionManager } from '../session/session-manager.js';
-import { runClaude, type ClaudeRunHandle } from '../claude/cli-runner.js';
+import { getAgentRuntime } from '../agent/runtime.js';
+import type { AgentRunHandle } from '../agent/types.js';
 import type { ParsedResult } from '../claude/stream-parser.js';
 import type { CostRecord } from './types.js';
 import { formatToolStats, formatToolCallNotification, trackCost, getContextWarning } from './utils.js';
 import { createLogger } from '../logger.js';
 
-const log = createLogger('ClaudeTask');
+const log = createLogger('AgentTask');
 
 /**
  * 任务执行器依赖项 — 服务级单例，由调用方注入
@@ -86,7 +87,7 @@ export interface TaskContext {
  * 调用方可存入 runningTasks Map，任务运行期间 latestContent 持续更新
  */
 export interface TaskRunState {
-  handle: ClaudeRunHandle;
+  handle: AgentRunHandle;
   latestContent: string;
   settle: () => void;
   startedAt: number;
@@ -131,6 +132,7 @@ export function runClaudeTask(
   adapter: TaskAdapter,
 ): Promise<void> {
   const { config, sessionManager, userCosts } = deps;
+  const runtime = getAgentRuntime(config.agentProvider);
   return new Promise<void>((resolve) => {
     let lastUpdateTime = 0;
     let pendingUpdate: ReturnType<typeof setTimeout> | null = null;
@@ -184,7 +186,24 @@ export function runClaudeTask(
       }
     };
 
-    const handle = runClaude(config.claudeCliPath, prompt, ctx.sessionId, ctx.workDir, {
+    const handle = runtime.run({
+      provider: config.agentProvider,
+      cliPath: config.agentCliPath,
+      prompt,
+      sessionId: ctx.sessionId,
+      workDir: ctx.workDir,
+      skipPermissions: config.agentSkipPermissions,
+      timeoutMs: config.agentTimeoutMs,
+      model: sessionManager.getModel(ctx.userId, ctx.threadId) ?? config.agentModel,
+      chatId: ctx.chatId,
+      hookPort: config.hookPort,
+      threadRootMsgId: ctx.threadRootMsgId,
+      threadId: ctx.threadId,
+      platform: ctx.platform,
+      proxyUrl: config.proxyUrl,
+      codexSandbox: config.codexSandbox,
+      codexApprovalPolicy: config.codexApprovalPolicy,
+    }, {
       onSessionId: (id) => {
         if (ctx.threadId) {
           sessionManager.setSessionIdForThread(ctx.userId, ctx.threadId, id);
@@ -254,7 +273,7 @@ export function runClaudeTask(
         if (pendingUpdate) { clearTimeout(pendingUpdate); pendingUpdate = null; }
 
         const note = buildCompletionNote(result, sessionManager, ctx);
-        log.info(`Claude completed for user ${ctx.userId}: success=${result.success}, cost=$${result.cost.toFixed(4)}`);
+        log.info(`${config.agentProvider} completed for user ${ctx.userId}: success=${result.success}, cost=$${result.cost.toFixed(4)}`);
         trackCost(userCosts, ctx.userId, result.cost, result.durationMs);
 
         const finalContent = result.accumulated || result.result || '(无输出)';
@@ -285,7 +304,7 @@ export function runClaudeTask(
 
         if (pendingUpdate) { clearTimeout(pendingUpdate); pendingUpdate = null; }
 
-        log.error(`Claude error for user ${ctx.userId}, sessionId=${ctx.sessionId ?? 'new'}: ${error}`);
+        log.error(`${config.agentProvider} error for user ${ctx.userId}, sessionId=${ctx.sessionId ?? 'new'}: ${error}`);
         try {
           await adapter.sendError(error);
         } catch (err) {
@@ -294,16 +313,6 @@ export function runClaudeTask(
         cleanup();
         resolve();
       },
-    }, {
-      skipPermissions: config.claudeSkipPermissions,
-      timeoutMs: config.claudeTimeoutMs,
-      model: sessionManager.getModel(ctx.userId, ctx.threadId) ?? config.claudeModel,
-      chatId: ctx.chatId,
-      hookPort: config.hookPort,
-      threadRootMsgId: ctx.threadRootMsgId,
-      threadId: ctx.threadId,
-      platform: ctx.platform,
-      proxyUrl: config.proxyUrl,
     });
 
     taskState = { handle, latestContent: '', settle, startedAt: Date.now() };
